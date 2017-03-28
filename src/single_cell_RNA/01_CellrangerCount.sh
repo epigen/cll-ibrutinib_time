@@ -1,5 +1,19 @@
 #!/bin/bash
 
+#######################################################################################
+### ASK BSF TO RUN MKFASTQ FOR THE FIRST SAMPLES AND THEN PUT IN THE RIGHT PATHS ######
+#######################################################################################
+
+
+
+###
+### MKFASTQ
+###
+# sbatch --job-name="10X mkfastq" --ntasks=4 --cpus-per-task=10 --mem=80000 --partition=longq \
+#     --wrap="cellranger mkfastq --run=/scratch/lab_bsf/projects/BSF_0284_HH5C7BBXX_runfolder/161230_ST-J00104_0085_AHH5C7BBXX/ --csv=/home/nfortelny/code/10x_first_runs/metadata/samplesheet_cellranger.csv --output-dir=~/projects_shared/cll-time_course/cellranger/" \
+#     --output="/home/nfortelny/projects_shared/cll-time_course/cellranger_mkfastq.log"
+
+
 ###
 ### ORIGINAL CLL TIME SERIES
 ###

@@ -37,6 +37,8 @@ data_sources:
   # {variable} can be used to replace environment variables or other sample_annotation columns
   # If you use {variable} codes, you should quote the field so python can parse it.
   bsf: /scratch/lab_bsf/samples/{flowcell}/{flowcell}_{lane}_samples/{flowcell}_{lane}#{BSF_name}.bam
+  bsf_seq: /data/groups/lab_bsf/sequences/{flowcell}/fastq_path/{lane}/{BSF_name}
+  nik_seq: /scratch/lab_bock/shared/projects/cll-time_course/data/cellranger/{lane}/{BSF_name}
 
 genomes:
   human: hg19
