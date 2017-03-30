@@ -818,7 +818,7 @@ class Analysis(object):
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize='xx-small')
         g.ax_heatmap.set_xlabel(None, visible=False)
         g.ax_heatmap.set_ylabel(None, visible=False)
-        g.fig.savefig(os.path.join(self.results_dir, "{}.all_sites.corr.clustermap.svg".format(self.name)), bbox_inches='tight')
+        g.fig.savefig(os.path.join(self.results_dir, "{}.all_sites.corr.clustermap.svg".format(self.name + "corr")), bbox_inches='tight')
 
         # MDS
         mds = MDS(n_jobs=-1)
@@ -848,7 +848,7 @@ class Analysis(object):
             if any([type(c) in [str, unicode] for c in by_label.keys()]) and len(by_label) <= 20:
                 if not any([re.match("^\d", c) for c in by_label.keys()]):
                     axis[i].legend(by_label.values(), by_label.keys())
-        fig.savefig(os.path.join(self.results_dir, "{}.all_sites.mds.svg".format(self.name)), bbox_inches="tight")
+        fig.savefig(os.path.join(self.results_dir, "{}.all_sites.mds.svg".format(self.name + "corr")), bbox_inches="tight")
 
         # PCA
         pca = PCA()
@@ -866,7 +866,7 @@ class Analysis(object):
         axis.set_xlabel("PC")
         axis.set_ylabel("% variance")
         sns.despine(fig)
-        fig.savefig(os.path.join(self.results_dir, "{}.all_sites.pca.explained_variance.svg".format(self.name)), bbox_inches='tight')
+        fig.savefig(os.path.join(self.results_dir, "{}.all_sites.pca.explained_variance.svg".format(self.name + "corr")), bbox_inches='tight')
 
         # plot
         pcs = min(xx.shape[0] - 1, 8)
@@ -891,7 +891,7 @@ class Analysis(object):
                 if any([type(c) in [str, unicode] for c in by_label.keys()]) and len(by_label) <= 20:
                     # if not any([re.match("^\d", c) for c in by_label.keys()]):
                     axis[pc, i].legend(by_label.values(), by_label.keys())
-        fig.savefig(os.path.join(self.results_dir, "{}.all_sites.pca.svg".format(self.name)), bbox_inches="tight")
+        fig.savefig(os.path.join(self.results_dir, "{}.all_sites.pca.svg".format(self.name + "corr")), bbox_inches="tight")
 
         # Get PC1 loadings
         # import math
@@ -1499,6 +1499,81 @@ def DESeq_analysis(counts_matrix, experiment_matrix, variable, covariates, outpu
     return results
 
 
+def differential_regions(analysis, samples, variable, cell_type, output_dir, alpha=0.05):
+    """
+    Call differential regions based on custom statistical test for a single specific variable.
+    """
+    import itertools
+    from statsmodels.sandbox.stats.multicomp import multipletests
+
+    def stepwise_test(g):
+        from scipy.stats import mannwhitneyu
+
+        gg = sorted(g.groups.items())
+
+        stats = pd.DataFrame(columns=["stat", "p_value", "group_1", "group_2"])
+        for (g1, i), (g2, j) in itertools.izip(gg, gg[1:]):
+            a = i.get_level_values("sample_name").tolist()
+            b = j.get_level_values("sample_name").tolist()
+            print("Doing group '{}' vs group '{}'.\nSamples {} vs\nsamples {}.".format(g1, g2, ", ".join(a), ", ".join(b)))
+            # test regions only called as peak by any of these samples
+            to_test = analysis.support[analysis.support[a + b].sum(axis=1) != 0].index
+
+            for k, pos in enumerate(to_test):
+                if k % 100 == 0:
+                    print("region n. {}".format(k))
+                stats.loc[pos, ] = pd.Series(
+                    list(mannwhitneyu(analysis.accessibility[a].ix[pos], analysis.accessibility[j.get_level_values("sample_name")].ix[pos])) + [g1, g2],
+                    index=["stat", "p_value", "group_1", "group_2"])
+        return stats
+
+    def stepwise_change(df):
+        df = df[sorted(df.columns)]
+
+        stats = pd.DataFrame(columns=["log2FoldChange", "group_1", "group_2"])
+        for t1, t2 in itertools.izip(df.columns, df.columns[1:]):
+            fc = np.log2(df[t2] / df[t1]).to_frame(name="log2FoldChange")
+            fc["group_1"] = t1
+            fc["group_2"] = t2
+            stats = stats.append(fc)
+        return stats
+
+    # Make output dir
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # add index to support matrix
+    analysis.support.index = analysis.support['chrom'] + ":" + analysis.support['start'].astype(str) + "-" + analysis.support['end'].astype(str)
+
+    # for groups based on variables
+    # test
+    test_stats = stepwise_test(analysis.accessibility[[s.name for s in samples]].T.groupby(level=variable))
+
+    # calculate mean group fold change
+    means = stepwise_change(analysis.accessibility[[s.name for s in samples]].T.groupby(level=variable).mean().T)
+
+    # Join p-values and fold-changes
+    results = pd.merge(test_stats.reset_index(), means.reset_index(), how="left").set_index("index")
+    results["variable"] = variable
+    results["cell_type"] = cell_type
+
+    # Adjust p-values
+    results['padj'] = results.groupby(["cell_type", "variable", "group_1", "group_2"])["p_value"].transform(lambda x: multipletests(x, method="fdr_bh")[1])
+
+    # save all
+    results.to_csv(os.path.join(output_dir, "differential_regions.results.{}.csv".format(cell_type)), index=True)
+
+    # # Get significant
+    # diff = results[results['padj'] < 0.05]
+
+    # g = sns.clustermap(
+    #     # analysis.accessibility.T.groupby(level=variables).mean().T
+    #     c
+    # )
+    # g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    # g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+
+
 def lola(bed_files, universe_file, output_folder):
     """
     Performs location overlap analysis (LOLA) on bedfiles with regions sets.
@@ -1806,13 +1881,14 @@ def main():
     qc = ["pass_qc", "pass_qc_TK", "pass_counts", "pass_corr"]
     for s in prj.samples:
         s.pass_qc = not any([float(getattr(s, t)) == 0 for t in [a for a in qc if hasattr(s, a)]])
-    prj.samples = [s for s in prj.samples if s.library == "ATAC-seq" if s.pass_qc and s.include]
+    # prj.samples = [s for s in prj.samples if s.library == "ATAC-seq" if s.pass_qc and s.include]
+    prj.samples = [s for s in prj.samples if s.library == "ATAC-seq" if s.pass_qc]
 
     # Start analysis object
     analysis = Analysis(name="cll-time_course", prj=prj, samples=prj.samples)
 
     # GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
-    atacseq_samples = [sample for sample in analysis.samples if s.library == "ATAC-seq"]
+    atacseq_samples = [sample for sample in analysis.samples if sample.library == "ATAC-seq"]
     # Get consensus peak set from all samples
     analysis.get_consensus_sites(atacseq_samples)
     analysis.calculate_peak_support(analysis.samples, "summits")
@@ -1833,7 +1909,8 @@ def main():
     analysis.get_peak_chromatin_state()
     # Annotate peaks with closest gene, chromatin state,
     # genomic location, mean and variance measurements across samples
-    analysis.annotate(analysis.samples, quant_matrix=analysis.coverage_qnorm)
+    # analysis.annotate(analysis.samples, quant_matrix=analysis.coverage_qnorm)
+    analysis.annotate(analysis.samples, quant_matrix=analysis.coverage_gc_corrected)
     analysis.annotate_with_sample_metadata()
 
     # Plots
@@ -1858,11 +1935,16 @@ def main():
         "patient_gender", "ighv_mutation_status", "CD38_cells_percentage", "batch"]
 
     for cell_type in set([s.cell_type for s in atacseq_samples]):
-        analysis.differential_region_analysis(
+        # analysis.differential_region_analysis(
+        #     [s for s in atacseq_samples if s.cell_type == cell_type],
+        #     trait="timepoint", output_suffix="deseq_{}".format(cell_type),
+        #     variables=["timepoint", "batch"],
+        #     attributes=attributes if cell_type == "CLL" else patient_attributes)
+
+        differential_regions(
+            analysis,
             [s for s in atacseq_samples if s.cell_type == cell_type],
-            trait="timepoint", output_suffix="deseq_{}".format(cell_type),
-            variables=["timepoint", "batch"],
-            attributes=attributes if cell_type == "CLL" else patient_attributes)
+            variable="timepoint", cell_type=cell_type, output_dir=os.path.join("results", "ibrutinib_treatment"))
 
 
 if __name__ == '__main__':
