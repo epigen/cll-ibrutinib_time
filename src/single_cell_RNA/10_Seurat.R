@@ -1,9 +1,10 @@
-library("project.init")
-project.init2("cll-time_course")
+require("project.init")
+require(Seurat)
+require(dplyr)
+require(Matrix)
+require(methods)
 
-library(Seurat)
-library(dplyr)
-library(Matrix)
+project.init2("cll-time_course")
 
 out <- "10_Seurat/"
 dir.create(dirout(out))
@@ -17,6 +18,7 @@ nGene.cutoff <- 3000
 # f2 <- list.files(paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/"))
 # f[!grepl("\\.log$", f)]
 f <- c("PT_d0", "PT_d280", "PT_d120", "VZS_d0", "LiveBulk_10x_FE_FE1_d0_10xTK078", "LiveBulk_10x_FE_FE7_d120_10xTK078","LiveBulk_10x_KI_KI1_d0_10xTK078")
+f <- c("LiveBulk_10x_PBGY1_0d", "LiveBulk_10x_FE7_120d", "LiveBulk_10x_PBGY7_150d", "LiveBulk_10x_VZS7_120d")
 
 for(sample.x in f){
   outS <- paste0(out, sample.x,"/")
@@ -113,11 +115,15 @@ for(sample.x in f){
         for(i2 in (i1+1):length(clusters)){
           cl1 <- clusters[i1]
           cl2 <- clusters[i2]
-          cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, min.pct = 0.25)    
-          pdf(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".pdf"), height=15, width=15)
-          FeaturePlot(object=pbmc,features.plot=row.names(cluster.markers)[1:min(nrow(cluster.markers),9)],cols.use = c("grey","blue"),
-                      cells.use=names(pbmc@ident)[pbmc@ident %in% c(cl1, cl2)])
-          dev.off()
+          cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, min.pct = 0.25)
+          mm <- row.names(cluster.markers)
+          mm <- mm[mm %in% row.names(pbmc@data)]
+          if(length(mm) > 0){
+            pdf(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".pdf"), height=15, width=15)
+            FeaturePlot(object=pbmc,features.plot=row.names(cluster.markers)[1:min(nrow(cluster.markers),9)],cols.use = c("grey","blue"),
+                        cells.use=names(pbmc@ident)[pbmc@ident %in% c(cl1, cl2)])
+            dev.off()
+          }
           write.table(cluster.markers, dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv"), sep="\t", quote=F, row.names=TRUE)
         }
       }

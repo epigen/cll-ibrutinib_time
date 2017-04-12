@@ -28,7 +28,7 @@ array=("PT_d0" "PT_d120" "PT_d280" "PT_d280_15bp" "PT_d280_25bp" "PT_d280_50bp" 
 for file in ${array[@]}
 do            
     echo $file
-    sbatch --job-name="10X $file" --ntasks=4 --cpus-per-task=10 --mem=100000 --partition=longq \
+    sbatch --job-name="10X $file" --ntasks=4 --mem=100000 --partition=longq \
         --wrap="cellranger count --id=${file} --transcriptome=/home/nfortelny/resources_nfortelny/10X_Genomics/refdata-cellranger-GRCh38-1.2.0/ --fastqs=${basePW}/data/cellranger/HH5C7BBXX/${file}/ --cells=5000 --nopreflight" \
         --output="${file}.log"
 done
@@ -44,7 +44,23 @@ array=("LiveBulk_10x_FE_FE1_d0_10xTK078" "LiveBulk_10x_FE_FE7_d120_10xTK078" "Li
 for file in ${array[@]}
 do            
     echo $file
-    sbatch --job-name="10X $file" --ntasks=3 --cpus-per-task=3 --mem=50000 --partition=longq \
+    sbatch --job-name="10X $file" --ntasks=3 --mem=50000 --partition=longq \
         --wrap="cellranger count --id=$file --transcriptome=/home/nfortelny/resources_nfortelny/10X_Genomics/refdata-cellranger-GRCh38-1.2.0/ --fastqs=${inPath}/${file} --cells=5000 --nopreflight" \
+            --output="$file.log"
+done
+
+
+###
+### THE THIRD BATCH OF SAMPLES
+###
+inPath=/data/groups/lab_bsf/sequences/BSF_0309_HHNFKBBXX_l6_10x/fastq_path/HHNFKBBXX/
+outPath=/home/nfortelny/projects_shared/cll-time_course/results/cellranger_count/
+cd $outPath
+array=("LiveBulk_10x_FE7_120d" "LiveBulk_10x_PBGY1_0d" "LiveBulk_10x_PBGY7_150d" "LiveBulk_10x_VZS7_120d")
+for file in ${array[@]}
+do            
+    echo $file
+    sbatch --job-name="10X $file" --ntasks=9 --mem=180000 --partition=longq \
+        --wrap="cellranger count --id=$file --transcriptome=/home/nfortelny/resources_nfortelny/10X_Genomics/refdata-cellranger-GRCh38-1.2.0/ --fastqs=${inPath}/${file} --cells=5000 --localcores=9 --nopreflight" \
             --output="$file.log"
 done
