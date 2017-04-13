@@ -11,14 +11,17 @@ dir.create(dirout(out))
 
 
 
-sample.x <- "PT_d280"
+sample.x <- "PT_d120"
 mito.cutoff <- 0.15
 nGene.cutoff <- 3000
 
 # f2 <- list.files(paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/"))
 # f[!grepl("\\.log$", f)]
-f <- c("PT_d0", "PT_d280", "PT_d120", "VZS_d0", "LiveBulk_10x_FE_FE1_d0_10xTK078", "LiveBulk_10x_FE_FE7_d120_10xTK078","LiveBulk_10x_KI_KI1_d0_10xTK078")
-f <- c("LiveBulk_10x_PBGY1_0d", "LiveBulk_10x_FE7_120d", "LiveBulk_10x_PBGY7_150d", "LiveBulk_10x_VZS7_120d")
+# LiveBulk_10x_FE_FE7_d120_10xTK078 keeps failing
+f <- c("PT_d0", "PT_d120", "PT_d280", "VZS_d0", 
+       "LiveBulk_10x_FE_FE1_d0_10xTK078","LiveBulk_10x_KI_KI1_d0_10xTK078",
+       "LiveBulk_10x_PBGY1_0d", "LiveBulk_10x_FE7_120d", "LiveBulk_10x_PBGY7_150d", "LiveBulk_10x_VZS7_120d", "allData", "allData2")
+f <- c("allData2")
 
 for(sample.x in f){
   outS <- paste0(out, sample.x,"/")
@@ -27,9 +30,24 @@ for(sample.x in f){
   tryCatch({
     if(!file.exists(dirout(outS, sample.x,".RData"))){
       data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/",sample.x,"/outs/filtered_gene_bc_matrices/GRCh38/")
+      if(!dir.exists(data.path)){
+        data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/",sample.x,"/outs/filtered_gene_bc_matrices_mex/GRCh38/")
+      }
+      if(sample.x == "allData2"){
+        data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", "allData","/outs/filtered_gene_bc_matrices_mex/GRCh38/")
+      }
+      if(sample.x == "allDataBest2"){
+        data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", "allDataBest","/outs/filtered_gene_bc_matrices_mex/GRCh38/")
+      }
       
       # set up seurat object ----------------------------------------------------
       pbmc.data <- Read10X(data.path)
+      # Remove IGH genes
+      if(sample.x %in% c("allData2", "allDataBest2")){
+        allGenes <- rownames(pbmc.data)
+        ighGenes <- allGenes[grepl("^IGH", allGenes) & !grepl("^IGHMBP", allGenes)]
+        pbmc.data <- pbmc.data[allGenes[!allGenes %in% ighGenes],]
+      }
       pbmc <- new("seurat", raw.data = pbmc.data)
       pbmc <- Setup(pbmc, min.cells = 3, min.genes = 200, do.logNormalize = T, total.expr = 1e4, project = sample.x)
       
@@ -83,61 +101,8 @@ for(sample.x in f){
     } else {
       load(dirout(outS, sample.x,".RData"))
     }
-
-    # PLOT CLUSTERS
-    pDat <- data.table(pbmc@tsne.rot)
-    for(x in c(seq(0.5,0.9,0.1), 0.95)){
-      pDat[[paste0("Cluster_", x)]] <-pbmc@data.info[[paste0("ClusterNames_", x)]]
-      ggplot(pDat, aes_string(x="tSNE_1",y="tSNE_2", color=paste0("Cluster_", x))) + geom_point() + ggtitle(sample.x)
-      ggsave(dirout(outS, "Cluster_", x, ".pdf"))
-    }
     
-    write.table(pDat, dirout(outS,"Cluster.tsv"), sep="\t", quote=F, row.names=F)
-    
-    x <- 0.5
-    for(x in c(seq(0.5,0.9,0.1), 0.95)){
-      out.cl <- paste0(outS, "Cluster_", x, "/")
-      dir.create(dirout(out.cl))
-      pbmc@ident <- factor(pbmc@data.info[[paste0("ClusterNames_", x)]])
-      names(pbmc@ident) <- pbmc@cell.names # it needs those names apparently
-      clusters <- as.character(unique(pbmc@ident))
-      cl.i <- "0"
-      for(cl.i in clusters){
-        cluster.markers <- FindMarkers(pbmc,  ident.1 = cl.i, min.pct = 0.25)    
-        pdf(dirout(out.cl,"Markers_Cluster",cl.i,".pdf"), height=15, width=15)
-        FeaturePlot(pbmc, row.names(cluster.markers)[1:min(nrow(cluster.markers),9)],cols.use = c("grey","blue"))
-        dev.off()
-        write.table(cluster.markers, dirout(out.cl, "Markers_Cluster",cl.i, ".tsv"), sep="\t", quote=F, row.names=TRUE)
-      }
-      i1 <- 1
-      i2 <- 2
-      for(i1 in 1:(length(clusters)-1)){
-        for(i2 in (i1+1):length(clusters)){
-          cl1 <- clusters[i1]
-          cl2 <- clusters[i2]
-          cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, min.pct = 0.25)
-          mm <- row.names(cluster.markers)
-          mm <- mm[mm %in% row.names(pbmc@data)]
-          if(length(mm) > 0){
-            pdf(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".pdf"), height=15, width=15)
-            FeaturePlot(object=pbmc,features.plot=row.names(cluster.markers)[1:min(nrow(cluster.markers),9)],cols.use = c("grey","blue"),
-                        cells.use=names(pbmc@ident)[pbmc@ident %in% c(cl1, cl2)])
-            dev.off()
-          }
-          write.table(cluster.markers, dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv"), sep="\t", quote=F, row.names=TRUE)
-        }
-      }
-    }
-      
-    # CLUSTER DIFF GENES
-    str(pbmc)
-    
-    # PLOT MARKERS
-    markers <- c("CD14","CST3","CD3D","NKG7","CD8A","FCGR3A","NCAM1","CD79A","TRDC","CD1C", "GZMB", "MMP9")
-    
-    pdf(dirout(outS,"Markers.pdf"), height=15, width=15)
-    FeaturePlot(pbmc, markers[markers %in% rownames(pbmc@data)],cols.use = c("grey","blue"))
-    dev.off()
+    source("src/single_cell_RNA/10_2_Seurat_Script.R")
     
   }, error = function(e){
     print(e)
