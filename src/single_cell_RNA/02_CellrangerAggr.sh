@@ -23,3 +23,7 @@ sbatch --job-name="10x aggr cll_time_series" --ntasks=9 --mem=180000 --partition
 sbatch --job-name="10x aggr cll_time_series" --ntasks=9 --mem=180000 --partition=longq \
     --wrap="cellranger aggr --id=allDataBest --csv=$CODEBASE/cll-time_course/metadata/Aggregate_best.csv" \
     --output="allDataBest.log"
+
+sbatch --job-name="10x aggr cll_time_series" --ntasks=9 --mem=180000 --partition=longq \
+    --wrap="cellranger aggr --id=allDataBest_NoDownSampling --normalize=none --csv=$CODEBASE/cll-time_course/metadata/Aggregate_best.csv" \
+    --output="allDataBest_NoDownSampling.log"

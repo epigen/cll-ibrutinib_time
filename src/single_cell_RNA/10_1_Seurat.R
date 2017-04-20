@@ -7,25 +7,31 @@ require(methods)
 project.init2("cll-time_course")
 
 # Either analyze all data (if no args given) or jsut the sample given as args
+message("Analyzing all datasets")
+f <- c("PT_d0", "PT_d120", "PT_d280", "VZS_d0", 
+       "LiveBulk_10x_FE_FE1_d0_10xTK078","LiveBulk_10x_KI_KI1_d0_10xTK078",
+       "LiveBulk_10x_PBGY1_0d", "LiveBulk_10x_FE7_120d", "LiveBulk_10x_PBGY7_150d", "LiveBulk_10x_VZS7_120d", 
+       "allData", "allData2", "allDataBest", "allDataBest_NoDownSampling",
+       "allDataBest_noIGH", "allDataBest_NoDownSampling_noIGH"
+       )
+
 args = commandArgs(trailingOnly=TRUE)
-if (length(args) < 1) {
-  message("Analyzing all datasets")
-  f <- c("PT_d0", "PT_d120", "PT_d280", "VZS_d0", 
-         "LiveBulk_10x_FE_FE1_d0_10xTK078","LiveBulk_10x_KI_KI1_d0_10xTK078",
-         "LiveBulk_10x_PBGY1_0d", "LiveBulk_10x_FE7_120d", "LiveBulk_10x_PBGY7_150d", "LiveBulk_10x_VZS7_120d", 
-         "allData", "allData2", "allDataBest", "allDataBest_NoDownSampling")
-  f <- c("PT_d0", "PT_d280", "VZS_d0", 
-         "LiveBulk_10x_FE_FE1_d0_10xTK078","LiveBulk_10x_KI_KI1_d0_10xTK078",
-         "LiveBulk_10x_PBGY1_0d", "LiveBulk_10x_FE7_120d", "LiveBulk_10x_PBGY7_150d", "LiveBulk_10x_VZS7_120d", 
-         "allData", "allData2", "allDataBest", "allDataBest_NoDownSampling")
-} else {
-  f <- args[1]
+cellranger_filtered <- "filtered"
+if (length(args) > 0) {
+  cellranger_filtered <- args[1]
+  if (length(args) > 1) {
+    f <- args[2:length(args)]
+  }
 }
 
 
 # This tells Seurat whether to use the filtered or raw data matrices
 # cellranger_filtered <- "filtered"
-cellranger_filtered <- "raw"
+# cellranger_filtered <- "raw"
+
+if(!cellranger_filtered %in% c("raw", "filtered")){
+  cellranger_filtered <- "filtered"
+}
 
 out <- "10_Seurat/"
 if(cellranger_filtered == "raw"){
@@ -39,7 +45,7 @@ mito.cutoff <- 0.15
 nGene.cutoff <- 3000
 
 # Loop over samples and do analysis
-sample.x <- "PT_d120"
+sample.x <- "allData"
 for(sample.x in f){
   outS <- paste0(out, sample.x,"/")
   dir.create(dirout(outS))
@@ -53,18 +59,31 @@ for(sample.x in f){
       if(sample.x == "allData2"){ # in this case the same data is loaded by IGH genes are removed
         data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", "allData","/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
       }
+      if(grepl("\\_noIGH$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
+        data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_noIGH$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
+      }
       
       # set up seurat object ----------------------------------------------------
       pbmc.data <- Read10X(data.path)
       
       # Remove IGH genes
-      if(sample.x %in% c("allData2")){
+      if((sample.x %in% c("allData2")) | grepl("\\_noIGH$", sample.x)){
         allGenes <- rownames(pbmc.data)
         ighGenes <- allGenes[grepl("^IGH", allGenes) & !grepl("^IGHMBP", allGenes)]
         pbmc.data <- pbmc.data[allGenes[!allGenes %in% ighGenes],]
       }
       pbmc <- new("seurat", raw.data = pbmc.data)
       pbmc <- Setup(pbmc, min.cells = 3, min.genes = 200, do.logNormalize = T, total.expr = 1e4, project = sample.x)
+      
+      # Get samples in aggregated datasets
+      if(grepl("^allData$", sample.x) | grepl("^allData\\_", sample.x)){
+        pbmc@data.info[["sample"]] <- fread("metadata/Aggregate_all.csv")$library_id[as.numeric(gsub("^[A-Z]+\\-(\\d+)$", "\\1", colnames(pbmc@data)))]
+        pbmc@data.info[["sample"]] <- gsub("_10xTK078", "", gsub("LiveBulk_10x_", "", pbmc@data.info[["sample"]]))
+      }
+      if(grepl("^allDataBest", sample.x)){
+        pbmc@data.info[["sample"]] <- fread("metadata/Aggregate_best.csv")$library_id[as.numeric(gsub("^[A-Z]+\\-(\\d+)$", "\\1", colnames(pbmc@data)))]
+        pbmc@data.info[["sample"]] <- gsub("_10xTK078", "", gsub("LiveBulk_10x_", "", pbmc@data.info[["sample"]]))
+      }
       
       # Mito genes --------------------------------------------------------------
       mito.genes <- grep("^MT-", rownames(pbmc@data), value = T)
@@ -115,6 +134,19 @@ for(sample.x in f){
       save(pbmc, file=dirout(outS, sample.x,".RData"))
     } else {
       load(dirout(outS, sample.x,".RData"))
+      
+      # Get samples in aggregated datasets - where it wasn't previously done
+      if(grepl("^allData$", sample.x) | grepl("^allData\\_", sample.x)){
+        pbmc@data.info[["sample"]] <- fread("metadata/Aggregate_all.csv")$library_id[as.numeric(gsub("^[A-Z]+\\-(\\d+)$", "\\1", colnames(pbmc@data)))]
+      }
+      if(grepl("^allDataBest", sample.x)){
+        pbmc@data.info[["sample"]] <- fread("metadata/Aggregate_best.csv")$library_id[as.numeric(gsub("^[A-Z]+\\-(\\d+)$", "\\1", colnames(pbmc@data)))]
+      }
+      
+      if(!is.null(pbmc@data.info[["sample"]])){
+        pbmc@data.info[["sample"]] <- gsub("_10xTK078", "", gsub("LiveBulk_10x_", "", pbmc@data.info[["sample"]]))
+        save(pbmc, file=dirout(outS, sample.x,".RData"))
+      }
     }
     
     source("src/single_cell_RNA/10_2_Seurat_Script.R")

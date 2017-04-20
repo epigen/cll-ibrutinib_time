@@ -1,45 +1,5 @@
 print(dim(pbmc@data))
 
-# # PLOT MARKERS
-# message("Plotting markers")
-# markers.list = list(
-#   standard = c("CD14","CST3","CD3D","NKG7","CD8A","FCGR3A","NCAM1","CD79A","TRDC","CD1C", "GZMB", "MMP9"),
-#   macs = c("ITGAM","SIGLEC1","CD68","MRC1","CD163"),
-#   liver1 = c("TFRC","SLC20A1","SLC48A1","FLVCR1a","FLVCR1b","FLVCR1","SLC49A1","HBB","HBA1"),
-#   liver2 = c("HBG1","HBG2","HBA2","HBD","HBE1","HBZ","EPOR","TFR2","CD34"),
-#   liver3 = c("GYPA","GYPB","ALAS1","DMT1","GATA1","ALAS2","TFR2"),
-#   bdbioscience1 = c("CD3G", 
-#                     "CD4", 
-#                     "CD8A",
-#                     "CD19", 
-#                     "MS4A1", # CD20
-#                     "ITGAX", # CD11c
-#                     "IL3RA", # CD123
-#                     "NCAM1", # CD56 
-#                     "CD34"),
-#   bdbioscience2 = c("CD14", 
-#                     "CD33", 
-#                     "CEACAM8", # CD66b 
-#                     "ITGA2B", # CD41
-#                     "ITGB3", # CD61
-#                     "SELP", # CD62
-#                     "GYPA", # CD 235a
-#                     "MCAM", # CD 146
-#                     "EPCAM" # CD 326
-#   )
-# )
-# marker.name <- "macs"
-# # Original attempt
-# rownames(pbmc@data)[grepl("CEA",rownames(pbmc@data))]
-# for(marker.name in names(markers.list)){
-#   markers <- markers.list[[marker.name]]
-#   message(marker.name, " missing:")
-#   print(markers[!markers %in% rownames(pbmc@data)])
-#   pdf(dirout(outS,"Markers_",marker.name,".pdf"), height=15, width=15)
-#   FeaturePlot(pbmc, markers[markers %in% rownames(pbmc@data)],cols.use = c("grey","blue"))
-#   dev.off()
-# }
-
 # PLOT MARKERS 2
 if(file.exists("metadata/CellMarkers.csv")){
   markers <- fread("metadata/CellMarkers.csv")[Marker != ""]
@@ -56,7 +16,6 @@ if(file.exists("metadata/CellMarkers.csv")){
   }
 }
 
-
 # PLOT UMIS ---------------------------------------------------------------
 message("Plotting UMIs")
 umip <- ggplot(data.table(pbmc@tsne.rot, UMIs=pbmc@data.info$nUMI), aes(x=tSNE_1,y=tSNE_2, color=log10(UMIs))) + 
@@ -65,7 +24,7 @@ umip <- ggplot(data.table(pbmc@tsne.rot, UMIs=pbmc@data.info$nUMI), aes(x=tSNE_1
 ggsave(dirout(outS, "UMI.pdf"),plot=umip)
 
 # Plot datasets
-if(sample.x %in% c("allData", "allData2")){
+if(grepl("^allData\\_", sample.x)){
   marDat <- data.table(
     pbmc@tsne.rot,
     sample=fread("metadata/Aggregate_all.csv")$library_id[as.numeric(gsub("^[A-Z]+\\-(\\d+)$", "\\1", colnames(pbmc@data)))])
@@ -76,7 +35,18 @@ if(sample.x %in% c("allData", "allData2")){
   marDat$sample2 <- gsub("(\\d|\\_)", "", substr(gsub("LiveBulk_10x_", "", marDat$sample), 0,3))
   ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=sample2)) + geom_point(alpha=0.5)
   ggsave(dirout(outS, "Samples2_tSNE.pdf"), height=7, width=7)
-  
+}
+if(grepl("^allDataBest\\_", sample.x)){
+  marDat <- data.table(
+    pbmc@tsne.rot,
+    sample=fread("metadata/Aggregate_best.csv")$library_id[as.numeric(gsub("^[A-Z]+\\-(\\d+)$", "\\1", colnames(pbmc@data)))])
+  ggplot(marDat, aes(x=sample)) + geom_bar() + coord_flip()
+  ggsave(dirout(outS, "Samples_counts.pdf"), height=7, width=7)
+  ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=sample)) + geom_point()
+  ggsave(dirout(outS, "Samples_tSNE.pdf"), height=7, width=10)
+  marDat$sample2 <- gsub("(\\d|\\_)", "", substr(gsub("LiveBulk_10x_", "", marDat$sample), 0,3))
+  ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=sample2)) + geom_point(alpha=0.5)
+  ggsave(dirout(outS, "Samples2_tSNE.pdf"), height=7, width=7)
 }
 
 # PLOT CLUSTERS
@@ -94,28 +64,6 @@ write.table(pDat, dirout(outS,"Cluster.tsv"), sep="\t", quote=F, row.names=F)
 clusterCounts <- pDat[,-c("tSNE_1", "tSNE_2"), with=TRUE]
 clusterCounts <- do.call(rbind, lapply(names(clusterCounts), function(nam) data.table(clusterCounts[[nam]], nam)))
 write.table(clusterCounts[, .N, by=c("V1", "nam")], dirout(outS, "ClusterCounts.tsv"), sep="\t", quote=F,row.names=F)
-
-# HEATMAP PLOTS
-# x <- 0.5
-# pDat <- pbmc@scale.data
-# pDat <- pDat[apply(pDat!=0, 1, sum) > ncol(pDat)/2,]
-# pDat <- pDat[names(sort(apply(pDat, 1, var), decreasing=TRUE)[1:2000]),]
-# pDat[pDat > 4] <- 4
-# pDat[pDat < -4] <- 4
-# for(x in c(seq(0.5,0.9,0.1), 0.95)){
-#   if(!file.exists(dirout(outS,"Clusters_",x,"_HM.jpg"))){
-#     try({
-#       colAnnot = data.frame(Cluster=pbmc@data.info[[paste0("ClusterNames_", x)]], row.names=colnames(pbmc@data))
-#       pDat <- pDat[,colnames(pbmc@data)[order(pbmc@data.info[[paste0("ClusterNames_", x)]])]] # sorted by cluster
-#       jpeg(dirout(outS,"Clusters_",x,"_HM.jpg"), height=1500, width=1500)
-#       pheatmap(pDat, scale="none",show_rownames=FALSE,show_colnames=FALSE,annotation_col=colAnnot,cluster_cols=FALSE,color=colorRampPalette(c("blue", "black","red"))(50))
-#       dev.off()
-#       jpeg(dirout(outS,"Clusters_",x,"_HM_column.jpg"), height=1500, width=1500)
-#       pheatmap(pDat, scale="none",show_rownames=FALSE,show_colnames=FALSE,annotation_col=colAnnot,cluster_cols=TRUE,color=colorRampPalette(c("blue", "black","red"))(50))
-#       dev.off()
-#     }, silent=TRUE)
-#   }
-# }
 
 
 # Markers for each cluster ------------------------------------------------
