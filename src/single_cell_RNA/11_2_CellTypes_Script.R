@@ -15,7 +15,19 @@ grouping <- list(
     "NurseLikeCells" = c(11),
     "Tcells" = c(2,3,7,8),
     "Bcells" = c(0,1,4,6,9,12)
-  )
+    ),
+  "allDataBest_NoDownSampling_noIGH" = list(
+    "Monos" = c(5,10),
+    "NurseLikeCells" = c(12),
+    "Tcells" = c(2,3,6,9),
+    "Bcells" = c(0,1,4,7,8,11,13)
+    ),
+  "allDataBest_noIGH" = list(
+    "Monos" = c(5,10,13),
+    "NurseLikeCells" = c(11),
+    "Tcells" = c(2,3,7,8),
+    "Bcells" = c(0,1,4,6,9,12,14)
+    )
 )
 
 # ARGUMENTS ---------------------------------------------------------------
@@ -23,7 +35,7 @@ sample.x <- "allDataBest"
 cell <- "Monos"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 2) {
-  message("Need two arguments: 1 - sample, 2 - celltype")
+  stop("Need two arguments: 1 - sample, 2 - celltype")
 } else {
   sample.x <- args[1]
   cell <- args[2]
@@ -39,18 +51,16 @@ if (!cell %in% names(grouping[[sample.x]])) {
 
 # LOAD DATA FROM ORIGINAL DATASET -----------------------------------------
 groups <- grouping[[sample.x]]
-outOrig <- paste0("10_Seurat/", sample.x,"/")
-load(dirout(outOrig, sample.x,".RData"))
-pbmcOrig <- pbmc
-
-
 
 # CREATE DATASET FOR SPECIFIC CELLTYPE ------------------------------------
 outS <- paste0(out, sample.x, "_", cell, "/")
 dir.create(dirout(outS))
 
 if(!file.exists(dirout(outS, cell,".RData"))){
-
+  outOrig <- paste0("10_Seurat/", sample.x,"/")
+  load(dirout(outOrig, sample.x,".RData"))
+  pbmcOrig <- pbmc
+  
   # SUBSET DATA -------------------------------------------------------------
   str(cellToKeep <- rownames(pbmcOrig@data.info)[which(pbmcOrig@data.info[["ClusterNames_0.5"]] %in% as.character(groups[[cell]]))])
   pbmc <- SubsetData(pbmcOrig, cells.use = cellToKeep)

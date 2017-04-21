@@ -1,0 +1,52 @@
+require("project.init")
+project.init2("cll-time_course")
+out <- "11_CellTypes/"
+dir.create(dirout(out))
+
+dirs <-list.dirs(dirout(out), recursive=F)
+
+xxx <- data.table(do.call(rbind, strsplit(gsub(".*\\/(.+)$", "\\1", dirs), "_")))
+
+samples <- unique(xxx$V1)
+
+for(sample.x in samples){
+  cells <- xxx[V1 == sample.x]$V2
+  
+  pDat <- do.call(rbind, lapply(cells, function(cc){
+    dat <- fread(dirout(out, sample.x, "_", cc, "/","Cellcounts.tsv"))
+    dat$cell <- cc
+    colnames(dat)[2] <- "cnt"
+    return(dat)
+    }))
+  
+  pDat$sample <- factor(pDat$sample, levels=sort(unique(pDat$sample)))
+  
+  ggplot(pDat, aes(y=sample, x=cell, fill=fraction)) + geom_tile() + theme_bw(24)+ theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  ggsave(dirout(out, sample.x, "Fractions.pdf"), width=10, height=10)
+  
+  ggplot(pDat, aes(y=sample, x=cell, fill=log10(cnt+1))) + geom_tile() + theme_bw(24)+ theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  ggsave(dirout(out, sample.x, "Counts.pdf"), width=10, height=10)
+}
+
+
+
+# FACS Data ---------------------------------------------------------------
+facsDat <- fread("metadata/facs_quantification_17042017.csv")
+colnames(facsDat) <- make.names(gsub("(\\+|\\_| )", "", colnames(facsDat)))
+facsDat <- facsDat[!apply(is.na(facsDat), 1, sum) > ncol(facsDat)/2]
+facsDat <- facsDat[,(!apply(is.na(facsDat), 2, sum) > nrow(facsDat)/2), with=F]
+
+facsDat[, Bcells := CD5CLL + normalBcells]
+facsDat[, Monos := CD14Myeloidcells + 0]
+facsDat[, Tcells2 := CD3Tcells + CD56NKcells + CD56NKcells + CD4Tcells + NKTcells + Tcells]
+
+facsDat$PatTime <- with(facsDat, paste0(PatientID, "_",time, "d"))
+
+pat <- "PT"
+for(pat in unique(facsDat$PatientID)){
+  pDat <- facsDat[PatientID == pat][,c("PatTime", "Tcells2", "Bcells", "Monos"), with=F]
+  pDat$PatTime <- factor(pDat$PatTime, levels=pDat$PatTime)
+  pDat <- melt(pDat)
+  ggplot(pDat, aes(x=PatTime, color=variable,y=value, group=variable)) + geom_line(size=3) + theme_bw(24)+ theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  ggsave(dirout(out, "FACS", "_", pat, ".pdf"), width=8, height=8)
+}

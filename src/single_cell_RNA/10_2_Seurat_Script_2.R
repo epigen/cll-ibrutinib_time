@@ -1,5 +1,8 @@
 print(dim(pbmc@data))
 
+require(pheatmap)
+require(ggplot2)
+
 # PLOT MARKERS 2
 if(file.exists("metadata/CellMarkers.csv")){
   markers <- fread("metadata/CellMarkers.csv")[Marker != ""]
@@ -120,10 +123,11 @@ for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
 # Those markers are specific from the pairwise comparisons
 message("Plotting second type of cluster markers")
 cl.x <- "ClusterNames_0.5"
+cl.x <- "sample"
 for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
   if(!is.null(pbmc@data.info[[cl.x]])){
+    x <- gsub("ClusterNames_","", cl.x)
     if(!file.exists(dirout(outS, "Cluster",x,"_HM", ".pdf"))){
-      x <- gsub("ClusterNames_","", cl.x)
       out.cl <- paste0(outS, "Cluster_",x, "/")
       pbmc@ident <- factor(pbmc@data.info[[cl.x]])
       names(pbmc@ident) <- pbmc@cell.names # it needs those names apparently
@@ -168,3 +172,61 @@ for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
     }
   }
 }
+
+
+
+
+
+# ENRICHR -----------------------------------------------------------------
+message("EnrichR on markers")
+library(enrichR) #devtools::install_github("definitelysean/enrichR")
+cl.x <- "sample"
+cl.x <- "ClusterNames_0.5"
+for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
+  if(!is.null(pbmc@data.info[[cl.x]])){
+    x <- gsub("ClusterNames_","", cl.x)
+    if(!file.exists(dirout(outS, cl.x, "_Enrichr.tsv"))){
+      out.cl <- paste0(outS, "Cluster_",x, "/")
+      enrichRes <- data.table()
+      f <- list.files(dirout(out.cl))
+      f <- f[grepl("_version2.tsv$", f)]
+      genes <- lapply(f, function(fx) fread(dirout(out.cl, fx)))
+      names(genes) <- gsub("Markers_", "", gsub("_version2.tsv","",f))
+      genes <- genes[sapply(genes, ncol) == 5]
+      genes <- lapply(genes, function(fx) fx[V4 > 0.1]$V3)
+      genes <- genes[sapply(genes, length) > 4]
+      if(length(genes) > 2){
+        for(grp.x in names(genes)){
+          ret=try(as.data.table(enrichGeneList(genes[[grp.x]],databases = c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas"))),silent = FALSE)
+          if(!any(grepl("Error",ret)) && nrow(ret) > 0){
+            enrichRes <- rbind(enrichRes, data.table(ret, grp = grp.x))
+          }
+        }
+        
+        enrichRes$n <- sapply(strsplit(enrichRes$genes,","), length)
+        enrichRes <- enrichRes[n > 3][qval < 0.05]
+        enrichRes$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", enrichRes$category)
+        enrichRes$category <- make.unique(substr(enrichRes$category, 0, 50))
+        write.table(enrichRes, file=dirout(outS, cl.x, "_Enrichr.tsv"), sep="\t", quote=F, row.names=F)
+              
+        if(nrow(enrichRes) > 2){
+          pDat <- dcast.data.table(enrichRes, make.names(category) ~ grp, value.var="qval")
+          pDatM <- as.matrix(pDat[,-"category", with=F])
+          row.names(pDatM) <- pDat$category
+          pDatM[is.na(pDatM)] <- 1
+          str(pDatM <- pDatM[apply(pDatM <= 10e5,1,sum)>1,])
+          str(pDatM <- pDatM[,apply(pDatM <= 10e5,2,sum)>1])
+          pDatM <- -log10(pDatM)
+          pDatM[pDatM > 4] <- 4
+          pDatM[pDatM < 1.3] <- 0
+          pdf(dirout(outS, cl.x, "_Enrichr.pdf"),onefile=FALSE, width=min(29, 6+ ncol(pDatM)*0.3), height=min(29, nrow(pDatM)*0.3 + 4))
+          pheatmap(pDatM) #, color=gray.colors(12, start=0, end=1), border_color=NA)
+          dev.off()
+        }
+      }
+    }
+  }
+}
+
+
+

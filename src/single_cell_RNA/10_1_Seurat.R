@@ -7,7 +7,7 @@ require(methods)
 project.init2("cll-time_course")
 
 # Either analyze all data (if no args given) or jsut the sample given as args
-message("Analyzing all datasets")
+# message("Analyzing all datasets")
 f <- c("PT_d0", "PT_d120", "PT_d280", "VZS_d0", 
        "LiveBulk_10x_FE_FE1_d0_10xTK078","LiveBulk_10x_KI_KI1_d0_10xTK078",
        "LiveBulk_10x_PBGY1_0d", "LiveBulk_10x_FE7_120d", "LiveBulk_10x_PBGY7_150d", "LiveBulk_10x_VZS7_120d", 
@@ -139,7 +139,7 @@ for(sample.x in f){
       if(grepl("^allData$", sample.x) | grepl("^allData\\_", sample.x)){
         pbmc@data.info[["sample"]] <- fread("metadata/Aggregate_all.csv")$library_id[as.numeric(gsub("^[A-Z]+\\-(\\d+)$", "\\1", colnames(pbmc@data)))]
       }
-      if(grepl("^allDataBest", sample.x)){
+      if(grepl("^allDataBest$", sample.x) | grepl("^allDataBest\\_", sample.x)){
         pbmc@data.info[["sample"]] <- fread("metadata/Aggregate_best.csv")$library_id[as.numeric(gsub("^[A-Z]+\\-(\\d+)$", "\\1", colnames(pbmc@data)))]
       }
       
