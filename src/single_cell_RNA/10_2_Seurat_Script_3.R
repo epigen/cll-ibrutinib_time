@@ -3,11 +3,22 @@ print(dim(pbmc@data))
 require(pheatmap)
 require(ggplot2)
 require(doMC)
+require(pryr)
 
-registerDoMC(cores=9)
+# manage memory and number of tasks used
+mem_u <- as.numeric(mem_used())/10**6
+cores_u = max(1, min(12, floor(180000/mem_u)-1))
+if(is.na(mem_u)) cores_u <- 3
+message("Memory used: ", mem_u, " cores: ",cores_u)
+registerDoMC(cores=cores_u)
+
 enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location")
-clusterings <- colnames(pbmc@data.info)
+
+# use colnames from pbmc@data.info as clusterings
+# only those with >= 2 groups with > 1 cell
+clusterings <- colnames(pbmc@data.info)[apply(pbmc@data.info, 2, function(x) sum(table(x[x!="IGNORED"])>1)>1)]
 clusterings <- clusterings[!grepl("res", clusterings) & !clusterings %in% c("nUMI", "nGene", "orig.ident", "percent.mito")]
+
 
 # PLOT MARKERS 2
 message("Plotting Known marker genes")
@@ -34,32 +45,37 @@ umip <- ggplot(data.table(pbmc@tsne.rot, UMIs=pbmc@data.info$nUMI), aes(x=tSNE_1
 ggsave(dirout(outS, "UMI.pdf"),plot=umip)
 
 
-# AGGREGATED DATA ANALYSIS ------------------------------------------------
-# Plot samples
-message("Plotting samples per dataset")
-if(!is.null(pbmc@data.info[["sample"]])){
-  marDat <- data.table(
-    pbmc@tsne.rot,
-    sample=pbmc@data.info[["sample"]])
-  ggplot(marDat, aes(x=sample)) + geom_bar() + coord_flip()
-  ggsave(dirout(outS, "Samples_counts.pdf"), height=7, width=7)
-  ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=sample)) + geom_point()
-  ggsave(dirout(outS, "Samples_tSNE.pdf"), height=7, width=10)
-  marDat$sample2 <- gsub("(\\d|\\_)", "", substr(gsub("LiveBulk_10x_", "", marDat$sample), 0,3))
-  ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=sample2)) + geom_point(alpha=0.5)
-  ggsave(dirout(outS, "Samples2_tSNE.pdf"), height=7, width=7)
-}
+# # AGGREGATED DATA ANALYSIS ------------------------------------------------
+# # Plot samples
+# message("Plotting samples per dataset")
+# if(!is.null(pbmc@data.info[["sample"]])){
+#   marDat <- data.table(
+#     pbmc@tsne.rot,
+#     sample=pbmc@data.info[["sample"]])
+#   ggplot(marDat, aes(x=sample)) + geom_bar() + coord_flip()
+#   ggsave(dirout(outS, "Samples_counts.pdf"), height=7, width=7)
+#   ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=sample)) + geom_point()
+#   ggsave(dirout(outS, "Samples_tSNE.pdf"), height=7, width=10)
+#   marDat$sample2 <- gsub("(\\d|\\_)", "", substr(gsub("LiveBulk_10x_", "", marDat$sample), 0,3))
+#   ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=sample2)) + geom_point(alpha=0.5)
+#   ggsave(dirout(outS, "Samples2_tSNE.pdf"), height=7, width=7)
+# }
 
 # PLOT CLUSTERS
 message("Plotting Clusters")
 pDat <- data.table(pbmc@tsne.rot)
-for(x in c(seq(0.5,0.9,0.1), 0.95)){
-  label.x <- paste0("Cluster_",x)
-  pDat[[label.x]] <-pbmc@data.info[[paste0("ClusterNames_", x)]]
-  labelCoordinates <- pDat[,.(tSNE_1=median(tSNE_1), tSNE_2=median(tSNE_2)),by=label.x]
-  ggplot(pDat, aes_string(x="tSNE_1",y="tSNE_2", color=label.x)) + geom_point() + ggtitle(sample.x) +
-    geom_label(data=labelCoordinates, aes_string(x="tSNE_1", y="tSNE_2", label=label.x), color="black", alpha=0.5)
-  ggsave(dirout(outS, label.x, ".pdf"))
+cl.x <- "patient_PT"
+for(cl.x in clusterings){
+  x <- gsub("ClusterNames_","", cl.x)
+  pDat[[cl.x]] <-pbmc@data.info[[cl.x]]
+  labelCoordinates <- pDat[,.(tSNE_1=median(tSNE_1), tSNE_2=median(tSNE_2)),by=cl.x]
+  
+  ggplot(pDat[get(cl.x) != "IGNORED"], aes_string(x=cl.x)) + geom_bar() + coord_flip()
+  ggsave(dirout(outS, "Cluster_counts_", x, ".pdf"))  
+  
+  ggplot(pDat, aes_string(x="tSNE_1",y="tSNE_2", color=cl.x)) + geom_point() + ggtitle(sample.x) +
+    geom_label(data=labelCoordinates, aes_string(x="tSNE_1", y="tSNE_2", label=cl.x), color="black", alpha=0.5)
+  ggsave(dirout(outS, "Cluster_tSNE_", x, ".pdf"))
 }
 write.table(pDat, dirout(outS,"Cluster.tsv"), sep="\t", quote=F, row.names=F)
 clusterCounts <- pDat[,-c("tSNE_1", "tSNE_2"), with=TRUE]
@@ -69,8 +85,9 @@ write.table(clusterCounts[, .N, by=c("V1", "nam")], dirout(outS, "ClusterCounts.
 
 # Markers for each cluster ------------------------------------------------
 message("Plotting cluster Markers")
-cl.x <- "ClusterNames_0.95"
-for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
+cl.x <- "patient_PT"
+# for(cl.x in clusterings){
+foreach(cl.x = clusterings) %dopar% { 
   if(!is.null(pbmc@data.info[[cl.x]])){
     x <- gsub("ClusterNames_","", cl.x)
     out.cl <- paste0(outS, "Cluster_",x, "/")
@@ -100,7 +117,7 @@ for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
 message("Plotting cluster differences")
 cl.x <- "ClusterNames_0.5"
 # for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
-foreach(cl.x = c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))) %dopar% {  
+foreach(cl.x = clusterings) %dopar% {  
   if(!is.null(pbmc@data.info[[cl.x]])){
     x <- gsub("ClusterNames_","", cl.x)
     out.cl <- paste0(outS, "Cluster_",x, "/")
@@ -139,11 +156,11 @@ foreach(cl.x = c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))) %
 # Those markers are specific from the pairwise comparisons
 message("Plotting second type of cluster markers")
 cl.x <- "ClusterNames_0.5"
-cl.x <- "sample"
-for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
+cl.x <- "patient"
+for(cl.x in clusterings){
   if(!is.null(pbmc@data.info[[cl.x]])){
     x <- gsub("ClusterNames_","", cl.x)
-    if(!file.exists(dirout(outS, "Cluster",x,"_HM", ".pdf"))){
+    if(!file.exists(dirout(outS, "Cluster_HM_",x, ".pdf"))){
       out.cl <- paste0(outS, "Cluster_",x, "/")
       pbmc@ident <- factor(pbmc@data.info[[cl.x]])
       names(pbmc@ident) <- pbmc@cell.names # it needs those names apparently
@@ -183,7 +200,7 @@ for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
       }
       # Plot for all clusters heatmap
       cllDiffSummary <- allClDiff[,.(minDiff = min(diff2),N=.N), by=c("up", "gene")][N == length(clusters)-1][,rank := rank(-minDiff), by="up"]
-      pdf(dirout(outS, "Cluster",x,"_HM", ".pdf"), width=10, height=min(29, nrow(cllDiffSummary[rank < 20])/10))
+      pdf(dirout(outS, "Cluster_HM_",x, ".pdf"), width=10, height=min(29, nrow(cllDiffSummary[rank < 20])/10))
       DoHeatmap(pbmc, genes.use=cllDiffSummary[rank < 20][order(up)]$gene,order.by.ident=TRUE,slim.col.label=TRUE,remove.key=TRUE)
       dev.off()
     }
@@ -197,12 +214,12 @@ for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
 # ENRICHR -----------------------------------------------------------------
 message("EnrichR on markers")
 library(enrichR) #devtools::install_github("definitelysean/enrichR")
-cl.x <- "sample"
+cl.x <- "patient"
 cl.x <- "ClusterNames_0.5"
-for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
+for(cl.x in clusterings){
   if(!is.null(pbmc@data.info[[cl.x]])){
     x <- gsub("ClusterNames_","", cl.x)
-    if(!file.exists(dirout(outS, cl.x, "_Enrichr.tsv"))){
+#     if(!file.exists(dirout(outS, "Enrichr_",x,".tsv"))){
       out.cl <- paste0(outS, "Cluster_",x, "/")
       enrichRes <- data.table()
       f <- list.files(dirout(out.cl))
@@ -224,7 +241,7 @@ for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
         enrichRes <- enrichRes[n > 3][qval < 0.05]
         enrichRes$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", enrichRes$category)
         enrichRes$category <- make.unique(substr(enrichRes$category, 0, 50))
-        write.table(enrichRes, file=dirout(outS, cl.x, "_Enrichr.tsv"), sep="\t", quote=F, row.names=F)
+        write.table(enrichRes, file=dirout(outS, "Enrichr_",x,".tsv"), sep="\t", quote=F, row.names=F)
               
         if(nrow(enrichRes) > 2 & length(unique(enrichRes$grp)) > 1){
           pDat <- dcast.data.table(enrichRes, make.names(category) ~ grp, value.var="qval")
@@ -236,12 +253,12 @@ for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
           pDatM <- -log10(pDatM)
           pDatM[pDatM > 4] <- 4
           pDatM[pDatM < 1.3] <- 0
-          pdf(dirout(outS, cl.x, "_Enrichr.pdf"),onefile=FALSE, width=min(29, 6+ ncol(pDatM)*0.3), height=min(29, nrow(pDatM)*0.3 + 4))
+          pdf(dirout(outS, "Enrichr_",x,".pdf"),onefile=FALSE, width=min(29, 6+ ncol(pDatM)*0.3), height=min(29, nrow(pDatM)*0.3 + 4))
           pheatmap(pDatM) #, color=gray.colors(12, start=0, end=1), border_color=NA)
           dev.off()
         }
       }
-    }
+#     }
   }
 }
 

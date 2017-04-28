@@ -14,25 +14,33 @@ grouping <- list(
     "Monos" = c(10,5),
     "NurseLikeCells" = c(11),
     "Tcells" = c(2,3,7,8),
-    "Bcells" = c(0,1,4,6,9,12)
+    "Bcells" = c(0,1,4,6,9,12),
+    "clustering" = "ClusterNames_0.5"
     ),
   "allDataBest_NoDownSampling_noIGH" = list(
-    "Monos" = c(5,10),
-    "NurseLikeCells" = c(12),
-    "Tcells" = c(2,3,6,9),
-    "Bcells" = c(0,1,4,7,8,11,13)
+    "Monos" = c(6,11),
+    "NurseLikeCells" = c(16),
+    "NKcells" = c(10),
+    "Tcells1" = c(14),
+    "Tcells2" = c(8,13),
+    "Tcells3" = c(1,2),
+    "Bcells" = c(0,3,4,5,7,9,15,18),
+    "clustering" = "ClusterNames_0.95"
     ),
   "allDataBest_noIGH" = list(
-    "Monos" = c(5,10,13),
-    "NurseLikeCells" = c(11),
-    "Tcells" = c(2,3,7,8),
-    "Bcells" = c(0,1,4,6,9,12,14)
+    "Monos" = c(6,12),
+    "NurseLikeCells" = c(14),
+    "NKcells" = c(10),
+    "Tcells1" = c(9),
+    "Tcells2" = c(2,7,5),
+    "Bcells" = c(0,1,3,4,8,11,13,15),
+    "clustering" = "ClusterNames_0.95"
     )
 )
 
 # ARGUMENTS ---------------------------------------------------------------
-sample.x <- "allDataBest"
-cell <- "Monos"
+sample.x <- "allDataBest_noIGH"
+cell <- "Tcells2"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 2) {
   stop("Need two arguments: 1 - sample, 2 - celltype")
@@ -62,7 +70,7 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   pbmcOrig <- pbmc
   
   # SUBSET DATA -------------------------------------------------------------
-  str(cellToKeep <- rownames(pbmcOrig@data.info)[which(pbmcOrig@data.info[["ClusterNames_0.5"]] %in% as.character(groups[[cell]]))])
+  str(cellToKeep <- rownames(pbmcOrig@data.info)[which(pbmcOrig@data.info[[groups[["clustering"]]]] %in% as.character(groups[[cell]]))])
   pbmc <- SubsetData(pbmcOrig, cells.use = cellToKeep)
   
   # COUNT CELLS -------------------------------------------------------------
@@ -83,7 +91,7 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = T)
   
   # Clustering
-  for(x in c(seq(0.5,0.9,0.1), 0.95)){
+  for(x in c(seq(0.5,0.9,0.1))){
     pbmc <- FindClusters(pbmc, pc.use = 1:10, resolution = x, print.output = 0, save.SNN = T)
     pbmc <- StashIdent(pbmc, save.name = paste0("ClusterNames_", x))
   }
@@ -93,4 +101,14 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   load(file=dirout(outS, cell,".RData"))
 }
 
-source("src/single_cell_RNA/10_2_Seurat_Script_2.R")
+if(is.null(pbmc@data.info[["patient"]])){
+  pbmc@data.info[["patient"]] <- gsub("_.*", "", gsub("\\d", "", substr(gsub("LiveBulk_10x_", "", pbmc@data.info[["sample"]]), 0,6)))
+  
+  for(pat in unique(pbmc@data.info[["patient"]])){
+    res <- pbmc@data.info[["sample"]]
+    res[!grepl(paste0(pat, "\\d?_(d\\d+|\\d+d)"), pbmc@data.info[["sample"]])] <- "IGNORED"
+    pbmc@data.info[[paste0("pat_",pat)]] <- res
+  }
+}
+
+source("src/single_cell_RNA/10_2_Seurat_Script_3.R")

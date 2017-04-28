@@ -12,7 +12,8 @@ f <- c("PT_d0", "PT_d120", "PT_d280", "VZS_d0",
        "LiveBulk_10x_FE_FE1_d0_10xTK078","LiveBulk_10x_KI_KI1_d0_10xTK078",
        "LiveBulk_10x_PBGY1_0d", "LiveBulk_10x_FE7_120d", "LiveBulk_10x_PBGY7_150d", "LiveBulk_10x_VZS7_120d", 
        "allData", "allData2", "allDataBest", "allDataBest_NoDownSampling",
-       "allDataBest_noIGH", "allDataBest_NoDownSampling_noIGH"
+       "allDataBest_noIGH", "allDataBest_NoDownSampling_noIGH",
+       "allDataBest_NoDownSampling_tissueGenes"
        )
 
 args = commandArgs(trailingOnly=TRUE)
@@ -24,6 +25,9 @@ if (length(args) > 0) {
   }
 }
 
+
+
+seurat.min.genes <- 200
 
 # This tells Seurat whether to use the filtered or raw data matrices
 # cellranger_filtered <- "filtered"
@@ -62,6 +66,9 @@ for(sample.x in f){
       if(grepl("\\_noIGH$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
         data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_noIGH$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
       }
+      if(grepl("\\_tissueGenes$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
+        data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_tissueGenes$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
+      }
       
       # set up seurat object ----------------------------------------------------
       pbmc.data <- Read10X(data.path)
@@ -72,8 +79,10 @@ for(sample.x in f){
         ighGenes <- allGenes[grepl("^IGH", allGenes) & !grepl("^IGHMBP", allGenes)]
         pbmc.data <- pbmc.data[allGenes[!allGenes %in% ighGenes],]
       }
+      
+      # Make Seurat object
       pbmc <- new("seurat", raw.data = pbmc.data)
-      pbmc <- Setup(pbmc, min.cells = 3, min.genes = 200, do.logNormalize = T, total.expr = 1e4, project = sample.x)
+      pbmc <- Setup(pbmc, min.cells = 3, min.genes = seurat.min.genes, do.logNormalize = T, total.expr = 1e4, project = sample.x)
       
       # Get samples in aggregated datasets
       if(grepl("^allData$", sample.x) | grepl("^allData\\_", sample.x)){
@@ -107,8 +116,16 @@ for(sample.x in f){
       pbmc <- MeanVarPlot(pbmc ,fxn.x = expMean, fxn.y = logVarDivMean, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5, do.contour = F)
       length(pbmc@var.genes)
       
-      # PCA on most variable genes
-      pbmc <- PCA(pbmc, pc.genes = pbmc@var.genes, do.print = TRUE, pcs.print = 5, genes.print = 5)
+      if(grepl("\\_tissueGenes$", sample.x)){
+        # PCA on Tissue specific genes
+        markerGenes <- fread("metadata/Marker_gene_list_for_single_cell_analysis.csv")
+        markerGenes <- unique(do.call(c, markerGenes[2:nrow(markerGenes)]))
+        markerGenes <- markerGenes[!grepl("^IGH", markerGenes) & markerGenes != ""]
+        pbmc <- PCA(pbmc, pc.genes = pbmc@var.genes[pbmc@var.genes %in% markerGenes], do.print = TRUE, pcs.print = 5, genes.print = 5)
+      } else {
+        # PCA on most variable genes
+        pbmc <- PCA(pbmc, pc.genes = pbmc@var.genes, do.print = TRUE, pcs.print = 5, genes.print = 5)
+      }
       
       # Project other genes? 
       pbmc <- ProjectPCA(pbmc)
@@ -121,7 +138,8 @@ for(sample.x in f){
       # JackStrawPlot(pbmc, PCs = 1:12)
       
       # t_SNE
-      pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = T)
+      pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = TRUE,check_duplicates = FALSE)
+      # ifelse(grepl("\\_tissueGenes$", sample.x), FALSE, TRUE))
       
       # plot clusters
       # write clusters
@@ -149,7 +167,8 @@ for(sample.x in f){
       }
     }
     
-    source("src/single_cell_RNA/10_2_Seurat_Script.R")
+    pbmc@data.info[["sample"]] <- NULL
+    source("src/single_cell_RNA/10_2_Seurat_Script_3.R")
     
   }, error = function(e){
     print(e)
