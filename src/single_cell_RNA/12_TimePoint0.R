@@ -60,7 +60,7 @@ for(cell in f1){
   (load(dirout(inDir, datasetName, "/", cell, ".RData")))
   
   for(gene.x in c(responder.genes, responderN.genes)){
-    #     gene.x <- "JUN"
+    # gene.x <- "CD79A"
     
     pDat <- data.table(Expression=pbmc@data[gene.x,], sample=pbmc@data.info[["sample"]])
     pDat <- pDat[grepl("_d?0d?", sample)]
@@ -76,7 +76,7 @@ for(cell in f1){
     #     gene.x %in% responder.genes
     #     gene.x %in% responderN.genes
     
-    ggplot(pDat, aes(x=sample, y=Expression, fill=responder)) + geom_violin() + coord_flip() + 
+    ggplot(pDat, aes(x=sample, y=Expression, fill=responder)) + geom_violin() + geom_boxplot(fill="white", width=.1, outlier.colour=NA, alpha=0.5) + coord_flip() + 
       ggtitle(paste0(
         ifelse(gene.x %in% responder.genes, "responder", "non-responder"), "\n",
         paste(names(grps[!is.na(grps) & grps]),collapse=" ")
