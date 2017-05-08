@@ -106,8 +106,8 @@ for(sample.x in f){
       ggsave(dirout(outS, "GenePlot.pdf"))
       
       # Cut genes / mitochondrial -----------------------------------------------
-      pbmc <- SubsetData(pbmc, subset.name = "nGene", accept.high = 3000)
-      pbmc <- SubsetData(pbmc, subset.name = "percent.mito", accept.high = 0.15)
+      pbmc <- SubsetData(pbmc, subset.name = "nGene", accept.high = nGene.cutoff) # are you sure you want to use "accept.high" instead of "accept.low" here?
+      pbmc <- SubsetData(pbmc, subset.name = "percent.mito", accept.high = mito.cutoff)
       
       # regress out unwanted sources of variation (UMI normalization), also normalize for mitochondrial content
       pbmc <- RegressOut(pbmc, latent.vars = c("nUMI", "percent.mito"))
