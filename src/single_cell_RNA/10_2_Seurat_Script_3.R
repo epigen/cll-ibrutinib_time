@@ -9,6 +9,7 @@ require(pryr)
 mem_u <- as.numeric(mem_used())/10**6
 cores_u = max(1, min(12, floor(180000/mem_u)-1))
 if(is.na(mem_u)) cores_u <- 3
+cores_u <- min(cores_u, 3)
 message("Memory used: ", mem_u, " cores: ",cores_u)
 registerDoMC(cores=cores_u)
 
@@ -35,6 +36,13 @@ if(file.exists("metadata/CellMarkers.csv")){
       ggsave(dirout(outMarkers, markers[i]$GeneSymbol,".pdf"), height=7, width=7)
     }
   }
+  # for(geneSyn in c("Hba-a1", "Hba-a2")){
+  #   marDat <- data.table(pbmc@tsne.rot, Expression=FetchData(object=pbmc,vars.all=geneSyn, use.imputed=FALSE)[,1])
+  #   ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=Expression)) + geom_point() +
+  #     scale_color_gradientn(colors=c("grey", "blue")) + theme(legend.position = 'none') +
+  #     ggtitle(paste0(geneSyn))
+  #   ggsave(dirout(outMarkers, geneSyn,".pdf"), height=7, width=7)
+  # }
 }
 
 # PLOT UMIS ---------------------------------------------------------------
@@ -215,7 +223,7 @@ for(cl.x in clusterings){
 message("EnrichR on markers")
 library(enrichR) #devtools::install_github("definitelysean/enrichR")
 cl.x <- "patient"
-cl.x <- "ClusterNames_0.5"
+cl.x <- "sample"
 for(cl.x in clusterings){
   if(!is.null(pbmc@data.info[[cl.x]])){
     x <- gsub("ClusterNames_","", cl.x)
@@ -238,24 +246,25 @@ for(cl.x in clusterings){
         }
         
         enrichRes$n <- sapply(strsplit(enrichRes$genes,","), length)
-        enrichRes <- enrichRes[n > 3][qval < 0.05]
-        enrichRes$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", enrichRes$category)
-        enrichRes$category <- make.unique(substr(enrichRes$category, 0, 50))
-        write.table(enrichRes, file=dirout(outS, "Enrichr_",x,".tsv"), sep="\t", quote=F, row.names=F)
+        enrichRes <- enrichRes[n > 3]
+        write.table(enrichRes[qval < 0.05], file=dirout(outS, "Enrichr_",x,".tsv"), sep="\t", quote=F, row.names=F)
               
         if(nrow(enrichRes) > 2 & length(unique(enrichRes$grp)) > 1){
           pDat <- dcast.data.table(enrichRes, make.names(category) ~ grp, value.var="qval")
           pDatM <- as.matrix(pDat[,-"category", with=F])
+          pDat$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", pDat$category)
+          pDat$category <- substr(pDat$category, 0, 50)
           row.names(pDatM) <- pDat$category
           pDatM[is.na(pDatM)] <- 1
-          str(pDatM <- pDatM[apply(pDatM <= 10e5,1,sum)>1,])
-          str(pDatM <- pDatM[,apply(pDatM <= 10e5,2,sum)>1])
-          pDatM <- -log10(pDatM)
-          pDatM[pDatM > 4] <- 4
-          pDatM[pDatM < 1.3] <- 0
-          pdf(dirout(outS, "Enrichr_",x,".pdf"),onefile=FALSE, width=min(29, 6+ ncol(pDatM)*0.3), height=min(29, nrow(pDatM)*0.3 + 4))
-          pheatmap(pDatM) #, color=gray.colors(12, start=0, end=1), border_color=NA)
-          dev.off()
+          str(pDatM <- pDatM[apply(pDatM <= 5e-2,1,sum)>=1,apply(pDatM <= 5e-2,2,sum)>=1, drop=F])
+          if(nrow(pDatM) >=2 & ncol(pDatM) >= 2){
+            pDatM <- -log10(pDatM)
+            pDatM[pDatM > 4] <- 4
+            # pDatM[pDatM < 1.3] <- 0
+            pdf(dirout(outS, "Enrichr_",x,".pdf"),onefile=FALSE, width=min(29, 6+ ncol(pDatM)*0.3), height=min(29, nrow(pDatM)*0.3 + 4))
+            pheatmap(pDatM) #, color=gray.colors(12, start=0, end=1), border_color=NA)
+            dev.off()
+          }
         }
       }
 #     }

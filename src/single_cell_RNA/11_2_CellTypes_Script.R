@@ -21,6 +21,7 @@ grouping <- list(
     "Monos" = c(6,11),
     "NurseLikeCells" = c(16),
     "NKcells" = c(10),
+    "TcellsAll" = c(1,2,8,13,14),
     "Tcells1" = c(14),
     "Tcells2" = c(8,13),
     "Tcells3" = c(1,2),
@@ -38,9 +39,11 @@ grouping <- list(
     )
 )
 
+clustering.precision <- seq(0.5, 2.5, 0.2)
+
 # ARGUMENTS ---------------------------------------------------------------
-sample.x <- "allDataBest_noIGH"
-cell <- "Tcells2"
+sample.x <- "allDataBest_NoDownSampling_noIGH"
+cell <- "TcellsAll"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 2) {
   stop("Need two arguments: 1 - sample, 2 - celltype")
@@ -91,7 +94,7 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = T)
   
   # Clustering
-  for(x in c(seq(0.5,0.9,0.1))){
+  for(x in clustering.precision){
     pbmc <- FindClusters(pbmc, pc.use = 1:10, resolution = x, print.output = 0, save.SNN = T)
     pbmc <- StashIdent(pbmc, save.name = paste0("ClusterNames_", x))
   }
@@ -99,6 +102,19 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   save(pbmc, file=dirout(outS, cell,".RData"))
 } else {
   load(file=dirout(outS, cell,".RData"))
+  
+  update <- FALSE
+  for(x in clustering.precision){
+    if(is.null(pbmc@data.info[[paste0("ClusterNames_", x)]])){
+      update <- TRUE
+      pbmc <- FindClusters(pbmc, pc.use = 1:10, resolution = x, print.output = 0, save.SNN = T)
+      pbmc <- StashIdent(pbmc, save.name = paste0("ClusterNames_", x))
+    }
+  }
+  
+  if(update){
+    save(pbmc, file=dirout(outS, cell,".RData"))
+  }
 }
 
 if(is.null(pbmc@data.info[["patient"]])){

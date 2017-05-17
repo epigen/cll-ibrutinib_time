@@ -20,6 +20,22 @@ do
 done
 
 
+## Run the dataset with the sample effect removed
+echo $file
+sbatch --job-name="Seurat Removed Sample Effect" --ntasks=12 --mem=180000 --partition=longq --time=3-00:00:00 \
+    --wrap="Rscript ${CODEBASE}/cll-time_course/src/single_cell_RNA/10_2_Seurat_RmSampleEffect.R" \
+    --output="${PROCESSED}/cll-time_course/results/single_cell_RNA/10_Seurat/RmSampleEffect.log"
+
+echo $file
+sbatch --job-name="Seurat Removed Sample Effect And CellCyle" --ntasks=12 --mem=180000 --partition=longq --time=3-00:00:00 \
+    --wrap="Rscript ${CODEBASE}/cll-time_course/src/single_cell_RNA/10_2_Seurat_RmSampleEffect2.R" \
+    --output="${PROCESSED}/cll-time_course/results/single_cell_RNA/10_Seurat/RmSampleEffect_CellCycle.log"
+
+echo $file
+sbatch --job-name="Seurat Removed CellCycle" --ntasks=12 --mem=180000 --partition=longq --time=3-00:00:00 \
+    --wrap="Rscript ${CODEBASE}/cll-time_course/src/single_cell_RNA/10_2_Seurat_NoCellCycle.R" \
+    --output="${PROCESSED}/cll-time_course/results/single_cell_RNA/10_Seurat/RmCellCycle.log"
+
 # RAW ANALYSIS, not used because it fails often and doesn't make a large difference
 # for file in ${array[@]}
 # do

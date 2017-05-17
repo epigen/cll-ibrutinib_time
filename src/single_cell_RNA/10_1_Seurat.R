@@ -49,7 +49,7 @@ mito.cutoff <- 0.15
 nGene.cutoff <- 3000
 
 # Loop over samples and do analysis
-sample.x <- "allData"
+sample.x <- "allDataBest_NoDownSampling_noIGH"
 for(sample.x in f){
   outS <- paste0(out, sample.x,"/")
   dir.create(dirout(outS))

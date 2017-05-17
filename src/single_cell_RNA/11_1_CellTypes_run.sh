@@ -1,10 +1,10 @@
 module unload R/3.2.3
 module load R/3.3.2
 
-datasets=("allDataBest" "allDataBest_noIGH" "allDataBest_NoDownSampling_noIGH")
-datasets=("allDataBest_noIGH" "allDataBest_NoDownSampling_noIGH")
-cells=("Monos" "NurseLikeCells" "Bcells" "NKcells" "Tcells1" "Tcells2" "Tcells3")
-
+# datasets=("allDataBest" "allDataBest_noIGH" "allDataBest_NoDownSampling_noIGH")
+datasets=("allDataBest_NoDownSampling_noIGH")
+# cells=("Monos" "NurseLikeCells" "Bcells" "NKcells" "Tcells1" "Tcells2" "Tcells3" "TcellsAll")
+cells=("TcellsAll")
 
 for dataset in ${datasets[@]}
 do   
