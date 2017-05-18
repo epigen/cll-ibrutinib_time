@@ -91,7 +91,7 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   # PREP DATASET ------------------------------------------------------------
   pbmc <- MeanVarPlot(pbmc ,fxn.x = expMean, fxn.y = logVarDivMean, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5, do.contour = F)
   pbmc <- PCA(pbmc, pc.genes = pbmc@var.genes, do.print = TRUE, pcs.print = 5, genes.print = 5)
-  pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = T)
+  pbmc <- RunTSNE(pbmc, dims.use = 1:11, do.fast = T)
   
   # Clustering
   for(x in clustering.precision){
