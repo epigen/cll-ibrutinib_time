@@ -127,4 +127,9 @@ if(is.null(pbmc@data.info[["patient"]])){
   }
 }
 
+
+source("src/single_cell_RNA/90_fscLVM.R")
+
 source("src/single_cell_RNA/10_2_Seurat_Script_3.R")
+
+
