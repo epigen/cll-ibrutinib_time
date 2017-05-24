@@ -4,6 +4,7 @@ import sys
 import fscLVM
 import pdb
 import scipy as SP
+import numpy as np
 from fscLVM import plotFactors, plotRelevance, plotLoadings, saveFA, dumpFA
 
 

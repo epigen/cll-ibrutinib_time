@@ -38,12 +38,14 @@ if(!file.exists(dirout(out.fscLVM, "matrix.csv.gz"))){
 
 
 nhidden <- 3
-outDir <- dirout(out.fscLVM, "fscLVM_files_", nhidden, "hidden/")
-dir.create(outDir)
+for(nhidden in 1:5){
+	outDir <- dirout(out.fscLVM, "fscLVM_files_", nhidden, "hidden/")
+	dir.create(outDir)
 
-system(paste("python src/single_cell_RNA/90_fscLVM.py",
-             dirout(out.fscLVM, "matrix.csv.gz"),
-             outDir,
-             "$RESOURCES/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt",
-             nhidden
-  ))
+	system(paste("python src/single_cell_RNA/90_fscLVM.py",
+	             dirout(out.fscLVM, "matrix.csv.gz"),
+	             outDir,
+	             "$RESOURCES/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt",
+	             nhidden
+	  ))
+}

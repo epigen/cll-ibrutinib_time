@@ -43,7 +43,7 @@ clustering.precision <- seq(0.5, 2.5, 0.2)
 
 # ARGUMENTS ---------------------------------------------------------------
 sample.x <- "allDataBest_NoDownSampling_noIGH"
-cell <- "TcellsAll"
+cell <- "Tcells2"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 2) {
   stop("Need two arguments: 1 - sample, 2 - celltype")
@@ -127,9 +127,17 @@ if(is.null(pbmc@data.info[["patient"]])){
   }
 }
 
+# READ GENE LISTS ---------------------------------------------------------
+geneSetFiles <- list(
+  hallmark = "/data/groups/lab_bock/shared/resources/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt",
+  immuno = "/data/groups/lab_bock/shared/resources/gene_sets/MSigDB/6.0/Human//c7.all.v6.0.symbols.gmt"
+)
 
-source("src/single_cell_RNA/90_fscLVM.R")
+file.nam <- "hallmark"
+source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
 
-source("src/single_cell_RNA/10_2_Seurat_Script_3.R")
+file.nam <- "immuno"
+source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
 
-
+source("src/single_cell_RNA/10_2_Seurat_Script_3.R", echo=TRUE)
+# source("src/single_cell_RNA/90_fscLVM.R", echo=TRUE)
