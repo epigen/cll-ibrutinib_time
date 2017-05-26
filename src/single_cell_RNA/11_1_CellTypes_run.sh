@@ -20,7 +20,9 @@ do
   done
 done
 
-
+sbatch --job-name="Seurat CD8" --ntasks=32 --mem=180000 --partition=longq --time=3-00:00:00 \
+    --wrap="Rscript ${CODEBASE}/cll-time_course/src/single_cell_RNA/11_2_CellTypes_ByMarkerGenes.R CD8" \
+    --output=${PROCESSED}/cll-time_course/results/single_cell_RNA/11_CellTypes/allDataBest_NoDownSampling_noIGH_CD8.log
 
 #dataset="allDataBest"
 #cell="NurseLikeCells"

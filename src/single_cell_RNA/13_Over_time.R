@@ -9,17 +9,19 @@ dir.create(dirout(out))
 
 sample.x <- "allDataBest_NoDownSampling_noIGH"
 
-cell <- "Bcells"
 inDir <- "11_CellTypes/"
 
 cells <- list.files(dirout(inDir))
 cells <- cells[grepl(paste0(sample.x, "_"), cells)]
 cells <- cells[!grepl(".log",cells)]
 cells <- gsub(paste0(sample.x, "_"), "", cells)
+cells <- cells[cells != "TcellsAll"]
 
 outS <- paste0(out, sample.x, "/")
 dir.create(dirout(outS))
 
+
+cell <- "Bcells"
 for(cell in cells){
   message(cell)  
   datasetName <- paste0(sample.x, "_", cell)
@@ -43,13 +45,23 @@ for(cell in cells){
       res <- rbind(res, data.table(hits[V3 < 0]$V1, paste0(nams[2], "_vs_", nams[1])))
     }
   }
+  names(res) <- c("gene", "comparison")
   res$x <- 1
+  res$comparison2 <- sapply(strsplit(res$comparison, "_vs_"), function(vec){
+    pat <- gsub("([A-Z]+)\\d?_.+", "\\1", vec[1])
+    direction <- ifelse(grepl("d0", gsub("(\\d+)d", "d\\1", vec)[1]), "down", "up")
+    return(paste0(pat, "_", direction))
+  })
+  table(res$comparison, res$comparison2)  
   
-  pDT <- dcast.data.table(res, V1 ~ V2, value.var="x")
-  pMT <- as.matrix(pDT[,-"V1", with=F])
-  row.names(pMT) <- pDT$V1
+  # Heatmaps
+  pDT <- dcast.data.table(res, gene ~ comparison2, value.var="x")
+  pMT <- as.matrix(pDT[,-"gene", with=F])
+  row.names(pMT) <- pDT$gene
   pMT[is.na(pMT)] <- 0
   cnt <- apply(pMT, 1, sum, na.rm=TRUE)
+  pDT$cnt <- cnt
+  write.table(pDT[order(cnt, decreasing = TRUE)], file=dirout(outS, cell, "_table.tsv"), quote=F, row.names=F, sep="\t")
   
   
   for(i in 2:4){
@@ -59,7 +71,20 @@ for(cell in cells){
       dev.off()
     }
   }
+
   
-  pDT$cnt <- cnt
-  write.table(pDT[order(cnt, decreasing = TRUE)], file=dirout(outS, cell, "_table.tsv"), quote=F, row.names=F, sep="\t")
+  # Venn diagrams
+  geneLists <- split(res$gene, factor(res$comparison2))
+  try({
+    pdf(dirout(outS, cell, "_venn_up.pdf"))
+    venn(geneLists[grepl("_up", names(geneLists))])
+    dev.off()
+  }, silent=T)
+  
+  try({
+    pdf(dirout(outS, cell, "_venn_down.pdf"))
+    venn(geneLists[grepl("_down", names(geneLists))])
+    dev.off()
+  }, silent=T)
+
 }

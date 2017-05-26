@@ -8,60 +8,28 @@ project.init2("cll-time_course")
 out <- "11_CellTypes/"
 dir.create(dirout(out))
 
-# NEEDS TO BE SET TO SUBCLUSTER ---------------------------------------------------------
-grouping <- list(
-  "allDataBest" = list(
-    "Monos" = c(10,5),
-    "NurseLikeCells" = c(11),
-    "Tcells" = c(2,3,7,8),
-    "Bcells" = c(0,1,4,6,9,12),
-    "clustering" = "ClusterNames_0.5"
-    ),
-  "allDataBest_NoDownSampling_noIGH" = list(
-    "Monos" = c(6,11),
-    "NurseLikeCells" = c(16),
-    "NKcells" = c(10),
-    "TcellsAll" = c(1,2,8,13,14),
-    "Tcells1" = c(14),
-    "Tcells2" = c(8,13),
-    "Tcells3" = c(1,2),
-    "Bcells" = c(0,3,4,5,7,9,15,18),
-    "clustering" = "ClusterNames_0.95"
-    ),
-  "allDataBest_noIGH" = list(
-    "Monos" = c(6,12),
-    "NurseLikeCells" = c(14),
-    "NKcells" = c(10),
-    "Tcells1" = c(9),
-    "Tcells2" = c(2,7,5),
-    "Bcells" = c(0,1,3,4,8,11,13,15),
-    "clustering" = "ClusterNames_0.95"
-    )
-)
-
 clustering.precision <- seq(0.5, 2.5, 0.2)
 
 # ARGUMENTS ---------------------------------------------------------------
 sample.x <- "allDataBest_NoDownSampling_noIGH"
-cell <- "Tcells2"
-args = commandArgs(trailingOnly=TRUE)
-if (length(args) < 2) {
-  stop("Need two arguments: 1 - sample, 2 - celltype")
-} else {
-  sample.x <- args[1]
-  cell <- args[2]
-}
-if (!sample.x %in% names(grouping)) {
-  stop("Celltypes not defined for dataset ", sample.x)
-}
-if (!cell %in% names(grouping[[sample.x]])) {
-  stop("Celltype ",cell, " not defined for dataset ", sample.x)
-}
+filter = list(
+  CD8 = list(genes="CD8A", clusters=c(2,3,6))
+  )
 
+cell = "CD8"
+args = commandArgs(trailingOnly=TRUE)
+if (length(args) < 1) {
+  stop("Need two arguments: 1 - filter to use")
+} else {
+  cell <- args[1]
+}
+if (!cell %in% names(filter)) {
+  stop("Celltypes not defined ", cell)
+}
 
 
 # LOAD DATA FROM ORIGINAL DATASET -----------------------------------------
-groups <- grouping[[sample.x]]
+filter.x <- filter[[cell]]
 
 # CREATE DATASET FOR SPECIFIC CELLTYPE ------------------------------------
 outS <- paste0(out, sample.x, "_", cell, "/")
@@ -72,9 +40,20 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   load(dirout(outOrig, sample.x,".RData"))
   pbmcOrig <- pbmc
   
+  stopifnot(all(rownames(pbmc@data.info) == colnames(pbmc@data)))
+  
   # SUBSET DATA -------------------------------------------------------------
-  str(cellToKeep <- rownames(pbmcOrig@data.info)[which(pbmcOrig@data.info[[groups[["clustering"]]]] %in% as.character(groups[[cell]]))])
+  cellToKeep.idx <- which(
+    pbmcOrig@data.info[["ClusterNames_0.5"]] %in% as.character(filter.x$clusters) & apply(pbmc@data[filter.x$genes,,drop=F]==0,2,sum)==0
+    )
+  str(cellToKeep <- rownames(pbmcOrig@data.info)[cellToKeep.idx])
   pbmc <- SubsetData(pbmcOrig, cells.use = cellToKeep)
+  
+  pDat <- pbmcOrig@tsne.rot
+  pDat$selected <- "no"
+  pDat$selected[cellToKeep.idx] <- "yes"
+  ggplot(pDat, aes(x=tSNE_1, y=tSNE_2, color=selected)) + geom_point()
+  ggsave(dirout(outS, "SelectedCells.pdf"))
   
   # COUNT CELLS -------------------------------------------------------------
   cellCounts <- rbind(
@@ -150,4 +129,4 @@ file.nam <- "immuno"
 source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
 
 source("src/single_cell_RNA/10_2_Seurat_Script_3.R", echo=FALSE)
-# source("src/single_cell_RNA/90_fscLVM.R", echo=TRUE)
+source("src/single_cell_RNA/90_fscLVM.R", echo=TRUE)
