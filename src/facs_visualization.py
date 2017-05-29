@@ -31,15 +31,16 @@ for i, marker in enumerate(markers):
     for j, patient in enumerate(patients):
         series = df.loc[patient, marker]
         axis[i].scatter(
-            series.index.str.replace("d", "").astype(int),
-            series,
+            series.index, series,
             s=25, label=patient, color=colors[patient])
         axis[i].plot(
-            series.index.str.replace("d", "").astype(int),
+            series.index,
             series.fillna(method='pad'),
             linestyle="--", label=patient, color=colors[patient])
-        # axis[i].set_xscale('symlog', basex=2)
+        axis[i].set_xscale('symlog', basex=2)
         axis[i].set_title(marker)
+        # axis[i].set_xticklabels(l.set_text(str(l.get_position()[0] ** 2)) for l in axis[i].get_xticklabels())
+        axis[i].set_xlim(0, series.index.max())
 for i in [0, 3, 6]:
     axis[i].set_ylabel("% live cells")
 for ax in axis[-3:]:
@@ -58,14 +59,14 @@ for i, patient in enumerate(patients):
     for j, marker in enumerate(df.columns):
         series = df.loc[patient, marker]
         axis[i].scatter(
-            series.index.str.replace("d", "").astype(int),
-            series,
+            series.index, series,
             s=25, label=marker, color=colors[marker])
         axis[i].plot(
-            series.index.str.replace("d", "").astype(int),
+            series.index,
             series.fillna(method='pad'),
             linestyle="--", label=marker, color=colors[marker])
-        # axis[i].set_xscale('symlog', basex=2)
+        axis[i].set_xscale('symlog', basex=2)
+        axis[i].set_xlim(0, series.index.max())
         axis[i].set_title(patient)
 for i in [0, 3, 6]:
     axis[i].set_ylabel("% live cells")
@@ -84,20 +85,20 @@ colors = dict(zip(patients, pallettes))
 
 for i, marker in enumerate(df.columns):
     dfm = df.reset_index().set_index("timepoint").groupby(['patient_id']).apply(lambda x: x.loc[:, marker])
-    dfm = np.log2(dfm.T / dfm['000d'].T)
+    dfm = np.log2(dfm.T / dfm[0].T)
 
     for j, patient in enumerate(patients):
         series = dfm[patient]
         axis[i].axhline(0, color="black", linestyle="--", alpha=0.6)
         axis[i].scatter(
-            series.index.str.replace("d", "").astype(int),
-            series,
+            series.index, series,
             s=25, label=patient, color=colors[patient])
         axis[i].plot(
-            series.index.str.replace("d", "").astype(int),
+            series.index,
             series.fillna(method='pad'),
             linestyle="--", label=patient, color=colors[patient])
-        # axis[i].set_xscale('symlog', basex=2)
+        axis[i].set_xscale('symlog', basex=2)
+        axis[i].set_xlim(0, series.index.max())
         axis[i].set_title(marker)
 for i in [0, 3, 6]:
     axis[i].set_ylabel("log2(fold-chcange over day 0)")
@@ -115,20 +116,20 @@ colors = dict(zip(markers, pallettes))
 
 for j, marker in enumerate(df.columns):
     dfm = df.reset_index().set_index("timepoint").groupby(['patient_id']).apply(lambda x: x.loc[:, marker])
-    dfm = np.log2(dfm.T / dfm['000d'].T)
+    dfm = np.log2(dfm.T / dfm[0].T)
 
     for i, patient in enumerate(patients):
         series = dfm[patient]
         axis[i].axhline(0, color="black", linestyle="--", alpha=0.6)
         axis[i].scatter(
-            series.index.str.replace("d", "").astype(int),
-            series,
+            series.index, series,
             s=25, label=marker, color=colors[marker])
         axis[i].plot(
-            series.index.str.replace("d", "").astype(int),
+            series.index,
             series.fillna(method='pad'),
             linestyle="--", label=marker, color=colors[marker])
-        # axis[i].set_xscale('symlog', basex=2)
+        axis[i].set_xscale('symlog', basex=2)
+        axis[i].set_xlim(0, series.index.max())
         axis[i].set_title(patient)
 for i in [0, 3, 6]:
     axis[i].set_ylabel("log2(fold-chcange over day 0)")
@@ -142,7 +143,7 @@ fig.savefig(os.path.join("results", "facs.patient_per_marker.change.svg"), bbox_
 # Stratify patients
 # get patients which reach X reduction of CLL at the last timepoint (either 120 or 240 days)
 dfm = df.reset_index().set_index("timepoint").groupby(['patient_id']).apply(lambda x: x.loc[:, "CLL"])
-dfm = np.log2(dfm.T / dfm['000d'].T)
+dfm = np.log2(dfm.T / dfm[0].T)
 
 resp = dfm.columns[dfm.ix[["120d", "240d"]].min() < fold_reduct_threshold]
 
