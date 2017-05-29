@@ -15,11 +15,12 @@ df = pd.read_csv("metadata/annotation.csv")
 
 df = df[df['library'] == "ATAC-seq"]
 
-df.loc[df['timepoint'] == "280d", "timepoint"] = "240d"
-
-df.loc[:, "pass_qc"] = df.loc[:, "pass_qc"].replace(0, -1)
-df.loc[:, "pass_qc"] = df.loc[:, "pass_qc"].fillna(0)
-df_pivot = pd.pivot_table(data=df, columns='patient_id', index=["timepoint", "cell_type"], values="pass_qc", aggfunc=sum).fillna(-2)
+# replace failed parameters with -1 and fill not-assessed with 0
+df.loc[:, ['pass_qc', 'pass_qc_TK', 'pass_counts', "pass_corr"]] = df.loc[:, ['pass_qc', 'pass_qc_TK', 'pass_counts', "pass_corr"]].replace(0, -1).fillna(0)
+# tag samples as failed in containing any failure: 1) pass; 0) fail
+df['pass'] = (~(df.loc[:, ['pass_qc', 'pass_qc_TK', 'pass_counts', "pass_corr"]] == -1).any(axis=1)).astype(int)
+# pivot and marked non-existing/non-processed samples with -1
+df_pivot = pd.pivot_table(data=df, columns='patient_id', index=["timepoint", "cell_type"], values="pass", aggfunc=sum).fillna(-1)
 
 ratio = df_pivot.shape[0] / float(df_pivot.shape[1])
 fig, axis = plt.subplots(1, figsize=(4 * ratio, 4))
