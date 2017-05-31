@@ -1,6 +1,7 @@
 require("project.init")
 require("Seurat")
 require(methods)
+require(pheatmap)
 
 project.init2("cll-time_course")
 
@@ -16,6 +17,8 @@ cells <- cells[grepl(paste0(sample.x, "_"), cells)]
 cells <- cells[!grepl(".log",cells)]
 cells <- gsub(paste0(sample.x, "_"), "", cells)
 cells <- cells[cells != "TcellsAll"]
+cells <- cells[cells != "CD8"]
+
 
 outS <- paste0(out, sample.x, "/")
 dir.create(dirout(outS))
@@ -30,6 +33,7 @@ for(cell in cells){
   pat.dirs <- pat.dirs[grepl("_pat_", pat.dirs)]
   
   res <- data.table()
+  eff.sizes <- list()
   
   for(pat.dir in pat.dirs){
     comp.files <- list.files(paste0(pat.dir, "/"))
@@ -37,10 +41,14 @@ for(cell in cells){
     comp.files <- comp.files[!grepl("d280", comp.files)]
     
     for(comp.file in comp.files){
-      hits <- fread(paste0(pat.dir, "/",comp.file))[order(V3)]
-      hits <- hits[V2 < 0.05 & abs(V3) > 0.3][order(V3)]
-      #   gsub(".+\\_([A-Z]+)", "\\1", pat.dirs[1])
       nams <- strsplit((gsub("Diff_Cluster", "", gsub("\\.tsv", "", comp.file))), "vs")[[1]]
+      hits <- fread(paste0(pat.dir, "/",comp.file))[order(V3)]
+      # get effect sizes into list
+      eff <- hits$V3
+      names(eff) <- hits$V1
+      eff.sizes[[paste0(nams[1], "_vs_", nams[2])]] <- eff
+      # get significant genes into list      
+      hits <- hits[V2 < 0.05 & abs(V3) > 0.3][order(V3)]
       res <- rbind(res, data.table(hits[V3 > 0]$V1, paste0(nams[1], "_vs_", nams[2])))
       res <- rbind(res, data.table(hits[V3 < 0]$V1, paste0(nams[2], "_vs_", nams[1])))
     }
@@ -52,7 +60,11 @@ for(cell in cells){
     direction <- ifelse(grepl("d0", gsub("(\\d+)d", "d\\1", vec)[1]), "down", "up")
     return(paste0(pat, "_", direction))
   })
-  table(res$comparison, res$comparison2)  
+  table(res$comparison, res$comparison2)
+  
+  # how many hits per cell
+  ggplot(res, aes(x=comparison2)) + geom_bar() + coord_flip() + ylab("Significant Genes")
+  ggsave(dirout(outS, cell, "_Counts.pdf"))
   
   # Heatmaps
   pDT <- dcast.data.table(res, gene ~ comparison2, value.var="x")
@@ -72,6 +84,14 @@ for(cell in cells){
     }
   }
 
+  
+  all.genes <- unique(do.call(c, lapply(eff.sizes, names)))
+  try({
+    pdf(dirout(outS, cell, "_CorrHM.pdf"), width=5, height=5, onefile=FALSE)
+    pheatmap(cor(do.call(cbind, lapply(eff.sizes, function(x) return(x[all.genes]))), use="pairwise.complete.obs"))
+    dev.off()
+  }, silent=TRUE)
+  
   
   # Venn diagrams
   geneLists <- split(res$gene, factor(res$comparison2))

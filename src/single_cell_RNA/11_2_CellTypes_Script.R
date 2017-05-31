@@ -21,7 +21,7 @@ grouping <- list(
     "Monos" = c(6,11),
     "NurseLikeCells" = c(16),
     "NKcells" = c(10),
-    "TcellsAll" = c(1,2,8,13,14),
+    "TcellsAll" = c(1,2,8,13),
     "Tcells1" = c(14),
     "Tcells2" = c(8,13),
     "Tcells3" = c(1,2),
@@ -91,7 +91,7 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   # PREP DATASET ------------------------------------------------------------
   pbmc <- MeanVarPlot(pbmc ,fxn.x = expMean, fxn.y = logVarDivMean, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5, do.contour = F)
   pbmc <- PCA(pbmc, pc.genes = pbmc@var.genes, do.print = TRUE, pcs.print = 5, genes.print = 5)
-  pbmc <- RunTSNE(pbmc, dims.use = 1:11, do.fast = T)
+  pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = T)
   
   # Clustering
   for(x in clustering.precision){
@@ -127,27 +127,29 @@ if(is.null(pbmc@data.info[["patient"]])){
   }
 }
 
-# READ GENE LISTS ---------------------------------------------------------
+# Signature Gene Analysis ---------------------------------------------------------
 geneSetFiles <- list(
   hallmark = "/data/groups/lab_bock/shared/resources/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt",
   immuno = "/data/groups/lab_bock/shared/resources/gene_sets/MSigDB/6.0/Human//c7.all.v6.0.symbols.gmt"
 )
-
 balance.barcodes <- TRUE
-
 file.nam <- "hallmark"
 source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
-
 file.nam <- "immuno"
 source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
-
 balance.barcodes <- FALSE
-
 file.nam <- "hallmark"
 source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
-
 file.nam <- "immuno"
 source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
 
-source("src/single_cell_RNA/10_2_Seurat_Script_3.R", echo=FALSE)
-# source("src/single_cell_RNA/90_fscLVM.R", echo=TRUE)
+
+# specific over time / t zero analysis
+source("src/single_cell_RNA/92_OverTime.R", echo=TRUE)
+source("src/single_cell_RNA/93_TimepointZero.R", echo=TRUE)
+
+# Cluster analysis
+source("src/single_cell_RNA/10_2_Seurat_Script_3.R", echo=TRUE)
+
+# fscLVM
+source("src/single_cell_RNA/90_fscLVM.R", echo=TRUE)

@@ -2,6 +2,7 @@ require("project.init")
 require("Seurat")
 require("gplots")
 require(methods)
+require(pheatmap)
 
 project.init2("cll-time_course")
 
@@ -43,6 +44,19 @@ for(cell in f1){
   responder.yes <- c("PBGY", "VZS") # "KI", "KZ"
   responder.no <- c("FE", "PT")
   
+  # number of different genes in heatmap
+  pDat <- matrix(0, length(all.patients), length(all.patients))
+  rownames(pDat) <- all.patients
+  colnames(pDat) <- all.patients
+  for(l.nam in names(diffGenes)){
+    nam <- strsplit(l.nam, "_vs_")[[1]]
+    pDat[nam[1], nam[2]] <- length(diffGenes[[l.nam]])
+    pDat[nam[2], nam[1]] <- length(diffGenes[[l.nam]])
+  }
+  pdf(dirout(outS, "Hits_HM.pdf"))
+  pheatmap(pDat,main=paste0(cell, " number of different genes"))
+  dev.off()
+  
   
   str(pDT <- dcast.data.table(data.table(melt(diffGenes), found=1), value ~ L1, value.var="found"))
   pMT <- pDT[,-"value", with=F]
@@ -61,6 +75,7 @@ for(cell in f1){
   }
   str(pDT2)
   
+  # Bar plot of hits
   pDat <- data.table(as.data.frame(table(gsub("\\-+", "-", apply(pDT2[,-"value", with=F], 1, function(row) paste0(row, collapse="-"))))))
   pDat$group <- as.character(pDat$Var1)
   pDat <- pDat[Freq >= 10]
@@ -69,6 +84,7 @@ for(cell in f1){
   ggplot(pDat, aes(y=Freq, x=group)) + geom_bar(stat="identity") + coord_flip() + theme_bw(24)
   ggsave(dirout(outS, "Hits_Barplot.pdf"), height=7, width=15)
   
+  # Get gene lists
   (responder.genes.names <- paste(rep(responder.yes, times=length(responder.no)), rep(responder.no, each=length(responder.yes)), sep="_vs_"))
   responder.genes <- data.table(melt(diffGenes[names(diffGenes) %in% responder.genes.names]))
   responder.genes <- responder.genes[,.N, by="value"][order(N,decreasing=TRUE)]
@@ -88,6 +104,7 @@ for(cell in f1){
   
   (load(dirout(inDir, datasetName, "/", cell, ".RData")))
   
+  # Plot genes using violin plots
   for(gene.x in c(responder.genes, responderN.genes)){
     # gene.x <- "CD79A"
     
@@ -121,8 +138,7 @@ for(cell in f1){
   }
   
   
-  
-  
+  # Enrichr analyses
   library(enrichR)
   enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location")
   

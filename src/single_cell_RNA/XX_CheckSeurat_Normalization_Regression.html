@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<!-- saved from url=(0014)about:internet -->
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<meta http-equiv="x-ua-compatible" content="IE=9" >
+
+<title>XX_CheckSeurat_Normalization_Regression.R</title>
+
+<style type="text/css">
+body, td {
+   font-family: sans-serif;
+   background-color: white;
+   font-size: 12px;
+   margin: 8px;
+}
+
+tt, code, pre {
+   font-family: 'DejaVu Sans Mono', 'Droid Sans Mono', 'Lucida Console', Consolas, Monaco, monospace;
+}
+
+h1 { 
+   font-size:2.2em; 
+}
+
+h2 { 
+   font-size:1.8em; 
+}
+
+h3 { 
+   font-size:1.4em; 
+}
+
+h4 { 
+   font-size:1.0em; 
+}
+
+h5 { 
+   font-size:0.9em; 
+}
+
+h6 { 
+   font-size:0.8em; 
+}
+
+a:visited {
+   color: rgb(50%, 0%, 50%);
+}
+
+pre {	
+   margin-top: 0;
+   max-width: 95%;
+   border: 1px solid #ccc;
+   white-space: pre-wrap;
+}
+
+pre code {
+   display: block; padding: 0.5em;
+}
+
+code.r, code.cpp {
+   background-color: #F8F8F8;
+}
+
+table, td, th {
+  border: none;
+}
+
+blockquote {
+   color:#666666;
+   margin:0;
+   padding-left: 1em;
+   border-left: 0.5em #EEE solid;
+}
+
+hr {
+   height: 0px;
+   border-bottom: none;
+   border-top-width: thin;
+   border-top-style: dotted;
+   border-top-color: #999999;
+}
+
+@media print {
+   * { 
+      background: transparent !important; 
+      color: black !important; 
+      filter:none !important; 
+      -ms-filter: none !important; 
+   }
+
+   body { 
+      font-size:12pt; 
+      max-width:100%; 
+   }
+       
+   a, a:visited { 
+      text-decoration: underline; 
+   }
+
+   hr { 
+      visibility: hidden;
+      page-break-before: always;
+   }
+
+   pre, blockquote { 
+      padding-right: 1em; 
+      page-break-inside: avoid; 
+   }
+
+   tr, img { 
+      page-break-inside: avoid; 
+   }
+
+   img { 
+      max-width: 100% !important; 
+   }
+
+   @page :left { 
+      margin: 15mm 20mm 15mm 10mm; 
+   }
+     
+   @page :right { 
+      margin: 15mm 10mm 15mm 20mm; 
+   }
+
+   p, h2, h3 { 
+      orphans: 3; widows: 3; 
+   }
+
+   h2, h3 { 
+      page-break-after: avoid; 
+   }
+}
+
+</style>
+
+<!-- Styles for R syntax highlighter -->
+<style type="text/css">
+   pre .operator,
+   pre .paren {
+     color: rgb(104, 118, 135)
+   }
+
+   pre .literal {
+     color: rgb(88, 72, 246)
+   }
+
+   pre .number {
+     color: rgb(0, 0, 205);
+   }
+
+   pre .comment {
+     color: rgb(76, 136, 107);
+   }
+
+   pre .keyword {
+     color: rgb(0, 0, 255);
+   }
+
+   pre .identifier {
+     color: rgb(0, 0, 0);
+   }
+
+   pre .string {
+     color: rgb(3, 106, 7);
+   }
+</style>
+
+<!-- R syntax highlighter -->
+<script type="text/javascript">
+var hljs=new function(){function m(p){return p.replace(/&/gm,"&amp;").replace(/</gm,"&lt;")}function f(r,q,p){return RegExp(q,"m"+(r.cI?"i":"")+(p?"g":""))}function b(r){for(var p=0;p<r.childNodes.length;p++){var q=r.childNodes[p];if(q.nodeName=="CODE"){return q}if(!(q.nodeType==3&&q.nodeValue.match(/\s+/))){break}}}function h(t,s){var p="";for(var r=0;r<t.childNodes.length;r++){if(t.childNodes[r].nodeType==3){var q=t.childNodes[r].nodeValue;if(s){q=q.replace(/\n/g,"")}p+=q}else{if(t.childNodes[r].nodeName=="BR"){p+="\n"}else{p+=h(t.childNodes[r])}}}if(/MSIE [678]/.test(navigator.userAgent)){p=p.replace(/\r/g,"\n")}return p}function a(s){var r=s.className.split(/\s+/);r=r.concat(s.parentNode.className.split(/\s+/));for(var q=0;q<r.length;q++){var p=r[q].replace(/^language-/,"");if(e[p]){return p}}}function c(q){var p=[];(function(s,t){for(var r=0;r<s.childNodes.length;r++){if(s.childNodes[r].nodeType==3){t+=s.childNodes[r].nodeValue.length}else{if(s.childNodes[r].nodeName=="BR"){t+=1}else{if(s.childNodes[r].nodeType==1){p.push({event:"start",offset:t,node:s.childNodes[r]});t=arguments.callee(s.childNodes[r],t);p.push({event:"stop",offset:t,node:s.childNodes[r]})}}}}return t})(q,0);return p}function k(y,w,x){var q=0;var z="";var s=[];function u(){if(y.length&&w.length){if(y[0].offset!=w[0].offset){return(y[0].offset<w[0].offset)?y:w}else{return w[0].event=="start"?y:w}}else{return y.length?y:w}}function t(D){var A="<"+D.nodeName.toLowerCase();for(var B=0;B<D.attributes.length;B++){var C=D.attributes[B];A+=" "+C.nodeName.toLowerCase();if(C.value!==undefined&&C.value!==false&&C.value!==null){A+='="'+m(C.value)+'"'}}return A+">"}while(y.length||w.length){var v=u().splice(0,1)[0];z+=m(x.substr(q,v.offset-q));q=v.offset;if(v.event=="start"){z+=t(v.node);s.push(v.node)}else{if(v.event=="stop"){var p,r=s.length;do{r--;p=s[r];z+=("</"+p.nodeName.toLowerCase()+">")}while(p!=v.node);s.splice(r,1);while(r<s.length){z+=t(s[r]);r++}}}}return z+m(x.substr(q))}function j(){function q(x,y,v){if(x.compiled){return}var u;var s=[];if(x.k){x.lR=f(y,x.l||hljs.IR,true);for(var w in x.k){if(!x.k.hasOwnProperty(w)){continue}if(x.k[w] instanceof Object){u=x.k[w]}else{u=x.k;w="keyword"}for(var r in u){if(!u.hasOwnProperty(r)){continue}x.k[r]=[w,u[r]];s.push(r)}}}if(!v){if(x.bWK){x.b="\\b("+s.join("|")+")\\s"}x.bR=f(y,x.b?x.b:"\\B|\\b");if(!x.e&&!x.eW){x.e="\\B|\\b"}if(x.e){x.eR=f(y,x.e)}}if(x.i){x.iR=f(y,x.i)}if(x.r===undefined){x.r=1}if(!x.c){x.c=[]}x.compiled=true;for(var t=0;t<x.c.length;t++){if(x.c[t]=="self"){x.c[t]=x}q(x.c[t],y,false)}if(x.starts){q(x.starts,y,false)}}for(var p in e){if(!e.hasOwnProperty(p)){continue}q(e[p].dM,e[p],true)}}function d(B,C){if(!j.called){j();j.called=true}function q(r,M){for(var L=0;L<M.c.length;L++){if((M.c[L].bR.exec(r)||[null])[0]==r){return M.c[L]}}}function v(L,r){if(D[L].e&&D[L].eR.test(r)){return 1}if(D[L].eW){var M=v(L-1,r);return M?M+1:0}return 0}function w(r,L){return L.i&&L.iR.test(r)}function K(N,O){var M=[];for(var L=0;L<N.c.length;L++){M.push(N.c[L].b)}var r=D.length-1;do{if(D[r].e){M.push(D[r].e)}r--}while(D[r+1].eW);if(N.i){M.push(N.i)}return f(O,M.join("|"),true)}function p(M,L){var N=D[D.length-1];if(!N.t){N.t=K(N,E)}N.t.lastIndex=L;var r=N.t.exec(M);return r?[M.substr(L,r.index-L),r[0],false]:[M.substr(L),"",true]}function z(N,r){var L=E.cI?r[0].toLowerCase():r[0];var M=N.k[L];if(M&&M instanceof Array){return M}return false}function F(L,P){L=m(L);if(!P.k){return L}var r="";var O=0;P.lR.lastIndex=0;var M=P.lR.exec(L);while(M){r+=L.substr(O,M.index-O);var N=z(P,M);if(N){x+=N[1];r+='<span class="'+N[0]+'">'+M[0]+"</span>"}else{r+=M[0]}O=P.lR.lastIndex;M=P.lR.exec(L)}return r+L.substr(O,L.length-O)}function J(L,M){if(M.sL&&e[M.sL]){var r=d(M.sL,L);x+=r.keyword_count;return r.value}else{return F(L,M)}}function I(M,r){var L=M.cN?'<span class="'+M.cN+'">':"";if(M.rB){y+=L;M.buffer=""}else{if(M.eB){y+=m(r)+L;M.buffer=""}else{y+=L;M.buffer=r}}D.push(M);A+=M.r}function G(N,M,Q){var R=D[D.length-1];if(Q){y+=J(R.buffer+N,R);return false}var P=q(M,R);if(P){y+=J(R.buffer+N,R);I(P,M);return P.rB}var L=v(D.length-1,M);if(L){var O=R.cN?"</span>":"";if(R.rE){y+=J(R.buffer+N,R)+O}else{if(R.eE){y+=J(R.buffer+N,R)+O+m(M)}else{y+=J(R.buffer+N+M,R)+O}}while(L>1){O=D[D.length-2].cN?"</span>":"";y+=O;L--;D.length--}var r=D[D.length-1];D.length--;D[D.length-1].buffer="";if(r.starts){I(r.starts,"")}return R.rE}if(w(M,R)){throw"Illegal"}}var E=e[B];var D=[E.dM];var A=0;var x=0;var y="";try{var s,u=0;E.dM.buffer="";do{s=p(C,u);var t=G(s[0],s[1],s[2]);u+=s[0].length;if(!t){u+=s[1].length}}while(!s[2]);if(D.length>1){throw"Illegal"}return{r:A,keyword_count:x,value:y}}catch(H){if(H=="Illegal"){return{r:0,keyword_count:0,value:m(C)}}else{throw H}}}function g(t){var p={keyword_count:0,r:0,value:m(t)};var r=p;for(var q in e){if(!e.hasOwnProperty(q)){continue}var s=d(q,t);s.language=q;if(s.keyword_count+s.r>r.keyword_count+r.r){r=s}if(s.keyword_count+s.r>p.keyword_count+p.r){r=p;p=s}}if(r.language){p.second_best=r}return p}function i(r,q,p){if(q){r=r.replace(/^((<[^>]+>|\t)+)/gm,function(t,w,v,u){return w.replace(/\t/g,q)})}if(p){r=r.replace(/\n/g,"<br>")}return r}function n(t,w,r){var x=h(t,r);var v=a(t);var y,s;if(v){y=d(v,x)}else{return}var q=c(t);if(q.length){s=document.createElement("pre");s.innerHTML=y.value;y.value=k(q,c(s),x)}y.value=i(y.value,w,r);var u=t.className;if(!u.match("(\\s|^)(language-)?"+v+"(\\s|$)")){u=u?(u+" "+v):v}if(/MSIE [678]/.test(navigator.userAgent)&&t.tagName=="CODE"&&t.parentNode.tagName=="PRE"){s=t.parentNode;var p=document.createElement("div");p.innerHTML="<pre><code>"+y.value+"</code></pre>";t=p.firstChild.firstChild;p.firstChild.cN=s.cN;s.parentNode.replaceChild(p.firstChild,s)}else{t.innerHTML=y.value}t.className=u;t.result={language:v,kw:y.keyword_count,re:y.r};if(y.second_best){t.second_best={language:y.second_best.language,kw:y.second_best.keyword_count,re:y.second_best.r}}}function o(){if(o.called){return}o.called=true;var r=document.getElementsByTagName("pre");for(var p=0;p<r.length;p++){var q=b(r[p]);if(q){n(q,hljs.tabReplace)}}}function l(){if(window.addEventListener){window.addEventListener("DOMContentLoaded",o,false);window.addEventListener("load",o,false)}else{if(window.attachEvent){window.attachEvent("onload",o)}else{window.onload=o}}}var e={};this.LANGUAGES=e;this.highlight=d;this.highlightAuto=g;this.fixMarkup=i;this.highlightBlock=n;this.initHighlighting=o;this.initHighlightingOnLoad=l;this.IR="[a-zA-Z][a-zA-Z0-9_]*";this.UIR="[a-zA-Z_][a-zA-Z0-9_]*";this.NR="\\b\\d+(\\.\\d+)?";this.CNR="\\b(0[xX][a-fA-F0-9]+|(\\d+(\\.\\d*)?|\\.\\d+)([eE][-+]?\\d+)?)";this.BNR="\\b(0b[01]+)";this.RSR="!|!=|!==|%|%=|&|&&|&=|\\*|\\*=|\\+|\\+=|,|\\.|-|-=|/|/=|:|;|<|<<|<<=|<=|=|==|===|>|>=|>>|>>=|>>>|>>>=|\\?|\\[|\\{|\\(|\\^|\\^=|\\||\\|=|\\|\\||~";this.ER="(?![\\s\\S])";this.BE={b:"\\\\.",r:0};this.ASM={cN:"string",b:"'",e:"'",i:"\\n",c:[this.BE],r:0};this.QSM={cN:"string",b:'"',e:'"',i:"\\n",c:[this.BE],r:0};this.CLCM={cN:"comment",b:"//",e:"$"};this.CBLCLM={cN:"comment",b:"/\\*",e:"\\*/"};this.HCM={cN:"comment",b:"#",e:"$"};this.NM={cN:"number",b:this.NR,r:0};this.CNM={cN:"number",b:this.CNR,r:0};this.BNM={cN:"number",b:this.BNR,r:0};this.inherit=function(r,s){var p={};for(var q in r){p[q]=r[q]}if(s){for(var q in s){p[q]=s[q]}}return p}}();hljs.LANGUAGES.cpp=function(){var a={keyword:{"false":1,"int":1,"float":1,"while":1,"private":1,"char":1,"catch":1,"export":1,virtual:1,operator:2,sizeof:2,dynamic_cast:2,typedef:2,const_cast:2,"const":1,struct:1,"for":1,static_cast:2,union:1,namespace:1,unsigned:1,"long":1,"throw":1,"volatile":2,"static":1,"protected":1,bool:1,template:1,mutable:1,"if":1,"public":1,friend:2,"do":1,"return":1,"goto":1,auto:1,"void":2,"enum":1,"else":1,"break":1,"new":1,extern:1,using:1,"true":1,"class":1,asm:1,"case":1,typeid:1,"short":1,reinterpret_cast:2,"default":1,"double":1,register:1,explicit:1,signed:1,typename:1,"try":1,"this":1,"switch":1,"continue":1,wchar_t:1,inline:1,"delete":1,alignof:1,char16_t:1,char32_t:1,constexpr:1,decltype:1,noexcept:1,nullptr:1,static_assert:1,thread_local:1,restrict:1,_Bool:1,complex:1},built_in:{std:1,string:1,cin:1,cout:1,cerr:1,clog:1,stringstream:1,istringstream:1,ostringstream:1,auto_ptr:1,deque:1,list:1,queue:1,stack:1,vector:1,map:1,set:1,bitset:1,multiset:1,multimap:1,unordered_set:1,unordered_map:1,unordered_multiset:1,unordered_multimap:1,array:1,shared_ptr:1}};return{dM:{k:a,i:"</",c:[hljs.CLCM,hljs.CBLCLM,hljs.QSM,{cN:"string",b:"'\\\\?.",e:"'",i:"."},{cN:"number",b:"\\b(\\d+(\\.\\d*)?|\\.\\d+)(u|U|l|L|ul|UL|f|F)"},hljs.CNM,{cN:"preprocessor",b:"#",e:"$"},{cN:"stl_container",b:"\\b(deque|list|queue|stack|vector|map|set|bitset|multiset|multimap|unordered_map|unordered_set|unordered_multiset|unordered_multimap|array)\\s*<",e:">",k:a,r:10,c:["self"]}]}}}();hljs.LANGUAGES.r={dM:{c:[hljs.HCM,{cN:"number",b:"\\b0[xX][0-9a-fA-F]+[Li]?\\b",e:hljs.IMMEDIATE_RE,r:0},{cN:"number",b:"\\b\\d+(?:[eE][+\\-]?\\d*)?L\\b",e:hljs.IMMEDIATE_RE,r:0},{cN:"number",b:"\\b\\d+\\.(?!\\d)(?:i\\b)?",e:hljs.IMMEDIATE_RE,r:1},{cN:"number",b:"\\b\\d+(?:\\.\\d*)?(?:[eE][+\\-]?\\d*)?i?\\b",e:hljs.IMMEDIATE_RE,r:0},{cN:"number",b:"\\.\\d+(?:[eE][+\\-]?\\d*)?i?\\b",e:hljs.IMMEDIATE_RE,r:1},{cN:"keyword",b:"(?:tryCatch|library|setGeneric|setGroupGeneric)\\b",e:hljs.IMMEDIATE_RE,r:10},{cN:"keyword",b:"\\.\\.\\.",e:hljs.IMMEDIATE_RE,r:10},{cN:"keyword",b:"\\.\\.\\d+(?![\\w.])",e:hljs.IMMEDIATE_RE,r:10},{cN:"keyword",b:"\\b(?:function)",e:hljs.IMMEDIATE_RE,r:2},{cN:"keyword",b:"(?:if|in|break|next|repeat|else|for|return|switch|while|try|stop|warning|require|attach|detach|source|setMethod|setClass)\\b",e:hljs.IMMEDIATE_RE,r:1},{cN:"literal",b:"(?:NA|NA_integer_|NA_real_|NA_character_|NA_complex_)\\b",e:hljs.IMMEDIATE_RE,r:10},{cN:"literal",b:"(?:NULL|TRUE|FALSE|T|F|Inf|NaN)\\b",e:hljs.IMMEDIATE_RE,r:1},{cN:"identifier",b:"[a-zA-Z.][a-zA-Z0-9._]*\\b",e:hljs.IMMEDIATE_RE,r:0},{cN:"operator",b:"<\\-(?!\\s*\\d)",e:hljs.IMMEDIATE_RE,r:2},{cN:"operator",b:"\\->|<\\-",e:hljs.IMMEDIATE_RE,r:1},{cN:"operator",b:"%%|~",e:hljs.IMMEDIATE_RE},{cN:"operator",b:">=|<=|==|!=|\\|\\||&&|=|\\+|\\-|\\*|/|\\^|>|<|!|&|\\||\\$|:",e:hljs.IMMEDIATE_RE,r:0},{cN:"operator",b:"%",e:"%",i:"\\n",r:1},{cN:"identifier",b:"`",e:"`",r:0},{cN:"string",b:'"',e:'"',c:[hljs.BE],r:0},{cN:"string",b:"'",e:"'",c:[hljs.BE],r:0},{cN:"paren",b:"[[({\\])}]",e:hljs.IMMEDIATE_RE,r:0}]}};
+hljs.initHighlightingOnLoad();
+</script>
+
+
+
+
+</head>
+
+<body>
+<!-- Automatically generated by RStudio [12861c30b10411e1afa60800200c9a66] -->
+
+<h3>XX_CheckSeurat_Normalization_Regression.R</h3>
+
+<p>nfortelny &mdash; <em>May 31, 2017, 10:03 AM</em></p>
+
+<pre><code class="r">require(&quot;project.init&quot;)
+</code></pre>
+
+<pre><code>Loading required package: project.init
+</code></pre>
+
+<pre><code class="r">require(Seurat)
+</code></pre>
+
+<pre><code>Loading required package: Seurat
+</code></pre>
+
+<pre><code>Loading required package: ggplot2
+</code></pre>
+
+<pre><code>Loading required package: cowplot
+</code></pre>
+
+<pre><code>
+Attaching package: &#39;cowplot&#39;
+</code></pre>
+
+<pre><code>The following object is masked from &#39;package:ggplot2&#39;:
+
+    ggsave
+</code></pre>
+
+<pre><code>
+Attaching package: &#39;Seurat&#39;
+</code></pre>
+
+<pre><code>The following object is masked from &#39;package:project.init&#39;:
+
+    rp
+</code></pre>
+
+<pre><code class="r">require(dplyr)
+</code></pre>
+
+<pre><code>Loading required package: dplyr
+</code></pre>
+
+<pre><code>
+Attaching package: &#39;dplyr&#39;
+</code></pre>
+
+<pre><code>The following object is masked from &#39;package:Seurat&#39;:
+
+    arrange
+</code></pre>
+
+<pre><code>The following objects are masked from &#39;package:stats&#39;:
+
+    filter, lag
+</code></pre>
+
+<pre><code>The following objects are masked from &#39;package:base&#39;:
+
+    intersect, setdiff, setequal, union
+</code></pre>
+
+<pre><code class="r">require(Matrix)
+</code></pre>
+
+<pre><code>Loading required package: Matrix
+</code></pre>
+
+<pre><code class="r">require(methods)
+
+seurat.min.genes &lt;- 200
+
+project.init2(&quot;cll-time_course&quot;)
+</code></pre>
+
+<pre><code>PROJECT.DIR:/home/nfortelny/code/cll-time_course/
+</code></pre>
+
+<pre><code>PROCESSED.PROJECT:/scratch/lab_bock/shared/projects/cll-time_course/
+</code></pre>
+
+<pre><code>init.packages() ...
+</code></pre>
+
+<pre><code>
+Attaching package: &#39;devtools&#39;
+</code></pre>
+
+<pre><code>The following object is masked from &#39;package:Seurat&#39;:
+
+    setup
+</code></pre>
+
+<pre><code>--------------------------------------------------------------------------------------------------------------------------------
+</code></pre>
+
+<pre><code>data.table + dplyr code now lives in dtplyr.
+Please library(dtplyr)!
+</code></pre>
+
+<pre><code>--------------------------------------------------------------------------------------------------------------------------------
+</code></pre>
+
+<pre><code>
+Attaching package: &#39;data.table&#39;
+</code></pre>
+
+<pre><code>The following objects are masked from &#39;package:dplyr&#39;:
+
+    between, first, last
+</code></pre>
+
+<pre><code>Registering fonts with R
+</code></pre>
+
+<pre><code>Loading RGenomeUtils
+</code></pre>
+
+<pre><code>Warning: character(0)
+
+Warning: character(0)
+</code></pre>
+
+<pre><code>Initializing /home/nfortelny/code/cll-time_course/src/00-init.R...
+</code></pre>
+
+<pre><code class="r">cellranger_filtered &lt;- &quot;filtered&quot;
+
+sample.x &lt;- &quot;allDataBest_NoDownSampling/&quot;
+
+data.path &lt;- paste0(getOption(&quot;PROCESSED.PROJECT&quot;), &quot;results/cellranger_count/&quot;,sample.x,&quot;/outs/&quot;,cellranger_filtered,&quot;_gene_bc_matrices_mex/GRCh38/&quot;)
+
+pbmc.data &lt;- Read10X(data.path)
+pbmc &lt;- new(&quot;seurat&quot;, raw.data = pbmc.data)
+pbmc.prenormalize &lt;- pbmc
+pbmc &lt;- Setup(pbmc, min.cells = 3, min.genes = seurat.min.genes, do.logNormalize = T, total.expr = 1e4, project = sample.x)
+pbmc.normalize &lt;- pbmc
+
+# Mito genes --------------------------------------------------------------
+mito.genes &lt;- grep(&quot;^MT-&quot;, rownames(pbmc@data), value = T)
+percent.mito &lt;- colSums(expm1(pbmc@data[mito.genes, ]))/colSums(expm1(pbmc@data))
+pbmc &lt;- AddMetaData(pbmc, percent.mito, &quot;percent.mito&quot;)
+
+
+# regress out unwanted sources of variation (UMI normalization), also normalize for mitochondrial content
+pbmc &lt;- RegressOut(pbmc, latent.vars = c(&quot;nUMI&quot;, &quot;percent.mito&quot;))
+</code></pre>
+
+<pre><code>[1] &quot;Regressing out nUMI&quot;         &quot;Regressing out percent.mito&quot;
+</code></pre>
+
+<pre><code class="r">pbmc.regressed &lt;- pbmc
+
+str(pbmc.prenormalize@data)
+</code></pre>
+
+<pre><code> NULL
+</code></pre>
+
+<pre><code class="r">str(pbmc.normalize@data)
+</code></pre>
+
+<pre><code>Formal class &#39;dgCMatrix&#39; [package &quot;Matrix&quot;] with 6 slots
+  ..@ i       : int [1:23602652] 37 66 67 69 75 97 117 122 168 207 ...
+  ..@ p       : int [1:33167] 0 1063 1984 3237 4223 5251 6033 6430 7315 8211 ...
+  ..@ Dim     : int [1:2] 18852 33166
+  ..@ Dimnames:List of 2
+  .. ..$ : chr [1:18852] &quot;RP11-34P13.7&quot; &quot;FO538757.2&quot; &quot;AP006222.2&quot; &quot;RP4-669L17.10&quot; ...
+  .. ..$ : chr [1:33166] &quot;AAACCTGAGACCTTTG-1&quot; &quot;AAACCTGAGCCGTCGT-1&quot; &quot;AAACCTGCAAACAACA-1&quot; &quot;AAACCTGCACTCGACG-1&quot; ...
+  ..@ x       : num [1:23602652] 1.5 1.5 1.5 1.5 1.5 ...
+  ..@ factors : list()
+</code></pre>
+
+<pre><code class="r">str(pbmc.regressed@data)
+</code></pre>
+
+<pre><code>Formal class &#39;dgCMatrix&#39; [package &quot;Matrix&quot;] with 6 slots
+  ..@ i       : int [1:23602652] 37 66 67 69 75 97 117 122 168 207 ...
+  ..@ p       : int [1:33167] 0 1063 1984 3237 4223 5251 6033 6430 7315 8211 ...
+  ..@ Dim     : int [1:2] 18852 33166
+  ..@ Dimnames:List of 2
+  .. ..$ : chr [1:18852] &quot;RP11-34P13.7&quot; &quot;FO538757.2&quot; &quot;AP006222.2&quot; &quot;RP4-669L17.10&quot; ...
+  .. ..$ : chr [1:33166] &quot;AAACCTGAGACCTTTG-1&quot; &quot;AAACCTGAGCCGTCGT-1&quot; &quot;AAACCTGCAAACAACA-1&quot; &quot;AAACCTGCACTCGACG-1&quot; ...
+  ..@ x       : num [1:23602652] 1.5 1.5 1.5 1.5 1.5 ...
+  ..@ factors : list()
+</code></pre>
+
+<pre><code class="r">str(pbmc.prenormalize@scale.data)
+</code></pre>
+
+<pre><code> NULL
+</code></pre>
+
+<pre><code class="r">str(pbmc.normalize@scale.data)
+</code></pre>
+
+<pre><code> num [1:18852, 1:33166] -0.0108 -0.1455 -0.0768 -0.016 -0.0651 ...
+ - attr(*, &quot;dimnames&quot;)=List of 2
+  ..$ : chr [1:18852] &quot;RP11-34P13.7&quot; &quot;FO538757.2&quot; &quot;AP006222.2&quot; &quot;RP4-669L17.10&quot; ...
+  ..$ : chr [1:33166] &quot;AAACCTGAGACCTTTG-1&quot; &quot;AAACCTGAGCCGTCGT-1&quot; &quot;AAACCTGCAAACAACA-1&quot; &quot;AAACCTGCACTCGACG-1&quot; ...
+</code></pre>
+
+<pre><code class="r">str(pbmc.regressed@scale.data)
+</code></pre>
+
+<pre><code> num [1:18852, 1:33166] -0.01844 -0.12092 -0.05264 -0.00665 -0.06992 ...
+ - attr(*, &quot;dimnames&quot;)=List of 2
+  ..$ : chr [1:18852] &quot;RP11-34P13.7&quot; &quot;FO538757.2&quot; &quot;AP006222.2&quot; &quot;RP4-669L17.10&quot; ...
+  ..$ : chr [1:33166] &quot;AAACCTGAGACCTTTG-1&quot; &quot;AAACCTGAGCCGTCGT-1&quot; &quot;AAACCTGCAAACAACA-1&quot; &quot;AAACCTGCACTCGACG-1&quot; ...
+</code></pre>
+
+<pre><code class="r">qplot(x=pbmc.normalize@scale.data[,4], y=pbmc.regressed@scale.data[,4]) + geom_hex()
+</code></pre>
+
+<p><img src="data:image/png;base64,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" alt="plot of chunk unnamed-chunk-1"/></p>
+
+<pre><code class="r">all(pbmc.normalize@scale.data[,4] == pbmc.regressed@scale.data[,4])
+</code></pre>
+
+<pre><code>[1] FALSE
+</code></pre>
+
+<pre><code class="r">all(pbmc.normalize@data[,4] == pbmc.regressed@data[,4])
+</code></pre>
+
+<pre><code>[1] TRUE
+</code></pre>
+
+<pre><code class="r">str(pbmc@raw.data)
+</code></pre>
+
+<pre><code>Formal class &#39;dgTMatrix&#39; [package &quot;Matrix&quot;] with 6 slots
+  ..@ i       : int [1:24178896] 59 97 99 101 110 153 183 188 249 336 ...
+  ..@ j       : int [1:24178896] 0 0 0 0 0 0 0 0 0 0 ...
+  ..@ Dim     : int [1:2] 33694 38068
+  ..@ Dimnames:List of 2
+  .. ..$ : chr [1:33694] &quot;RP11-34P13.3&quot; &quot;FAM138A&quot; &quot;OR4F5&quot; &quot;RP11-34P13.7&quot; ...
+  .. ..$ : chr [1:38068] &quot;AAACCTGAGACCTTTG-1&quot; &quot;AAACCTGAGCCGTCGT-1&quot; &quot;AAACCTGCAAACAACA-1&quot; &quot;AAACCTGCACTCGACG-1&quot; ...
+  ..@ x       : num [1:24178896] 1 1 1 1 1 5 1 1 1 1 ...
+  ..@ factors : list()
+</code></pre>
+
+<pre><code class="r">str(pbmc@data)
+</code></pre>
+
+<pre><code>Formal class &#39;dgCMatrix&#39; [package &quot;Matrix&quot;] with 6 slots
+  ..@ i       : int [1:23602652] 37 66 67 69 75 97 117 122 168 207 ...
+  ..@ p       : int [1:33167] 0 1063 1984 3237 4223 5251 6033 6430 7315 8211 ...
+  ..@ Dim     : int [1:2] 18852 33166
+  ..@ Dimnames:List of 2
+  .. ..$ : chr [1:18852] &quot;RP11-34P13.7&quot; &quot;FO538757.2&quot; &quot;AP006222.2&quot; &quot;RP4-669L17.10&quot; ...
+  .. ..$ : chr [1:33166] &quot;AAACCTGAGACCTTTG-1&quot; &quot;AAACCTGAGCCGTCGT-1&quot; &quot;AAACCTGCAAACAACA-1&quot; &quot;AAACCTGCACTCGACG-1&quot; ...
+  ..@ x       : num [1:23602652] 1.5 1.5 1.5 1.5 1.5 ...
+  ..@ factors : list()
+</code></pre>
+
+<pre><code class="r">pbmc@data[1:20, 1:20]
+</code></pre>
+
+<pre><code>20 x 20 sparse Matrix of class &quot;dgCMatrix&quot;
+</code></pre>
+
+<pre><code>   [[ suppressing 20 column names &#39;AAACCTGAGACCTTTG-1&#39;, &#39;AAACCTGAGCCGTCGT-1&#39;, &#39;AAACCTGCAAACAACA-1&#39; ... ]]
+</code></pre>
+
+<pre><code>
+RP11-34P13.7  . . . . . . . .        . . .        .        . .        .        . . . .        .       
+FO538757.2    . . . . . . . .        . . .        .        . .        .        . . . .        .       
+AP006222.2    . . . . . . . .        . . .        .        . .        .        . . . .        .       
+RP4-669L17.10 . . . . . . . .        . . .        .        . .        .        . . . .        .       
+RP11-206L10.9 . . . . . . . .        . . .        .        . .        .        . . . .        .       
+FAM87B        . . . . . . . .        . . .        .        . .        .        . . . .        .       
+LINC00115     . . . . . . . .        . . .        .        . .        .        . . . .        .       
+FAM41C        . . . . . . . .        . . .        .        . .        .        . . . .        .       
+RP11-54O7.1   . . . . . . . .        . . .        .        . .        .        . . . .        .       
+SAMD11        . . . . . . . .        . . .        .        . .        .        . . . .        .       
+NOC2L         . . . . . . . .        . . 1.252406 .        . 1.726143 .        . . . .        .       
+KLHL17        . . . . . . . .        . . .        .        . .        .        . . . .        .       
+PLEKHN1       . . . . . . . .        . . .        .        . .        .        . . . .        .       
+PERM1         . . . . . . . .        . . .        .        . .        .        . . . .        .       
+HES4          . . . . . . . .        . . .        .        . .        .        . . . .        .       
+ISG15         . . . . . . . 1.876088 . . .        1.977239 . .        1.523463 . . . 2.082247 2.094639
+RP11-54O7.11  . . . . . . . .        . . .        .        . .        .        . . . .        .       
+AGRN          . . . . . . . .        . . .        .        . .        .        . . . .        .       
+C1orf159      . . . . . . . .        . . .        .        . .        .        . . . .        .       
+LINC01342     . . . . . . . .        . . .        .        . .        .        . . . .        .       
+</code></pre>
+
+<pre><code class="r">pbmc@raw.data[rownames(pbmc@data)[1:20], colnames(pbmc@data)[1:20]]
+</code></pre>
+
+<pre><code>20 x 20 sparse Matrix of class &quot;dgTMatrix&quot;
+</code></pre>
+
+<pre><code>   [[ suppressing 20 column names &#39;AAACCTGAGACCTTTG-1&#39;, &#39;AAACCTGAGCCGTCGT-1&#39;, &#39;AAACCTGCAAACAACA-1&#39; ... ]]
+</code></pre>
+
+<pre><code>
+RP11-34P13.7  . . . . . . . . . . . . . . . . . . . .
+FO538757.2    . . . . . . . . . . . . . . . . . . . .
+AP006222.2    . . . . . . . . . . . . . . . . . . . .
+RP4-669L17.10 . . . . . . . . . . . . . . . . . . . .
+RP11-206L10.9 . . . . . . . . . . . . . . . . . . . .
+FAM87B        . . . . . . . . . . . . . . . . . . . .
+LINC00115     . . . . . . . . . . . . . . . . . . . .
+FAM41C        . . . . . . . . . . . . . . . . . . . .
+RP11-54O7.1   . . . . . . . . . . . . . . . . . . . .
+SAMD11        . . . . . . . . . . . . . . . . . . . .
+NOC2L         . . . . . . . . . . 1 . . 1 . . . . . .
+KLHL17        . . . . . . . . . . . . . . . . . . . .
+PLEKHN1       . . . . . . . . . . . . . . . . . . . .
+PERM1         . . . . . . . . . . . . . . . . . . . .
+HES4          . . . . . . . . . . . . . . . . . . . .
+ISG15         . . . . . . . 1 . . . 1 . . 1 . . . 1 1
+RP11-54O7.11  . . . . . . . . . . . . . . . . . . . .
+AGRN          . . . . . . . . . . . . . . . . . . . .
+C1orf159      . . . . . . . . . . . . . . . . . . . .
+LINC01342     . . . . . . . . . . . . . . . . . . . .
+</code></pre>
+
+<pre><code class="r">pbmc@scale.data[rownames(pbmc@data)[1:20], colnames(pbmc@data)[1:20]]
+</code></pre>
+
+<pre><code>              AAACCTGAGACCTTTG-1 AAACCTGAGCCGTCGT-1 AAACCTGCAAACAACA-1 AAACCTGCACTCGACG-1 AAACGGGAGACAGAGA-1 AAACGGGAGAGCTTCT-1
+RP11-34P13.7        -0.018442321       -0.016795543       -0.007131774       -0.013672437       -0.016910600      -0.0009102087
+FO538757.2          -0.120917962       -0.127093664       -0.153124357       -0.136103041       -0.125345096      -0.1744374743
+AP006222.2          -0.052643760       -0.058886776       -0.083340970       -0.067501916       -0.056879183      -0.1045185781
+RP4-669L17.10       -0.006652029       -0.010582011       -0.010784009       -0.011983653       -0.007358503      -0.0211114522
+RP11-206L10.9       -0.069919289       -0.067657304       -0.068962070       -0.067226733       -0.069695973      -0.0632988676
+FAM87B              -0.025813297       -0.018212294       -0.022258192       -0.016675818       -0.025019212      -0.0031610533
+LINC00115           -0.087147483       -0.074430167       -0.097240291       -0.076105802       -0.087888132      -0.0684604047
+FAM41C              -0.039392263       -0.045566215       -0.055990436       -0.050443662       -0.041805891      -0.0742131358
+RP11-54O7.1         -0.016638514       -0.013751441       -0.015186757       -0.013140995       -0.016323814      -0.0079130759
+SAMD11              -0.035687821       -0.028491384       -0.045424987       -0.030505315       -0.036626267      -0.0299351423
+NOC2L               -0.391420147       -0.335562986       -0.393595223       -0.331763585       -0.389235370      -0.2588526781
+KLHL17              -0.047292230       -0.042157361       -0.049775041       -0.042412404       -0.047385871      -0.0378397354
+PLEKHN1             -0.074944035       -0.061084193       -0.057514333       -0.055384604       -0.072083910      -0.0205275995
+PERM1               -0.013413070       -0.012372794       -0.020756930       -0.014235370       -0.014314499      -0.0196915801
+HES4                -0.180536157       -0.126446898       -0.162108735       -0.117332099       -0.175771730      -0.0275707648
+ISG15               -0.556269120       -0.506044982       -0.640473966       -0.524401647       -0.564914637      -0.5355827490
+RP11-54O7.11        -0.016563491       -0.014374931       -0.016050738       -0.014067769       -0.016400751      -0.0106531035
+AGRN                -0.046570391       -0.043324180       -0.032049497       -0.039225953       -0.044553949      -0.0213225761
+C1orf159            -0.103548639       -0.092425945       -0.099209140       -0.090405977       -0.102497932      -0.0714345193
+LINC01342           -0.001832258       -0.005314412       -0.003277141       -0.005969651       -0.002172336      -0.0119895409
+              AAACGGGAGAGTTGGC-1 AAACGGGAGCCACCTG-1 AAACGGGAGCGATAGC-1 AAACGGGCAAAGCGGT-1 AAACGGGCAAATCCGT-1 AAACGGGCATCGGAAG-1
+RP11-34P13.7       -0.0284690871       -0.008678576       -0.053665911       -0.011885178      -0.0209198169       -0.004879828
+FO538757.2         -0.0966613892       -0.151561646       -0.019266739       -0.139524404      -0.1112199488       -0.163017493
+AP006222.2         -0.0305542829       -0.082533380        0.044568829       -0.070362759      -0.0427658900       -0.093605750
+RP4-669L17.10      -0.0126039090       -0.016581575        0.009245812       -0.008902408       0.0001716455       -0.019400140
+RP11-206L10.9      -0.0646361440       -0.065035309       -0.074832568       -0.069456878      -0.0739034427       -0.063801349
+FAM87B             -0.0085027156       -0.009203521       -0.043332927       -0.024061034      -0.0391878533       -0.004964502
+LINC00115          -0.0372180869       -0.068740049       -0.068630894       -0.093617056      -0.1101639829       -0.066031196
+FAM41C             -0.0355319850       -0.060903122        0.015718583       -0.048851059      -0.0290752160       -0.068092960
+RP11-54O7.1        -0.0101960497       -0.010270331       -0.023595388       -0.015913510      -0.0217145007       -0.008632516
+SAMD11             -0.0021717407       -0.027626274       -0.013205811       -0.041708304      -0.0488727992       -0.027193549
+NOC2L              -0.2272195694       -0.285913883       -0.435783278       -0.395129720       1.9982757328       -0.262496418
+KLHL17             -0.0292136025       -0.038928467       -0.044563706       -0.048971192      -0.0565221280       -0.037399570
+PLEKHN1            -0.0576885563       -0.038254187       -0.139530942       -0.065332919      -0.0988951470       -0.027533112
+PERM1              -0.0008088831       -0.015719974        0.007537002       -0.017762531      -0.0155556389       -0.017279636
+HES4               -0.0483719258       -0.066358768       -0.284720049       -0.172093882      -0.2759842957       -0.038071245
+ISG15              -0.3011206778        1.622535690       -0.350917498       -0.607809451      -0.6489351502        1.736067260
+RP11-54O7.11       -0.0109114937       -0.012079846       -0.020084673       -0.016358374      -0.0204347968       -0.010998909
+AGRN               -0.0561729989       -0.031871334       -0.092822234       -0.038201436      -0.0517640695       -0.026507730
+C1orf159           -0.0770900340       -0.079747871       -0.126612991       -0.101490165      -0.1231542754       -0.073780598
+LINC01342          -0.0100027508       -0.009333999        0.005645839       -0.002527294       0.0043021883       -0.011225748
+              AAACGGGGTCTAGCGC-1 AAACGGGGTTAAGTAG-1 AAACGGGTCTGCAAGT-1 AAAGATGAGAGGTTAT-1 AAAGATGAGATCGATA-1 AAAGATGAGGAATCGC-1
+RP11-34P13.7        -0.006017306       -0.029752570       -0.010865414       -0.024329373       -0.007916037       -0.007390809
+FO538757.2          -0.158062025       -0.089707724       -0.143052405       -0.106117098       -0.153120205       -0.154419916
+AP006222.2          -0.088470603       -0.023134857       -0.073875233       -0.039007329       -0.083871874       -0.085063684
+RP4-669L17.10       -0.015141297       -0.004748639       -0.010672657       -0.008894959       -0.015488218       -0.015241576
+RP11-206L10.9       -0.066348612       -0.069455308       -0.068479211       -0.067615575       -0.065845698       -0.066080906
+FAM87B              -0.013501263       -0.024625701       -0.020765929       -0.018313342       -0.011883552       -0.012651712
+LINC00115           -0.081397755       -0.067556329       -0.088569474       -0.063167120       -0.075268162       -0.077605974
+FAM41C              -0.062085125       -0.025310196       -0.051925390       -0.035712846       -0.060473414       -0.060749151
+RP11-54O7.1         -0.011868164       -0.016298746       -0.014658994       -0.013862109       -0.011275356       -0.011560469
+SAMD11              -0.036161092       -0.020183412       -0.038968821       -0.019248700       -0.031833409       -0.033420500
+NOC2L               -0.327141924        3.079007946       -0.371736379       -0.316136326       -0.309214885       -0.316716883
+KLHL17              -0.043496554       -0.041129459       -0.046886922       -0.038744535       -0.041361405       -0.042200853
+PLEKHN1             -0.042359714       -0.084792665       -0.059006873       -0.069070390       -0.041745988       -0.042428315
+PERM1               -0.018976952       -0.004656999       -0.017538793       -0.006806000       -0.017084610       -0.017703569
+HES4                -0.099283578       -0.164544578       -0.148845083       -0.122269141       -0.086305638       -0.092222785
+ISG15               -0.574614298       -0.430230965        1.142151271       -0.429959673       -0.540943909       -0.553086505
+RP11-54O7.11        -0.013491413       -0.015660888       -0.015424438       -0.014039936       -0.012916610       -0.013171310
+AGRN                -0.029275214       -0.060332972       -0.036416850       -0.052634095       -0.031358966       -0.030833805
+C1orf159            -0.086330887       -0.100863972       -0.096693412       -0.091958939       -0.083779556       -0.084960232
+LINC01342           -0.007302492       -0.002578000       -0.004031507       -0.005399093       -0.008082810       -0.007718843
+              AAAGATGAGTATCGAA-1 AAAGATGAGTGAACGC-1
+RP11-34P13.7        -0.009938365       -0.010816676
+FO538757.2          -0.148766673       -0.146266151
+AP006222.2          -0.080059478       -0.077676236
+RP4-669L17.10       -0.017895140       -0.017575260
+RP11-206L10.9       -0.064010720       -0.064084423
+FAM87B              -0.005824545       -0.006098516
+LINC00115           -0.060055331       -0.059267381
+FAM41C              -0.061056773       -0.059768968
+RP11-54O7.1         -0.009006069       -0.009118012
+SAMD11              -0.021951004       -0.021192321
+NOC2L               -0.255734915       -0.255549374
+KLHL17              -0.035722755       -0.035528327
+PLEKHN1             -0.034161636       -0.035511772
+PERM1               -0.013777777       -0.013206871
+HES4                -0.041015314       -0.042431055
+ISG15                1.899499819        1.920140167
+RP11-54O7.11        -0.011010394       -0.011049586
+AGRN                -0.032885410       -0.034012683
+C1orf159            -0.074640313       -0.074974186
+LINC01342           -0.010916696       -0.010805463
+</code></pre>
+
+<pre><code class="r">pbmc2 &lt;- Setup(pbmc.prenormalize, min.cells = 3, min.genes = seurat.min.genes, do.logNormalize = F, total.expr = 1e4, project = sample.x)
+str(pbmc2@scale.data)
+</code></pre>
+
+<pre><code> num [1:18852, 1:33166] -0.011 -0.1501 -0.0783 -0.0165 -0.0683 ...
+ - attr(*, &quot;dimnames&quot;)=List of 2
+  ..$ : chr [1:18852] &quot;RP11-34P13.7&quot; &quot;FO538757.2&quot; &quot;AP006222.2&quot; &quot;RP4-669L17.10&quot; ...
+  ..$ : chr [1:33166] &quot;AAACCTGAGACCTTTG-1&quot; &quot;AAACCTGAGCCGTCGT-1&quot; &quot;AAACCTGCAAACAACA-1&quot; &quot;AAACCTGCACTCGACG-1&quot; ...
+</code></pre>
+
+<pre><code class="r">pbmc2@data[rownames(pbmc@data)[1:20], colnames(pbmc@data)[1:20]]
+</code></pre>
+
+<pre><code>20 x 20 sparse Matrix of class &quot;dgTMatrix&quot;
+</code></pre>
+
+<pre><code>   [[ suppressing 20 column names &#39;AAACCTGAGACCTTTG-1&#39;, &#39;AAACCTGAGCCGTCGT-1&#39;, &#39;AAACCTGCAAACAACA-1&#39; ... ]]
+</code></pre>
+
+<pre><code>
+RP11-34P13.7  . . . . . . . . . . . . . . . . . . . .
+FO538757.2    . . . . . . . . . . . . . . . . . . . .
+AP006222.2    . . . . . . . . . . . . . . . . . . . .
+RP4-669L17.10 . . . . . . . . . . . . . . . . . . . .
+RP11-206L10.9 . . . . . . . . . . . . . . . . . . . .
+FAM87B        . . . . . . . . . . . . . . . . . . . .
+LINC00115     . . . . . . . . . . . . . . . . . . . .
+FAM41C        . . . . . . . . . . . . . . . . . . . .
+RP11-54O7.1   . . . . . . . . . . . . . . . . . . . .
+SAMD11        . . . . . . . . . . . . . . . . . . . .
+NOC2L         . . . . . . . . . . 1 . . 1 . . . . . .
+KLHL17        . . . . . . . . . . . . . . . . . . . .
+PLEKHN1       . . . . . . . . . . . . . . . . . . . .
+PERM1         . . . . . . . . . . . . . . . . . . . .
+HES4          . . . . . . . . . . . . . . . . . . . .
+ISG15         . . . . . . . 1 . . . 1 . . 1 . . . 1 1
+RP11-54O7.11  . . . . . . . . . . . . . . . . . . . .
+AGRN          . . . . . . . . . . . . . . . . . . . .
+C1orf159      . . . . . . . . . . . . . . . . . . . .
+LINC01342     . . . . . . . . . . . . . . . . . . . .
+</code></pre>
+
+<pre><code class="r">pbmc2@raw.data[rownames(pbmc@data)[1:20], colnames(pbmc@data)[1:20]]
+</code></pre>
+
+<pre><code>20 x 20 sparse Matrix of class &quot;dgTMatrix&quot;
+</code></pre>
+
+<pre><code>   [[ suppressing 20 column names &#39;AAACCTGAGACCTTTG-1&#39;, &#39;AAACCTGAGCCGTCGT-1&#39;, &#39;AAACCTGCAAACAACA-1&#39; ... ]]
+</code></pre>
+
+<pre><code>
+RP11-34P13.7  . . . . . . . . . . . . . . . . . . . .
+FO538757.2    . . . . . . . . . . . . . . . . . . . .
+AP006222.2    . . . . . . . . . . . . . . . . . . . .
+RP4-669L17.10 . . . . . . . . . . . . . . . . . . . .
+RP11-206L10.9 . . . . . . . . . . . . . . . . . . . .
+FAM87B        . . . . . . . . . . . . . . . . . . . .
+LINC00115     . . . . . . . . . . . . . . . . . . . .
+FAM41C        . . . . . . . . . . . . . . . . . . . .
+RP11-54O7.1   . . . . . . . . . . . . . . . . . . . .
+SAMD11        . . . . . . . . . . . . . . . . . . . .
+NOC2L         . . . . . . . . . . 1 . . 1 . . . . . .
+KLHL17        . . . . . . . . . . . . . . . . . . . .
+PLEKHN1       . . . . . . . . . . . . . . . . . . . .
+PERM1         . . . . . . . . . . . . . . . . . . . .
+HES4          . . . . . . . . . . . . . . . . . . . .
+ISG15         . . . . . . . 1 . . . 1 . . 1 . . . 1 1
+RP11-54O7.11  . . . . . . . . . . . . . . . . . . . .
+AGRN          . . . . . . . . . . . . . . . . . . . .
+C1orf159      . . . . . . . . . . . . . . . . . . . .
+LINC01342     . . . . . . . . . . . . . . . . . . . .
+</code></pre>
+
+<pre><code class="r">log(1/10000)
+</code></pre>
+
+<pre><code>[1] -9.21034
+</code></pre>
+
+<pre><code class="r">qplot(x=pbmc@raw.data[rownames(pbmc@data),colnames(pbmc@data)[1]], y=pbmc@data[,1]) + geom_point() + 
+  geom_line(data=data.table(x=1:500, y=log(1:500*1e4/sum(pbmc@raw.data[rownames(pbmc@data),colnames(pbmc@data)[1]]))), aes(x=x, y=y))
+</code></pre>
+
+<p><img src="data:image/png;base64,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" alt="plot of chunk unnamed-chunk-1"/></p>
+
+<pre><code class="r">lognorm &lt;- pbmc@raw.data[rownames(pbmc@data),colnames(pbmc@data)[1]]
+lognorm2 &lt;- log(lognorm*1e4/sum(lognorm))
+qplot(x=lognorm2, y=pbmc@data[,1]) + geom_hex() + geom_abline(intercept=0, slope=1)
+</code></pre>
+
+<pre><code>Warning: Removed 17789 rows containing non-finite values (stat_binhex).
+</code></pre>
+
+<p><img src="data:image/png;base64,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" alt="plot of chunk unnamed-chunk-1"/></p>
+
+</body>
+
+</html>
+

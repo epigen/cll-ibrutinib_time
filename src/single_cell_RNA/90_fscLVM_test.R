@@ -1,9 +1,17 @@
 require(data.table)
 require(ggplot2)
 
-outX <- paste0(outS, "fscLVM/fscLVM_files_3hidden/")
+# outFSCLVM <- paste0(outS, "fscLVM/fscLVM_files_3hidden/")
+stopifnot(dir.exists(dirout(outFSCLVM)))
+
 
 options(stringsAsFactors=FALSE)
+
+outX <- paste0(outFSCLVM, "results/")
+if(exists("balance.barcodes") && balance.barcodes){
+  outX <- paste0(outFSCLVM, "results_balanced/")
+}
+dir.create(dirout(outX))
 
 
 # READ DATA
@@ -22,16 +30,26 @@ pats <- unique(pDat$patient)
 pDat$patient <- factor(pDat$patient, levels = c("FE", pats[pats != "FE"]))
 
 
+# balance samples if selected
+table(pDat$sample)
+if(exists("balance.barcodes") && balance.barcodes){
+  barcodes.max <- min(table(pDat$sample))
+  barcodes.keep <- do.call(c, lapply(split(pDat$barcode, factor(pDat$sample)), function(barcodes) sample(barcodes, barcodes.max)))
+  pDat <- pDat[barcode %in% barcodes.keep]
+}
+table(pDat$sample)
+
+
 # READ fscLVM files -------------------------------------------------------
-rel <- fread(dirout(outX, "Relevance.csv"))
+rel <- fread(dirout(outFSCLVM, "Relevance.csv"))
 
-str(x <- as.matrix(fread(dirout(outX, "X.csv"))))
-str(z <- as.matrix(fread(dirout(outX, "Z.csv"))))
-str(zChanged <- as.matrix(fread(dirout(outX, "Zchanged.csv"))))
-str(w <- as.matrix(fread(dirout(outX, "W.csv"))))
+str(x <- as.matrix(fread(dirout(outFSCLVM, "X.csv"))))
+str(z <- as.matrix(fread(dirout(outFSCLVM, "Z.csv"))))
+str(zChanged <- as.matrix(fread(dirout(outFSCLVM, "Zchanged.csv"))))
+str(w <- as.matrix(fread(dirout(outFSCLVM, "W.csv"))))
 
-str(terms <- make.names(read.csv(dirout(outX, "Terms.csv"), header=F)$V1))
-str(genes <- read.csv(dirout(outX, "Genes_IDs.csv"), header=F)$V1)
+str(terms <- make.names(read.csv(dirout(outFSCLVM, "Terms.csv"), header=F)$V1))
+str(genes <- read.csv(dirout(outFSCLVM, "Genes_IDs.csv"), header=F)$V1)
 str(barcodes <- colnames(pbmc@data))
 
 # label matrices...
@@ -50,83 +68,178 @@ rel$term <- terms
 rel <- rel[order(value, decreasing=TRUE)]
 rel$term <- factor(rel$term, levels=rel$term)
 
-
+# Plot relevance of terms
 ggplot(rel[1:15], aes(x=term, y=value)) + geom_point() + coord_flip() + 
   theme_bw(24) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ggsave(dirout(outX, "Relevance.pdf"))
 
 
 
-# OVER TIME ---------------------------------------------------------------
-terms2 <- rel[1:15]$term
-res <- data.table(terms=terms2)
+
+
+# CALCULATE SCORES AND FIT MODEL --------------------------------------------------------
+genesets <- as.character(rel[1:15]$term)
+lm.pvalues <- data.table(geneset=genesets)
+lm.effect <- data.table(geneset=genesets)
+
 if(!file.exists(dirout(outX, "Pvalues.csv"))){
-  for(term in terms2){
-    pDat$score <- x[,term]
+  for(set.nam in genesets){    
+    pDat$score <- x[,set.nam]
     lm.coef <- summary(lm(data=pDat, score ~ patient / time))$coefficients
-    
     lm.coef <- data.table(lm.coef, keep.rownames=TRUE)[rn != "(Intercept)"]
-    lm.coef$pvalue <- lm.coef$"Pr(>|t|)" * sign(lm.coef$"t value")
+    
     for(rn.x in lm.coef$rn){
-      res[terms==term, eval(rn.x) := lm.coef[rn.x == rn]$pvalue]
+      lm.pvalues[geneset==set.nam, eval(rn.x) := lm.coef[rn.x == rn]$"Pr(>|t|)"]
+      lm.effect[geneset==set.nam, eval(rn.x) := lm.coef[rn.x == rn]$Estimate]
     }
   }
   
-  write.csv(res, file=dirout(outGeneSets, "Pvalues.csv"), row.names=F)
+  write.csv(lm.pvalues, file=dirout(outX, "Pvalues.csv"), row.names=F)
+  write.csv(lm.effect, file=dirout(outX, "EffectSize.csv"), row.names=F)
+  
 } else {
-  res <- fread(dirout(outGeneSets, "Pvalues.csv"))
+  lm.pvalues <- fread(dirout(outX, "Pvalues.csv"))
+  lm.effect <- fread(dirout(outX, "EffectSize.csv"))
+}
+
+
+# this time without multiple testing correction
+mat.eff <- as.matrix(lm.effect[,-"geneset",with=F])
+mat.pval <- as.matrix(lm.pvalues[,-"geneset", with=F])
+rownames(mat.eff) <- lm.effect$geneset
+rownames(mat.pval) <- lm.pvalues$geneset
+# test that they are the same
+stopifnot(nrow(mat.eff) == nrow(mat.pval) & ncol(mat.eff) == ncol(mat.pval))
+
+
+mat.pval.signed <- sign(mat.eff) * mat.pval
+mat.pval.ind <- mat.pval < 0.05
+class(mat.pval.ind) <- "integer"
+mat.eff.significant <- mat.eff * mat.pval.ind
+
+
+
+
+
+
+# TIMELINE ANALYSIS -------------------------------------------------------
+
+# Venn diagrams (use pvalues for this)
+mat <- mat.pval.signed[,grepl(":", colnames(mat.pval.signed))]
+hitLists <- list()
+for(col in colnames(mat)){
+  val <- mat[,col]
+  hitLists[[paste0(col, "_up")]] <- rownames(mat)[val < 0.05 & val > 0]
+  hitLists[[paste0(col, "_down")]] <- rownames(mat)[val > -0.05 & val < 0]
+}
+names(hitLists) <- gsub(":timelate", "", gsub("patient", "", names(hitLists)))
+try({
+  pdf(dirout(outX, "Overtime_Venn_up.pdf"))
+  venn(hitLists[grepl("_up", names(hitLists))])# | grepl("PT", names(hitLists))])
+  dev.off()
+}, silent=TRUE)
+try({
+  pdf(dirout(outX, "Overtime_Venn_down.pdf"))
+  venn(hitLists[grepl("_down", names(hitLists))])#  | grepl("PT", names(hitLists))])
+  dev.off()
+}, silent=TRUE)
+ggplot(data.table(list=names(hitLists), size=sapply(hitLists, length)), aes(x=list, y=size))+geom_bar(stat="identity") + coord_flip()
+ggsave(dirout(outX, "Overtime_Listsize.pdf"), width=9, height=7)
+
+
+# Heatmap (plot FCs)
+mat <- mat.eff.significant[,grepl(":", colnames(mat.eff.significant))]
+mat <- mat[apply(abs(mat), 1, sum) > 0,]
+
+if(nrow(mat) > 50){
+  rows <- order(apply(mat, 1, sum), decreasing=T)[1:25]
+  rows <- c(rows, order(apply(mat, 1, sum), decreasing=F)[1:25])
+  mat <- mat[rows,]
+}
+
+if(nrow(mat) > 2){
+  mat2 <- mat
+  cutval <- min(
+    max(abs(mat2[mat2 < 0])), # smallest neg value
+    max(mat2[mat2 > 0]) # largest positive value
+  )
+  mat2[mat2 > cutval] <- cutval
+  mat2[mat2 < -cutval] <- -cutval
+  
+  pdf(dirout(outX, "Overtime.pdf"), width=10, height=min(16, nrow(mat2)*0.25+3),onefile=F)
+  pheatmap(mat2)
+  dev.off()
+  
+  # boxplots for individual genesets
+  dir.create(dirout(outX, "OverTime/"))
+  for(set.nam in rownames(mat)){
+    pDat$score <- x[,set.nam]
+    pDat2 <- pDat[patient != "KI"]
+    
+    ggplot(pDat2, aes(y=score, x=sample)) + geom_jitter(color="grey", alpha=0.5)+ geom_boxplot(fill="NA")  + coord_flip() + 
+      ggtitle(paste(set.nam))
+    ggsave(dirout(outX, "OverTime/", set.nam, ".pdf"))
+  }
 }
 
 
 
 
+# TIMEPOINT ZERO ANALYSIS -------------------------------------------------------
 
-# TIMEPOINT ZERO  -------------------------------------------------------
-mat <- as.matrix(res[,!grepl(":", colnames(res)) & colnames(res) != "terms", with=F])
-rownames(mat) <- res$terms
+# Venn diagrams (use pvalues for this)
+mat <- mat.pval.signed[,!grepl(":", colnames(mat.pval.signed)) & colnames(mat.pval.signed) != "geneset"]
+hitLists <- list()
+for(col in colnames(mat)){
+  val <- mat[,col]
+  hitLists[[paste0(col, "_up")]] <- rownames(mat)[val < 0.05 & val > 0]
+  hitLists[[paste0(col, "_down")]] <- rownames(mat)[val > -0.05 & val < 0]
+}
+names(hitLists) <- gsub(":timelate", "", gsub("patient", "", names(hitLists)))
+try({
+  pdf(dirout(outX, "TimepointZero_Venn_up.pdf"))
+  venn(hitLists[grepl("_up", names(hitLists))])# | grepl("PT", names(hitLists))])
+  dev.off()
+}, silent=TRUE)
+try({
+  pdf(dirout(outX, "TimepointZero_Venn_down.pdf"))
+  venn(hitLists[grepl("_down", names(hitLists))])#  | grepl("PT", names(hitLists))])
+  dev.off()
+}, silent=TRUE)
+ggplot(data.table(list=names(hitLists), size=sapply(hitLists, length)), aes(x=list, y=size))+geom_bar(stat="identity") + coord_flip()
+ggsave(dirout(outX, "TimepointZero_Listsize.pdf"), width=9, height=7)
 
-# heatmap
-logMat <- -log10(abs(mat))
-logMat[logMat >= 5] <- 5
-logMat <- sign(mat) * logMat
+# Heatmap (plot FCs)
+mat <- mat.eff.significant[,!grepl(":", colnames(mat.eff.significant)) & colnames(mat.eff.significant) != "geneset"]
+mat <- mat[apply(abs(mat), 1, sum) > 0,]
 
-pdf(dirout(outX, "TimepointZero.pdf"), width=10, height=16,onefile=F)
-pheatmap(logMat)
-dev.off()
-
-# boxplots for individual genesets
-dir.create(dirout(outX, "TimepointZero/"))
-for(term in rownames(logMat)){
-  pDat$score <- x[,term]
-  pDat2 <- pDat[time == "early"]
-  
-  ggplot(pDat2, aes(y=score, x=sample)) + geom_jitter(color="grey", alpha=0.5)+ geom_boxplot(fill="NA")  + coord_flip() + 
-    ggtitle(paste(term))
-  ggsave(dirout(outX, "TimepointZero/", term, ".pdf"))
+if(nrow(mat) > 50){
+  rows <- order(apply(mat, 1, sum), decreasing=T)[1:25]
+  rows <- c(rows, order(apply(mat, 1, sum), decreasing=F)[1:25])
+  mat <- mat[rows,]
 }
 
-
-
-mat <- as.matrix(res[,!grepl(":", colnames(res)) & colnames(res) != "terms", with=F])
-mat <- as.matrix(res[,grepl(":", colnames(res)), with=F])
-rownames(mat) <- res$terms
-
-# heatmap
-logMat <- -log10(abs(mat))
-logMat[logMat >= 5] <- 5
-logMat <- sign(mat) * logMat
-
-pdf(dirout(outX, "Overtime.pdf"), width=10, height=16,onefile=F)
-pheatmap(logMat)
-dev.off()
-
-# boxplots for individual genesets
-dir.create(dirout(outX, "OverTime/"))
-for(term in rownames(logMat)){
-  pDat$score <- x[,term]
-  pDat2 <- pDat[patient != "KI"]
+if(nrow(mat) > 2){
+  mat2 <- mat
+  cutval <- min(
+    max(abs(mat2[mat2 < 0])), # smallest neg value
+    max(mat2[mat2 > 0]) # largest positive value
+  )
+  mat2[mat2 > cutval] <- cutval
+  mat2[mat2 < -cutval] <- -cutval
   
-  ggplot(pDat2, aes(y=score, x=sample)) + geom_jitter(color="grey", alpha=0.5)+ geom_boxplot(fill="NA")  + coord_flip() + 
-    ggtitle(paste(term))
-  ggsave(dirout(outX, "OverTime/", term, ".pdf"))
+  pdf(dirout(outX, "TimepointZero.pdf"), width=10, height=min(16, nrow(mat2)*0.25+3),onefile=F)
+  pheatmap(mat2)
+  dev.off()
+  
+  # boxplots for individual genesets
+  dir.create(dirout(outX, "TimepointZero/"))
+  for(set.nam in rownames(mat)){
+    pDat$score <- x[,set.nam]
+    pDat2 <- pDat[time == "early"]
+    
+    ggplot(pDat2, aes(y=score, x=sample)) + geom_jitter(color="grey", alpha=0.5)+ geom_boxplot(fill="NA")  + coord_flip() + 
+      ggtitle(paste(set.nam))
+    ggsave(dirout(outX, "TimepointZero/", set.nam, ".pdf"))
+  }
 }

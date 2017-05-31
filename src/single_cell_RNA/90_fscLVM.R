@@ -42,10 +42,19 @@ for(nhidden in 1:5){
 	outDir <- dirout(out.fscLVM, "fscLVM_files_", nhidden, "hidden/")
 	dir.create(outDir)
 
-	system(paste("python src/single_cell_RNA/90_fscLVM.py",
-	             dirout(out.fscLVM, "matrix.csv.gz"),
-	             outDir,
-	             "$RESOURCES/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt",
-	             nhidden
-	  ))
+  if(!dir.exists(outDir)){
+  	system(paste("python src/single_cell_RNA/90_fscLVM.py",
+  	             dirout(out.fscLVM, "matrix.csv.gz"),
+  	             outDir,
+  	             "$RESOURCES/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt",
+  	             nhidden
+  	  ))
+  }
+  
+  # ANALYZE
+	outFSCLVM <- paste0(out.fscLVM, "fscLVM_files_", nhidden, "hidden/")
+	balance.barcodes <- TRUE
+	source("src/single_cell_RNA/90_fscLVM_test.R", echo=TRUE)
+	balance.barcodes <- FALSE	
+	source("src/single_cell_RNA/90_fscLVM_test.R", echo=TRUE)
 }
