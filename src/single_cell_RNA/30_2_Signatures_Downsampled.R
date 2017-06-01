@@ -7,11 +7,11 @@ require(pheatmap)
 require(gplots)
 
 project.init2("cll-time_course")
-out <- "30_SignaturesOverview/"
+out <- "30_2_SignaturesDownsampled/"
 dir.create(dirout(out))
 
 
-sample.x <- "allDataBest_NoDownSampling_noIGH"
+sample.x <- "allDataBest_noIGH"
 
 load(file=dirout("10_Seurat/", sample.x, "/",sample.x,".RData"))
 
@@ -42,53 +42,46 @@ for(line in lines){
 # (Here just trying to do different things and see how they correlate to nUMI...)
 
 # 1 calculate aggregated log counts
-Dat1 <- pDat
+pDat1 <- pDat
 for(set.nam in names(genesets)){
   genes <- genesets[[set.nam]]
   genes <- genes[genes %in% rownames(pbmc@data)]
-  Dat1[[set.nam]] <- log(apply(exp(pbmc@data[genes,]), 2, sum))
+  pDat1[[set.nam]] <- log(apply(exp(pbmc@data[genes,]), 2, sum))
 }
-qplot(sapply(names(genesets), function(nam) cor(Dat1[[nam]], Dat1$nUMI)), bins=10) + xlab("Correlation")
+qplot(sapply(names(genesets), function(nam) cor(pDat1[[nam]], pDat1$nUMI)), bins=10) + xlab("Correlation")
 ggsave(dirout(out, "CorrUMI_AggLogCounts.pdf"))
 
-names(Dat1)
-ggplot(Dat1[patient=="PT" & cellType == "Mono"], aes(x=nUMI, y=HALLMARK_TNFA_SIGNALING_VIA_NFKB)) + geom_point()
-ggsave(dirout(out, "CorrUMI_AggLogCounts_PT_Mono.pdf"))
-ggplot(Dat1, aes(x=nUMI, y=HALLMARK_TNFA_SIGNALING_VIA_NFKB)) + geom_hex() + 
-  ggtitle(paste("cor = ", round(cor(Dat1$nUMI, Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB),3)))
-ggsave(dirout(out, "CorrUMI_AggLogCounts_hex.pdf"))
-
 # 2 median log counts
-Dat2 <- pDat
+pDat2 <- pDat
 dat <- pbmc@data
 dat <- dat[apply(dat, 1, max) > 0,]
 for(set.nam in names(genesets)){
   genes <- genesets[[set.nam]]
   genes <- genes[genes %in% rownames(dat)]
-  Dat2[[set.nam]] <- apply(dat[genes,], 2, median)
+  pDat2[[set.nam]] <- apply(dat[genes,], 2, median)
 }
-qplot(sapply(names(genesets), function(nam) cor(Dat2[[nam]], Dat2$nUMI)), bins=10) + xlab("Correlation")
+qplot(sapply(names(genesets), function(nam) cor(pDat2[[nam]], pDat2$nUMI)), bins=10) + xlab("Correlation")
 ggsave(dirout(out, "CorrUMI_MedianLogCounts.pdf"))
 
 # 3 median scaled counts
-Dat3 <- pDat
+pDat3 <- pDat
 dat <- pbmc@scale.data
 dat <- dat[apply(dat, 1, max) > 0,]
 for(set.nam in names(genesets)){
   genes <- genesets[[set.nam]]
   genes <- genes[genes %in% rownames(dat)]
-  Dat3[[set.nam]] <- apply(dat[genes,], 2, median)
+  pDat3[[set.nam]] <- apply(dat[genes,], 2, median)
 }
-qplot(sapply(names(genesets), function(nam) cor(Dat3[[nam]], Dat3$nUMI)), bins=10) + xlab("Correlation")
+qplot(sapply(names(genesets), function(nam) cor(pDat3[[nam]], pDat3$nUMI)), bins=10) + xlab("Correlation")
 ggsave(dirout(out, "CorrUMI_MedianScaled.pdf"))
 
 
-pDat <- Dat1
+pDat <- pDat1
+
+# NO POINT TO GO FURTHER --------------------------------------------------
 
 
 
-
-# ANALYSIS ----------------------------------------------------------------
 pDat2 <- pDat
 pDat2 <- pDat2[timepoint %in% c("d0", "d120")]
 pDat2 <- pDat2[cellType %in% c("CD8", "CD4", "Mono", "CLL")]# & grepl("PT", sample)]
@@ -126,16 +119,15 @@ venn(list(alpha=genesets$HALLMARK_INTERFERON_ALPHA_RESPONSE, gamma=genesets$HALL
 # Make one large heatmap
 overTime.sig <- data.table()
 pat="PT"
-cell="Mono"
+cell="CD4"
 for(pat in unique(pDat2$patient)){
   for(cell in unique(pDat2$cellType)){
     x <- pDat2[patient == pat & cellType == cell]
-    if(nrow(x[timepoint == "d0"]) > 5 & nrow(x[timepoint == "d120"]) >5){
-      for(geneset in names(genesets)){
-        p <- t.test(x[timepoint == "d0"][[geneset]], x[timepoint == "d120"][[geneset]])$p.value
-        ef <- log2(mean(x[timepoint == "d120"][[geneset]])/ mean(x[timepoint == "d0"][[geneset]]))
-        overTime.sig <- rbind(overTime.sig, data.table(patient=pat, cellType=cell, pvalue=p, logFC=ef, geneset=geneset))
-      }
+    if(nrow(x[timepoint == "d0"]) > 5 & nrow(x[timepoint == "d120"]) >5)
+    for(geneset in names(genesets)){
+      p <- t.test(x[timepoint == "d0"][[geneset]], x[timepoint == "d120"][[geneset]])$p.value
+      ef <- log2(mean(x[timepoint == "d120"][[geneset]])/ mean(x[timepoint == "d0"][[geneset]]))
+      overTime.sig <- rbind(overTime.sig, data.table(patient=pat, cellType=cell, pvalue=p, logFC=ef, geneset=geneset))
     }
   }
 }
@@ -150,30 +142,21 @@ ggsave(dirout(out, "0_Overview.pdf"),height=15, width=15)
 
 
 
-
-
-# PLOT INDIVIDUAL EXAMPLES ------------------------------------------------
-
-pat <- "PT"
-set.nam <- "HALLMARK_INTERFERON_GAMMA_RESPONSE"
+# Plot one example
 n <- 100
-for(pat in unique(pDat$patient)){
-  for(set.nam in names(genesets)){
-    genes <- genesets[[set.nam]]
-    dat <- pbmc@data
-    sampleAnnot <- subset(pbmc@data.info, grepl(pat, sample) & cellType %in% c("CD8", "CD4", "Mono", "CLL"))
-    cells <- rownames(sampleAnnot)[do.call(c, lapply(split(1:nrow(sampleAnnot), factor(with(sampleAnnot, paste0(sample, cellType)))), function(x) sample(x, min(length(x), n))))]
-    
-    genes <- genes[genes %in% rownames(dat)]
-    dat <- dat[genes, cells]
-    dat <- dat[apply(dat, 1, max) != 0,]
-    dat <- dat - apply(dat, 1, min)
-    dat <- dat / apply(dat,1, max)
-    apply(dat, 1, quantile, na.rm=T)
-    dat <- dat[, order(with(sampleAnnot[cells,],paste0(cellType, sample)))]
-    
-    pdf(dirout(out, set.nam, "_", pat, ".pdf"), height=min(29, nrow(dat) * 0.3 + 3), width=min(ncol(dat)*0.03+3,29), onefile=FALSE)
-    pheatmap(dat, cluster_rows=F, cluster_cols=F, annotation_col=pbmc@data.info[,c("sample", "cellType", "nUMI"), drop=F],show_colnames=FALSE)
-    dev.off()
-  }
-}
+genes <- genesets$HALLMARK_INTERFERON_GAMMA_RESPONSE
+dat <- pbmc@data
+sampleAnnot <- subset(pbmc@data.info, grepl("FE", sample) & cellType %in% c("CD8", "CD4", "Mono", "CLL"))
+cells <- rownames(sampleAnnot)[do.call(c, lapply(split(1:nrow(sampleAnnot), factor(sampleAnnot$cellType)), function(x) sample(x, min(length(x), n))))]
+
+genes <- genes[genes %in% rownames(dat)]
+dat <- dat[genes, cells]
+dat <- dat[apply(dat, 1, max) != 0,]
+dat <- dat - apply(dat, 1, min)
+dat <- dat / apply(dat,1, max)
+apply(dat, 1, quantile, na.rm=T)
+dat <- dat[, order(with(sampleAnnot[cells,],paste0(cellType, sample)))]
+
+pdf(dirout(out, "FE_gamma.pdf"), height=20, width=10)
+pheatmap(dat, cluster_rows=F, cluster_cols=F, annotation_col=pbmc@data.info[,c("sample", "cellType", "nUMI"), drop=F],show_colnames=FALSE)
+dev.off()

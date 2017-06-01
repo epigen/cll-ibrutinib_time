@@ -7,7 +7,7 @@ require(pheatmap)
 require(gplots)
 
 project.init2("cll-time_course")
-out <- "30_SignaturesOverview/"
+out <- "30_3_SignaturesRegressed/"
 dir.create(dirout(out))
 
 
@@ -49,7 +49,7 @@ for(set.nam in names(genesets)){
   Dat1[[set.nam]] <- log(apply(exp(pbmc@data[genes,]), 2, sum))
 }
 qplot(sapply(names(genesets), function(nam) cor(Dat1[[nam]], Dat1$nUMI)), bins=10) + xlab("Correlation")
-ggsave(dirout(out, "CorrUMI_AggLogCounts.pdf"))
+ggsave(dirout(out, "CorrUMI_Raw.pdf"))
 
 names(Dat1)
 ggplot(Dat1[patient=="PT" & cellType == "Mono"], aes(x=nUMI, y=HALLMARK_TNFA_SIGNALING_VIA_NFKB)) + geom_point()
@@ -58,34 +58,21 @@ ggplot(Dat1, aes(x=nUMI, y=HALLMARK_TNFA_SIGNALING_VIA_NFKB)) + geom_hex() +
   ggtitle(paste("cor = ", round(cor(Dat1$nUMI, Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB),3)))
 ggsave(dirout(out, "CorrUMI_AggLogCounts_hex.pdf"))
 
-# 2 median log counts
-Dat2 <- pDat
-dat <- pbmc@data
-dat <- dat[apply(dat, 1, max) > 0,]
+
+
+# REGRESS OUT nUMI --------------------------------------------------------
+Dat1.cor <- Dat1
+set.nam <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
 for(set.nam in names(genesets)){
-  genes <- genesets[[set.nam]]
-  genes <- genes[genes %in% rownames(dat)]
-  Dat2[[set.nam]] <- apply(dat[genes,], 2, median)
+  lm.fit <- lm(data=Dat1.cor, get(set.nam) ~ nUMI)
+  Dat1.cor[[set.nam]] <- lm.fit$residuals + coef(lm.fit)[1] # add intercept back
 }
-qplot(sapply(names(genesets), function(nam) cor(Dat2[[nam]], Dat2$nUMI)), bins=10) + xlab("Correlation")
-ggsave(dirout(out, "CorrUMI_MedianLogCounts.pdf"))
+qplot(sapply(names(genesets), function(nam) cor(Dat1.cor[[nam]], Dat1.cor$nUMI)), bins=10) + xlab("Correlation")
+ggsave(dirout(out, "CorrUMI_Regressed.pdf"))
 
-# 3 median scaled counts
-Dat3 <- pDat
-dat <- pbmc@scale.data
-dat <- dat[apply(dat, 1, max) > 0,]
-for(set.nam in names(genesets)){
-  genes <- genesets[[set.nam]]
-  genes <- genes[genes %in% rownames(dat)]
-  Dat3[[set.nam]] <- apply(dat[genes,], 2, median)
-}
-qplot(sapply(names(genesets), function(nam) cor(Dat3[[nam]], Dat3$nUMI)), bins=10) + xlab("Correlation")
-ggsave(dirout(out, "CorrUMI_MedianScaled.pdf"))
-
-
-pDat <- Dat1
-
-
+plot(Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1$nUMI)
+plot(Dat1.cor$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1.cor$nUMI)
+pDat <- Dat1.cor
 
 
 # ANALYSIS ----------------------------------------------------------------
