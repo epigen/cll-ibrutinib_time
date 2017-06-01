@@ -1,16 +1,28 @@
+require("project.init")
+require(Seurat)
+require(dplyr)
+require(Matrix)
+require(methods)
+
+project.init2("cll-time_course")
+out <- "11_CellTypes/"
+dir.create(dirout(out))
+
+
+sample.x <- "allDataBest_NoDownSampling_noIGH"
+cell <- "Bcells"
+
+outS <- paste0(out, sample.x, "_", cell, "/")
+
+load(file=dirout(outS, cell,".RData"))
+
+balance.barcodes <- FALSE
+file.nam <- "hallmark"
 
 require(pheatmap)
 require(gplots)
 
 outGeneSets <- paste0(outS, "Genesets2/", file.nam, "/")
-
-if(exists("balance.barcodes") && balance.barcodes){
-  outGeneSets <- paste0(outS, "Genesets2_balanced/", file.nam, "/")
-  dir.create(dirout(outS, "Genesets2_balanced/"))
-} else {
-  dir.create(dirout(outS, "Genesets2/"))
-}
-dir.create(dirout(outGeneSets))
 
 file <- geneSetFiles[[file.nam]]
 
@@ -57,13 +69,17 @@ if(exists("balance.barcodes") && balance.barcodes){
 dat <- dat[,pDat$barcode]
 
 
-# Plot number of genes and UMIs ----------------------------------------------------
-ggplot(pbmc@data.info, aes(y=nUMI, x=sample)) + geom_jitter(color="grey", alpha=0.5)+ geom_boxplot(fill="NA")  + coord_flip()
-ggsave(dirout(outGeneSets, "UMIs.pdf"))
-ggplot(pbmc@data.info, aes(y=nGene, x=sample)) + geom_jitter(color="grey", alpha=0.5)+ geom_boxplot(fill="NA")  + coord_flip()
-ggsave(dirout(outGeneSets, "GENES.pdf"))
 
 
+genes <- genesets$HALLMARK_INTERFERON_ALPHA_RESPONSE
+genes <- genes[genes %in% rownames(dat)]
 
-source("src/single_cell_RNA/91_Signatures_OverTime.R",echo=TRUE)
-source("src/single_cell_RNA/91_Signatures_T_Zero.R",echo=TRUE)
+colSums <- apply(dat, 2, sum)
+pDat$score.corr <- log(apply(exp(dat[genes,]), 2, sum))
+pDat$score.err <- apply(dat[genes,], 2, sum)/colSums
+
+ggplot(pDat, aes(x=score.corr, y=score.err)) + geom_point()
+
+ggplot(pDat, aes(x=sample, y=score.err, group=sample, color=time)) + geom_boxplot() + coord_flip()
+
+ggplot(pDat, aes(x=sample, y=score.corr, group=sample, color=time)) + geom_boxplot() + coord_flip()

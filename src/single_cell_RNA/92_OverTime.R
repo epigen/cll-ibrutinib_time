@@ -53,13 +53,14 @@ try({
 }, silent=TRUE)
 
 patients <- colnames(dt)
-for(i1 in 1:(length(patients)-1)){
-  for(i2 in (i1+1):length(patients)){
-    pat1 <- patients[i1]
-    pat2 <- patients[i2]
-    message(pat1, " vs ", pat2)
-    ggplot(dt, aes_string(x=pat1, y=pat2)) + geom_hex()
-    ggsave(dirout(outX, pat1, "_vs_", pat2,".pdf"), width=7, height=7)
+if(length(patients) > 1){
+  for(i1 in 1:(length(patients)-1)){
+    for(i2 in (i1+1):length(patients)){
+      pat1 <- patients[i1]
+      pat2 <- patients[i2]
+      message(pat1, " vs ", pat2)
+      ggplot(dt, aes_string(x=pat1, y=pat2)) + geom_hex()
+      ggsave(dirout(outX, pat1, "_vs_", pat2,".pdf"), width=7, height=7)
+    }
   }
 }
-

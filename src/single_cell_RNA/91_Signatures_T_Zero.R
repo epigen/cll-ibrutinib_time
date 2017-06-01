@@ -2,11 +2,10 @@
 # CALCULATE SCORES AND FIT MODEL --------------------------------------------------------
 lm.pvalues <- data.table(geneset=names(genesets))
 lm.effect <- data.table(geneset=names(genesets))
-colSums <- apply(dat, 2, sum)
+# colSums <- apply(dat, 2, sum)
+# stopifnot(all(apply(dat, 2, sum)/colSums==1))
 
-stopifnot(all(apply(dat, 2, sum)/colSums==1))
-
-patients <- unique(as.character(pDat$patient))
+patients <- unique(as.character(pDat[time == "early"]$patient))
 
 file1 <- dirout(outGeneSets, "Pvalues_t0.csv")
 file2 <- dirout(outGeneSets, "EffectSize_t0.csv")
@@ -15,7 +14,7 @@ if(!file.exists(file1)){
     genes <- genesets[[set.nam]]
     genes <- genes[genes %in% rownames(dat)]
     
-    pDat$score <- apply(dat[genes,], 2, sum)/colSums
+    pDat$score <- log(apply(exp(dat[genes,]), 2, sum))
     
     for(pi1 in 1:(length(patients)-1)){
       for(pi2 in (pi1+1):length(patients)){
@@ -67,16 +66,16 @@ for(col in colnames(mat)){
   hitLists[[paste0(col, "_down")]] <- rownames(mat)[val > -0.05 & val < 0]
 }
 names(hitLists) <- gsub(":timelate", "", gsub("patient", "", names(hitLists)))
-try({
-  pdf(dirout(outGeneSets, "TimepointZero_Venn_up.pdf"))
-  venn(hitLists[grepl("_up", names(hitLists))])# | grepl("PT", names(hitLists))])
-  dev.off()
-}, silent=TRUE)
-try({
-  pdf(dirout(outGeneSets, "TimepointZero_Venn_down.pdf"))
-  venn(hitLists[grepl("_down", names(hitLists))])#  | grepl("PT", names(hitLists))])
-  dev.off()
-}, silent=TRUE)
+# try({
+#   pdf(dirout(outGeneSets, "TimepointZero_Venn_up.pdf"))
+#   venn(hitLists[grepl("_up", names(hitLists))])# | grepl("PT", names(hitLists))])
+#   dev.off()
+# }, silent=TRUE)
+# try({
+#   pdf(dirout(outGeneSets, "TimepointZero_Venn_down.pdf"))
+#   venn(hitLists[grepl("_down", names(hitLists))])#  | grepl("PT", names(hitLists))])
+#   dev.off()
+# }, silent=TRUE)
 ggplot(data.table(list=names(hitLists), size=sapply(hitLists, length)), aes(x=list, y=size))+geom_bar(stat="identity") + coord_flip()
 ggsave(dirout(outGeneSets, "TimepointZero_Listsize.pdf"), width=9, height=7)
 
@@ -93,9 +92,9 @@ if(nrow(mat) > 50){
 if(nrow(mat) > 2){
   mat2 <- mat
   cutval <- min(
-    max(abs(mat2[mat2 < 0])), # smallest neg value
-    max(mat2[mat2 > 0]) # largest positive value
-  )
+    ifelse(sum(mat2 < 0) > 0, max(abs(mat2[mat2 < 0])), NA), # smallest neg value
+    ifelse(sum(mat2 > 0) > 0, max(mat2[mat2 > 0]), NA), # largest positive value
+    na.rm=T)
   mat2[mat2 > cutval] <- cutval
   mat2[mat2 < -cutval] <- -cutval
   
@@ -109,7 +108,7 @@ if(nrow(mat) > 2){
     genes <- genesets[[set.nam]]
     genes <- genes[genes %in% rownames(dat)]
     
-    pDat$score <- apply(dat[genes,], 2, sum)/colSums  
+    pDat$score <- log(apply(exp(dat[genes,]), 2, sum))
     pDat2 <- pDat[time == "early"]
     
     ggplot(pDat2, aes(y=score, x=sample)) + geom_jitter(color="grey", alpha=0.5)+ geom_boxplot(fill="NA")  + coord_flip() + 

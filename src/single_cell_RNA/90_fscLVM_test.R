@@ -160,9 +160,9 @@ if(nrow(mat) > 50){
 if(nrow(mat) > 2){
   mat2 <- mat
   cutval <- min(
-    max(abs(mat2[mat2 < 0])), # smallest neg value
-    max(mat2[mat2 > 0]) # largest positive value
-  )
+    ifelse(sum(mat2 < 0) > 0, max(abs(mat2[mat2 < 0])), NA), # smallest neg value
+    ifelse(sum(mat2 > 0) > 0, max(mat2[mat2 > 0]), NA), # largest positive value
+    na.rm=T)
   mat2[mat2 > cutval] <- cutval
   mat2[mat2 < -cutval] <- -cutval
   
@@ -222,9 +222,9 @@ if(nrow(mat) > 50){
 if(nrow(mat) > 2){
   mat2 <- mat
   cutval <- min(
-    max(abs(mat2[mat2 < 0])), # smallest neg value
-    max(mat2[mat2 > 0]) # largest positive value
-  )
+    ifelse(sum(mat2 < 0) > 0, max(abs(mat2[mat2 < 0])), NA), # smallest neg value
+    ifelse(sum(mat2 > 0) > 0, max(mat2[mat2 > 0]), NA), # largest positive value
+    na.rm=T)
   mat2[mat2 > cutval] <- cutval
   mat2[mat2 < -cutval] <- -cutval
   

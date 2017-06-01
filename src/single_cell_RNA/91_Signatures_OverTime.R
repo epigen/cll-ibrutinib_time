@@ -1,16 +1,15 @@
 # CALCULATE SCORES AND FIT MODEL --------------------------------------------------------
 lm.pvalues <- data.table(geneset=names(genesets))
 lm.effect <- data.table(geneset=names(genesets))
-colSums <- apply(dat, 2, sum)
-
-stopifnot(all(apply(dat, 2, sum)/colSums==1))
+# colSums <- apply(dat, 2, sum)
+# stopifnot(all(apply(dat, 2, sum)/colSums==1))
 
 if(!file.exists(dirout(outGeneSets, "Pvalues.csv"))){
   for(set.nam in names(genesets)){
     genes <- genesets[[set.nam]]
     genes <- genes[genes %in% rownames(dat)]
     
-    pDat$score <- apply(dat[genes,], 2, sum)/colSums  
+    pDat$score <- log(apply(exp(dat[genes,]), 2, sum))
     lm.coef <- summary(lm(data=pDat, score ~ patient / time))$coefficients
     lm.coef <- data.table(lm.coef, keep.rownames=TRUE)[rn != "(Intercept)"]
     
@@ -86,9 +85,9 @@ if(nrow(mat) > 50){
 if(nrow(mat) > 2){
   mat2 <- mat
   cutval <- min(
-    max(abs(mat2[mat2 < 0])), # smallest neg value
-    max(mat2[mat2 > 0]) # largest positive value
-  )
+    ifelse(sum(mat2 < 0) > 0, max(abs(mat2[mat2 < 0])), NA), # smallest neg value
+    ifelse(sum(mat2 > 0) > 0, max(mat2[mat2 > 0]), NA), # largest positive value
+  na.rm=T)
   mat2[mat2 > cutval] <- cutval
   mat2[mat2 < -cutval] <- -cutval
   
@@ -102,7 +101,7 @@ if(nrow(mat) > 2){
     genes <- genesets[[set.nam]]
     genes <- genes[genes %in% rownames(dat)]
     
-    pDat$score <- apply(dat[genes,], 2, sum)/colSums  
+    pDat$score <- log(apply(exp(dat[genes,]), 2, sum))
     pDat2 <- pDat[patient != "KI"]
     
     ggplot(pDat2, aes(y=score, x=sample)) + geom_jitter(color="grey", alpha=0.5)+ geom_boxplot(fill="NA")  + coord_flip() + 

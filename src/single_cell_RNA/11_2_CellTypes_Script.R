@@ -43,7 +43,7 @@ clustering.precision <- seq(0.5, 2.5, 0.2)
 
 # ARGUMENTS ---------------------------------------------------------------
 sample.x <- "allDataBest_NoDownSampling_noIGH"
-cell <- "Tcells2"
+cell <- "Bcells"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 2) {
   stop("Need two arguments: 1 - sample, 2 - celltype")
@@ -152,4 +152,6 @@ source("src/single_cell_RNA/93_TimepointZero.R", echo=TRUE)
 source("src/single_cell_RNA/10_2_Seurat_Script_3.R", echo=TRUE)
 
 # fscLVM
-source("src/single_cell_RNA/90_fscLVM.R", echo=TRUE)
+# source("src/single_cell_RNA/90_fscLVM.R", echo=TRUE)
+
+print("PIPELINE DONE!")
