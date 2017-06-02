@@ -23,7 +23,7 @@ if(!file.exists(target.file)){
       message(g1, " vs ",g2)
       if(all(c(g1, g2) %in% pbmc@ident)){
         try({
-          x <- FindMarkers(pbmc,  ident.1 = g1, ident.2 = g2, min.pct=0, thresh.use=0)    
+          x <- FindMarkers(pbmc,  ident.1 = g1, ident.2 = g2, min.pct=0, test.use=seurat.diff.test, thresh.use=0)    
           res[[paste0(g1,"_vs_",g2)]] <- data.table(x, keep.rownames=TRUE)
         }, silent=TRUE)
       }

@@ -25,7 +25,7 @@ if(!file.exists(target.file)){
     message(l.nam)
     if(all(comp.list[[l.nam]] %in% pbmc@ident)){
       try({
-        x <- FindMarkers(pbmc,  ident.1 = comp.list[[l.nam]][1], ident.2 = comp.list[[l.nam]][2], min.pct=0, thresh.use=0)    
+        x <- FindMarkers(pbmc,  ident.1 = comp.list[[l.nam]][1], ident.2 = comp.list[[l.nam]][2], test.use=seurat.diff.test, min.pct=0, thresh.use=0)    
         res[[l.nam]] <- data.table(x, keep.rownames=TRUE)
       }, silent=TRUE)
     }

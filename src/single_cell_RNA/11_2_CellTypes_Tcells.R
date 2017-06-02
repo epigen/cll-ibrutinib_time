@@ -5,16 +5,21 @@ require(Matrix)
 require(methods)
 
 project.init2("cll-time_course")
-out <- "11_CellTypes/"
-dir.create(dirout(out))
 
+seurat.diff.test <- "tobit"
 clustering.precision <- seq(0.5, 2.5, 0.2)
-
 cells <- c("CD8", "CD4")
 sample.x <- "allDataBest_NoDownSampling_noIGH"
 
-cell = "CD8"
 
+out <- "11_CellTypes/"
+if(seurat.diff.test == "tobit"){
+  out <- gsub("/", "_tobit/", out)
+}
+dir.create(dirout(out))
+
+
+cell = "CD8"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 1) {
   stop("Need two arguments: 1 - filter to use")
@@ -112,28 +117,27 @@ if(!file.exists(dirout(outS, cell,".RData"))){
 }
 
 # Signature Gene Analysis ---------------------------------------------------------
-geneSetFiles <- list(
-  hallmark = "/data/groups/lab_bock/shared/resources/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt",
-  immuno = "/data/groups/lab_bock/shared/resources/gene_sets/MSigDB/6.0/Human//c7.all.v6.0.symbols.gmt"
-)
-balance.barcodes <- TRUE
-file.nam <- "hallmark"
-source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
-file.nam <- "immuno"
-source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
-balance.barcodes <- FALSE
-file.nam <- "hallmark"
-source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
-file.nam <- "immuno"
-source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
+# geneSetFiles <- list(
+#   hallmark = "/data/groups/lab_bock/shared/resources/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt",
+#   immuno = "/data/groups/lab_bock/shared/resources/gene_sets/MSigDB/6.0/Human//c7.all.v6.0.symbols.gmt"
+# )
+# balance.barcodes <- TRUE
+# file.nam <- "hallmark"
+# source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
+# file.nam <- "immuno"
+# source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
+# balance.barcodes <- FALSE
+# file.nam <- "hallmark"
+# source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
+# file.nam <- "immuno"
+# source("src/single_cell_RNA/91_Signatures.R", echo=TRUE)
 
+# Cluster analysis
+source("src/single_cell_RNA/10_2_Seurat_Script_3.R", echo=TRUE)
 
 # specific over time / t zero analysis
 source("src/single_cell_RNA/92_OverTime.R", echo=TRUE)
 source("src/single_cell_RNA/93_TimepointZero.R", echo=TRUE)
 
-# Cluster analysis
-source("src/single_cell_RNA/10_2_Seurat_Script_3.R", echo=TRUE)
-
 # fscLVM
-source("src/single_cell_RNA/90_fscLVM.R", echo=TRUE)
+# source("src/single_cell_RNA/90_fscLVM.R", echo=TRUE)

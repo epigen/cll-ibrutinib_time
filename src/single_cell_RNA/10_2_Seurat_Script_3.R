@@ -21,6 +21,7 @@ clusterings <- colnames(pbmc@data.info)[apply(pbmc@data.info, 2, function(x) sum
 clusterings <- clusterings[!grepl("res", clusterings) & !clusterings %in% c("nUMI", "nGene", "orig.ident", "percent.mito")]
 
 
+
 # PLOT MARKERS 2
 message("Plotting Known marker genes")
 if(file.exists("metadata/CellMarkers.csv")){
@@ -109,7 +110,7 @@ foreach(cl.x = clusterings) %dopar% {
       # message(cl.i)
       if(!file.exists(dirout(out.cl, "Markers_Cluster",cl.i, ".tsv"))){
         try({
-          cluster.markers <- FindMarkers(pbmc,  ident.1 = cl.i, ident.2 = clusters[clusters != cl.i], min.pct = 0.25)    
+          cluster.markers <- FindMarkers(pbmc,  ident.1 = cl.i, ident.2 = clusters[clusters != cl.i],test.use=seurat.diff.test, min.pct = 0.25)    
           pdf(dirout(out.cl,"Markers_Cluster",cl.i,".pdf"), height=15, width=15)
           FeaturePlot(pbmc, row.names(cluster.markers)[1:min(nrow(cluster.markers),9)],cols.use = c("grey","blue"))
           dev.off()
@@ -142,7 +143,7 @@ foreach(cl.x = clusterings) %dopar% {
         cl2 <- clusters[i2]
         if(!file.exists(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")) & !file.exists(dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv"))){
           try({
-            cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, min.pct = 0.25)
+            cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, test.use=seurat.diff.test, min.pct = 0.25)
             mm <- row.names(cluster.markers)
             mm <- mm[mm %in% row.names(pbmc@data)]
             if(length(mm) > 0){
