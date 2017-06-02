@@ -7,7 +7,7 @@ require(pheatmap)
 require(gplots)
 
 project.init2("cll-time_course")
-out <- "30_3_SignaturesRegressed/"
+out <- "30_4_Signatures_RowNormalized/"
 dir.create(dirout(out))
 
 
@@ -39,14 +39,16 @@ for(line in lines){
 
 
 # CALCULATE SCORE ---------------------------------------------------------
-# (Here just trying to do different things and see how they correlate to nUMI...)
+data <- pbmc@data
+data <- data - apply(data, 1, min)
+data <- data / apply(data, 1, max)
 
 # 1 calculate aggregated log counts
 Dat1 <- pDat
 for(set.nam in names(genesets)){
   genes <- genesets[[set.nam]]
-  genes <- genes[genes %in% rownames(pbmc@data)]
-  Dat1[[set.nam]] <- log(apply(exp(pbmc@data[genes,]), 2, sum))
+  genes <- genes[genes %in% rownames(data)]
+  Dat1[[set.nam]] <- log(apply(exp(data[genes,]), 2, sum))
 }
 qplot(sapply(names(genesets), function(nam) cor(Dat1[[nam]], Dat1$nUMI)), bins=10) + xlab("Correlation")
 ggsave(dirout(out, "CorrUMI_Raw.pdf"))
@@ -71,7 +73,9 @@ qplot(sapply(names(genesets), function(nam) cor(Dat1.cor[[nam]], Dat1.cor$nUMI))
 ggsave(dirout(out, "CorrUMI_Regressed.pdf"))
 
 plot(Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1$nUMI)
+
 plot(Dat1.cor$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1.cor$nUMI)
+
 pDat <- Dat1.cor
 
 
