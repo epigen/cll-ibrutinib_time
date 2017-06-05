@@ -35,9 +35,16 @@ def pickle_me(function):
     """
     Decorator for some methods of Analysis class.
     """
-    def wrapper(obj, *args, **kwargs):
+    def wrapper(obj, timestamp=False, *args, **kwargs):
         function(obj, *args, **kwargs)
-        pickle.dump(obj, open(obj.pickle_file, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
+        if timestamp:
+            import time
+            import datetime
+            ts = datetime.datetime.fromtimestamp(time.time()).strftime('%Y%m%d-%H%M%S')
+            p = obj.pickle_file.replace(".pickle", ".{}.pickle".format(ts))
+        else:
+            p = obj.pickle_file
+        pickle.dump(obj, open(p, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
     return wrapper
 
 
@@ -48,18 +55,19 @@ class Analysis(object):
     def __init__(
             self,
             name="analysis",
+            prj=None,
+            samples=None,
             data_dir=os.path.join(".", "data"),
             results_dir=os.path.join(".", "results"),
             pickle_file=None,
-            samples=None,
-            prj=None,
             from_pickle=False,
             **kwargs):
         # parse kwargs with default
         self.name = name
+        self.prj = prj
+        self.samples = samples
         self.data_dir = data_dir
         self.results_dir = results_dir
-        self.samples = samples
         if pickle_file is None:
             pickle_file = os.path.join(results_dir, "analysis.{}.pickle".format(name))
         self.pickle_file = pickle_file
@@ -76,13 +84,15 @@ class Analysis(object):
             self.update()
 
     @pickle_me
-    def to_pickle(self):
+    def to_pickle(self, *args, **kwargs):
         pass
 
-    def from_pickle(self):
-        return pickle.load(open(self.pickle_file, 'rb'))
+    def from_pickle(self, pickle_file=None):
+        if pickle_file is None:
+            pickle_file = self.pickle_file
+        return pickle.load(open(pickle_file, 'rb'))
 
-    def update(self):
+    def update(self, *args, **kwargs):
         self.__dict__.update(self.from_pickle().__dict__)
 
     @pickle_me
@@ -160,7 +170,7 @@ class Analysis(object):
         n = m.groupby("sample_name").apply(lambda x: len(x[x["value"] == 1]))
 
         # divide sum (of unique overlaps) by total to get support value between 0 and 1
-        support["support"] = support[range(len(samples))].apply(lambda x: sum([i if i <= 1 else 1 for i in x]) / float(len(self.samples)), axis=1)
+        support["support"] = support[[s.name for s in samples]].apply(lambda x: sum([i if i <= 1 else 1 for i in x]) / float(len(samples)), axis=1)
         # save
         support.to_csv(os.path.join(self.results_dir, self.name + "_peaks.support.csv"), index=False)
 
@@ -232,13 +242,42 @@ class Analysis(object):
         else:
             return coverage
 
+    def get_matrix(self, matrix=None, samples=None, matrix_name="coverage"):
+        """
+        Return a matrix that is an attribute of self for the requested samples.
+        By default returns a raw coverage matrix for all samples in self.
+        """
+        # default to matrix to be normalized
+        if matrix == None:
+            to_norm = getattr(self, matrix_name)
+        else:
+            to_norm = matrix
+        # default to all samples in self with matching names in matrix
+        if samples == None:
+            to_norm = to_norm[[s.name for s in self.samples]]
+        else:
+            to_norm = to_norm[[s.name for s in samples]]
+
     @pickle_me
-    def normalize_coverage_quantiles(self, samples):
+    def normalize_coverage_rpm(self, matrix=None, samples=None, mult_factor=1e6):
+        """
+        Normalization of matrix of (n_features, n_samples) by total in each sample.
+        """
+        to_norm = self.get_matrix(matrix=matrix, samples=samples, type="coverage")
+        # apply normalization over total
+        self.coverage_rpm = to_norm.apply(lambda x: np.log2(((1 + x) / (1 + x).sum()) * mult_factor), axis=1)
+        self.coverage_rpm = self.coverage_rpm.join(self.coverage[['chrom', 'start', 'end']])
+        self.coverage_rpm.to_csv(os.path.join(self.results_dir, self.name + "_peaks.coverage_rpm.csv"), index=True)
+
+    @pickle_me
+    def normalize_coverage_quantiles(self, matrix=None, samples=None):
+        """
+        Quantile normalization of matrix of (n_features, n_samples).
+        """
         def normalize_quantiles_r(array):
             # install R package
             # source('http://bioconductor.org/biocLite.R')
             # biocLite('preprocessCore')
-
             import rpy2.robjects as robjects
             import rpy2.robjects.numpy2ri
             rpy2.robjects.numpy2ri.activate()
@@ -247,9 +286,8 @@ class Analysis(object):
             normq = robjects.r('normalize.quantiles')
             return np.array(normq(array))
 
-        # Quantifle normalization
-        to_norm = self.coverage[[s.name for s in samples]]
-
+        to_norm = self.get_matrix(matrix=matrix, samples=samples, type="coverage")
+        # Quantile normalization
         self.coverage_qnorm = pd.DataFrame(
             normalize_quantiles_r(to_norm.values),
             index=to_norm.index,
@@ -261,6 +299,7 @@ class Analysis(object):
     @pickle_me
     def get_peak_gccontent_length(self, bed_file=None, genome="hg19", fasta_file="/home/arendeiro/resources/genomes/{g}/{g}.fa"):
         """
+        Get length and GC content of features in BED file (peak locations).
         Bed file must be a 3-column BED!
         """
         if bed_file is None:
@@ -278,22 +317,26 @@ class Analysis(object):
         self.nuc.to_csv(os.path.join(self.results_dir, self.name + "_peaks.gccontent_length.csv"), index=True)
 
     @pickle_me
-    def normalize_gc_content(self, samples):
+    def normalize_gc_content(self, matrix=None, samples=None):
+        """
+        Quantile normalization of matrix of (n_features, n_samples) followed by GC content correction by regression.
+        """
+
         """
         # Run manually:
         library("cqn")
-        gc = read.csv("results/cll-time_course_peaks.gccontent_length.csv", sep=",", row.names=1)
-        cov = read.csv("results/cll-time_course_peaks.coverage_qnorm.csv", sep=",", row.names=1)
+        gc = read.csv("results/cll-time_course.pruned_samples_peaks.gccontent_length.csv", sep=",", row.names=1)
+        cov = read.csv("results/cll-time_course.pruned_samples_peaks.coverage_qnorm.csv", sep=",", row.names=1)
         cov2 = cov[, 1:(length(cov) - 3)]
 
         cqn_out = cqn(cov2, x=gc$gc_content, lengths=gc$length)
 
         y = cqn_out$y +cqn_out$offset
         y2 = cbind(y, cov[, c("chrom", "start", "end")])
-        write.csv(y2, "results/cll-time_course_peaks.coverage_gc_corrected.csv", sep=",")
+        write.csv(y2, "results/cll-time_course.pruned_samples_peaks.coverage_gc_corrected.csv", sep=",")
 
         # Fix R's stupid colnames replacement
-        sed -i 's/ATAC.seq_/ATAC-seq_/g' results/cll-time_course_peaks.coverage_gc_corrected.csv
+        sed -i 's/ATAC.seq_/ATAC-seq_/g' results/cll-time_course.pruned_samples_peaks.coverage_gc_corrected.csv
         """
         def cqn(cov, gc_content, lengths):
             # install R package
@@ -324,20 +367,37 @@ class Analysis(object):
 
             return y + offset
 
+        # Perform quantile normalization first
         if not hasattr(self, "nuc"):
             self.normalize_coverage_quantiles(samples)
 
+        # Get GC content and length of each feature
         if not hasattr(self, "nuc"):
             self.get_peak_gccontent_length()
 
-        to_norm = self.coverage_qnorm[[s.name for s in samples]]
-
+        to_norm = self.get_matrix(matrix=matrix, samples=samples, type="coverage")
         self.coverage_gc_corrected = (
             cqn(cov=to_norm, gc_content=self.nuc["gc_content"], lengths=self.nuc["length"])
             .join(self.coverage[['chrom', 'start', 'end']])
         )
 
         self.coverage_gc_corrected.to_csv(os.path.join(self.results_dir, self.name + "_peaks.coverage_gc_corrected.csv"), index=True)
+
+    @pickle_me
+    def normalize(self, method="quantile", matrix=None, samples=None):
+        """
+        Normalization of matrix of (n_features, n_samples).
+        Normalization methods available:
+            `quantile` --> Quantile normalization.
+            `total` --> Reads per total normalization.
+            `gc_content` --> Quantile normalization followed by GC content correction by regression.
+        """
+        if method == "quantile":
+            return self.normalize_coverage_quantiles(samples=samples, method=method)
+        elif method == "total":
+            return self.normalize_coverage_rpm(samples=samples, method=method)
+        elif method == "gc_content":
+            return self.normalize_gc_content(samples=samples, method=method)
 
     def get_peak_gene_annotation(self):
         """
@@ -394,8 +454,8 @@ class Analysis(object):
                 region_annotation_b = pd.concat([region_annotation_b, dfb])
 
         # sort
-        region_annotation.sort(['chrom', 'start', 'end'], inplace=True)
-        region_annotation_b.sort(['chrom', 'start', 'end'], inplace=True)
+        region_annotation.sort_values(['chrom', 'start', 'end'], inplace=True)
+        region_annotation_b.sort_values(['chrom', 'start', 'end'], inplace=True)
         # remove duplicates (there shouldn't be anyway)
         region_annotation = region_annotation.reset_index(drop=True).drop_duplicates()
         region_annotation_b = region_annotation_b.reset_index(drop=True).drop_duplicates()
@@ -484,14 +544,23 @@ class Analysis(object):
     @pickle_me
     def annotate_with_sample_metadata(
             self,
-            attributes=[
-                "sample_name",
-                "patient_id", "timepoint", "cell_type", "compartment", "response",
-                "patient_gender", "ighv_mutation_status", "CD38_cells_percentage",
-                "del11q", "del13q", "del17p", "tri12", "cll_cells_%", "cell_number", "batch"],
-            numerical_attributes=["CD38_cells_percentage", "cll_cells_%", "cell_number"]):
+            quant_matrix="coverage_annotated",
+            attributes=None,
+            numerical_attributes=None,
+            save=True,
+            assign=True):
+        """
+        Annotate matrix (n_regions, n_samples) with sample metadata (creates MultiIndex on columns).
+        Desired attributes to be annotated can be passed as a iterable to `attributes` - this defaults
+        to all attributes in the original sample annotation sheet of the analysis Project.
+        Numerical attributes can be pass as a iterable to `numerical_attributes`.
+        """
+        if attributes is None:
+            attributes = self.prj.sheet.df.columns
 
-        samples = [s for s in self.samples if s.name in self.coverage_annotated.columns]
+        matrix = getattr(self, quant_matrix)
+
+        samples = [s for s in self.samples if s.name in matrix.columns.tolist()]
 
         attrs = list()
         for attr in attributes:
@@ -507,11 +576,15 @@ class Analysis(object):
 
         # Generate multiindex columns
         index = pd.MultiIndex.from_arrays(attrs, names=attributes)
-        self.accessibility = self.coverage_annotated[[s.name for s in samples]]
-        self.accessibility.columns = index
+        accessibility = matrix[[s.name for s in samples]]
+        accessibility.columns = index
 
         # Save
-        self.accessibility.to_csv(os.path.join(self.results_dir, self.name + ".accessibility.annotated_metadata.csv"), index=True)
+        if save:
+            accessibility.to_csv(os.path.join(self.results_dir, self.name + ".accessibility.annotated_metadata.csv"), index=True)
+        if assign:
+            self.accessibility = accessibility
+        return accessibility
 
     def get_level_colors(self, index=None, levels=None, pallete="Paired", cmap="RdBu_r", nan_color=(0.662745, 0.662745, 0.662745, 0.5)):
         if index is None:
@@ -594,7 +667,7 @@ class Analysis(object):
         # count region frequency
         count = Counter(all_region_annotation)
         data = pd.DataFrame([count.keys(), count.values()]).T
-        data = data.sort([1], ascending=False)
+        data = data.sort_values([1], ascending=False)
         # also for background
         background = Counter(all_region_annotation_b)
         background = pd.DataFrame([background.keys(), background.values()]).T
@@ -627,7 +700,7 @@ class Analysis(object):
         # count region frequency
         count = Counter(all_chrom_state_annotation)
         data = pd.DataFrame([count.keys(), count.values()]).T
-        data = data.sort([1], ascending=False)
+        data = data.sort_values([1], ascending=False)
         # also for background
         background = Counter(all_chrom_state_annotation_b)
         background = pd.DataFrame([background.keys(), background.values()]).T
@@ -683,8 +756,15 @@ class Analysis(object):
                 np.log2(1 + self.coverage[[s.name for s in samples]]),
                 var_name="sample_name", value_name="counts"
             )
-            fig, axis = plt.subplots(1, 1, figsize=(6, 1 * 4))
-            sns.violinplot("sample_name", "counts", data=cov, ax=axis)
+            mean_cov = cov.groupby('sample_name').mean().sort_values("counts", ascending=False)
+            fig, axis = plt.subplots(1, 1, figsize=(1 * 4, max(6, np.log(len(samples)) * 10)))
+            sns.stripplot("counts", "sample_name", data=mean_cov.reset_index(), orient="horiz", ax=axis)
+            sns.despine(fig)
+            fig.savefig(os.path.join(self.results_dir, self.name + ".raw_counts.barplot.svg"), bbox_inches="tight")
+
+            fig, axis = plt.subplots(1, 1, figsize=(1 * 4, max(6, np.log(len(samples)) * 10)))
+            sns.violinplot("counts", "sample_name", data=cov, orient="horiz", ax=axis)
+            axis.set_xticklabels(axis.get_xticklabels(), rotation=0)
             sns.despine(fig)
             fig.savefig(os.path.join(self.results_dir, self.name + ".raw_counts.violinplot.svg"), bbox_inches="tight")
 
@@ -1531,6 +1611,31 @@ def DESeq_analysis(counts_matrix, experiment_matrix, variable, covariates, outpu
     return results
 
 
+def correlation_diff(analysis):
+    d = analysis.accessibility[~analysis.accessibility.index.str.contains("chrY")]
+
+    scores = pd.DataFrame()
+
+    for cell_type in ["Bulk"]:
+        d2 = d.loc[:, d.columns[d.columns.get_level_values("cell_type") == cell_type]]
+        for timepoint in ["008d"]:
+            # replicates
+            d_rep = d2.loc[:, d2.columns[d2.columns.get_level_values("timepoint") == timepoint]]
+            # non-replicates
+            d_nonrep = d2.loc[:, d2.columns[d2.columns.get_level_values("timepoint") != timepoint]]
+            for i in d.index:
+                print(i)
+                C_rep = d_rep.corr()
+                Ci_rep = d_rep.loc[d_rep.index.drop(i), :].corr()
+                C_nonrep = d_nonrep.corr()
+                Ci_nonrep = d_nonrep.loc[d_nonrep.index.drop(i), :].corr()
+
+                # score = mean delta of replicates minus mean delta of non-replicates
+                score = (C_rep - Ci_rep).mean().mean() - (C_nonrep - Ci_nonrep).mean().mean()
+
+                scores = scores.append(pd.Series([cell_type, timepoint, i, score]), ignore_index=True)
+
+
 def differential_regions(analysis, samples, variable, cell_type, output_dir, alpha=0.05):
     """
     Call differential regions based on custom statistical test for a single specific variable.
@@ -1588,14 +1693,19 @@ def differential_regions(analysis, samples, variable, cell_type, output_dir, alp
     # test
     test_stats = stepwise_test(analysis.accessibility[[s.name for s in samples]].T.groupby(level=variable))
 
+    d = analysis.accessibility
+    d[d < 0] = 0
+    d = np.log2(1.1 + d)
+
     # calculate mean group fold change
-    means = stepwise_change(analysis.accessibility[[s.name for s in samples]].T.groupby(level=variable).mean().T)
+    means = stepwise_change(d[[s.name for s in samples]].T.groupby(level=variable).mean().T)
     means.index.name = "region"
 
     # all compared to timepoint 0 instead of stepwise comparisons
     for cell_type in analysis.accessibility.columns.get_level_values("cell_type").drop_duplicates().sort_values():
         sel_samples = [s for s in samples if (s.cell_type == cell_type)]
-        means = analysis.accessibility[[s.name for s in sel_samples]].T.groupby(level=["patient_id", "timepoint"]).mean()
+
+        means = d[[s.name for s in sel_samples]].T.groupby(level=["patient_id", "timepoint"]).mean()
         diff = means.groupby(level=["patient_id"]).apply(
             lambda x: x / x.loc[
                 (x.index.get_level_values("patient_id")[0], x.index.get_level_values("timepoint").sort_values()[0]), :]
@@ -1605,7 +1715,7 @@ def differential_regions(analysis, samples, variable, cell_type, output_dir, alp
 
         diff = diff.ix[~diff.index.str.contains("X|Y")]
 
-        p = analysis.accessibility[[s.name for s in sel_samples]].ix[diff[(abs(diff) >= np.percentile(abs(diff), 99.9)).any(axis=1)].index]
+        p = d[[s.name for s in sel_samples]].ix[diff[(abs(diff) >= np.percentile(abs(diff), 99.9)).any(axis=1)].index]
         print(cell_type, p.shape[0])
 
         p = p.T.sort_index(level=['patient_id', 'timepoint'])
@@ -1636,6 +1746,16 @@ def differential_regions(analysis, samples, variable, cell_type, output_dir, alp
 
 def variability_analysis(analysis, samples=None, cell_type=None):
     from statsmodels.nonparametric.smoothers_lowess import lowess
+    from sklearn.preprocessing import StandardScaler
+
+
+    def standard_scale(x):
+        return (x - x.min()) / (x.max() - x.min())
+
+
+    def z_score(x):
+        return (x - x.mean()) / x.std()
+
     if samples is None:
         samples = analysis.samples
     if cell_type is None:
@@ -1645,34 +1765,51 @@ def variability_analysis(analysis, samples=None, cell_type=None):
 
     variability = pd.DataFrame()
     for cur_cell_type in cell_types:
+        print(cur_cell_type)
         sel_samples = [s for s in samples if s.cell_type == cur_cell_type]
 
-        v = analysis.accessibility[[s.name for s in sel_samples]].mean(axis=1).to_frame(name="mean")
-        v = v.join(analysis.accessibility[[s.name for s in sel_samples]].var(axis=1).to_frame(name="std"))
+        mean = analysis.accessibility[[s.name for s in sel_samples]].mean(axis=1).to_frame(name="mean")
+        std = analysis.accessibility[[s.name for s in sel_samples]].std(axis=1).to_frame(name="std")
+        # std = pd.DataFrame(StandardScaler().fit_transform(std), columns=['std'], index=std.index)
+        v = mean.join(std)
+        v['qv2'] = (v['std'] / v['mean']) ** 2
+
+        v = v[v['mean'] > np.percentile(v['mean'], 25)]
+        v['logmean'] = np.log2(v['mean'])
+        v['logqv2'] = np.log2(v['qv2'])
+
+        plt.scatter(np.log2(v['mean']), np.log2(v['qv2']), alpha=0.1)
 
         # Fit lowess, get distance to fit
         i = v.index
-        v.loc[i, 'yhat'] = lowess(v.loc[i, "std"], v.loc[i, "mean"], frac=0.01, return_sorted=False)
-        v.loc[:, "dist"] = v.loc[:, "std"] - v.loc[:, "yhat"]
-        variable = v[v.loc[:, "dist"] >= np.percentile(v.loc[:, "dist"].dropna(), 97.5)].index
-        v = v.sort_values("mean")
+        v.loc[i, 'yhat'] = lowess(v.loc[i, "logqv2"], v.loc[i, "logmean"], frac=0.01, return_sorted=False)
+        v.loc[i, "dist"] = StandardScaler().fit_transform(v.loc[i, "logqv2"] - v.loc[i, "yhat"])
+        variable = v.loc[v.loc[:, "dist"] >= np.percentile(np.absolute(v.loc[i, "dist"].dropna()), 99), :].index
+
+        variable = v.loc[v.loc[:, "dist"] / standard_scale(v.loc[:, "mean"]) >= np.percentile(np.absolute(v.loc[:, "dist"]  / standard_scale(v.loc[:, "mean"]).dropna()), 99), :].index
+        v = v.sort_values("logmean")
 
         # store variability
-        v.to_csv(os.path.join("results", "{}.{}.variability.lowess.csv".format(analysis.name, cur_cell_type)))
-        variability.loc[:, cur_cell_type] = v.loc[:, "dist"]
+        # v.to_csv(os.path.join("results", "{}.{}.variability.lowess.csv".format(analysis.name, cur_cell_type)))
+        # variability.loc[:, cur_cell_type] = v.loc[:, "dist"]
 
         fig, axis = plt.subplots(1)
-        axis.scatter(v["mean"], v["std"], s=2, alpha=0.4, rasterized=True)
-        axis.plot(v.loc[i, "mean"], v.loc[i, 'yhat'], color="green", rasterized=False)
-        axis.scatter(v.loc[variable, "mean"], v.loc[variable, "std"], color="red", s=2, alpha=0.6)
+        axis.scatter(v["logmean"], v["logqv2"], s=2, alpha=0.4, rasterized=True)
+        axis.plot(v.loc[i, "logmean"], v.loc[i, 'yhat'], color="green", rasterized=False)
+        axis.scatter(v.loc[variable, "logmean"], v.loc[variable, "logqv2"], color="red", s=10, alpha=0.6)
         axis.set_xlabel("Mean")
         axis.set_ylabel("Variance")
         sns.despine(fig)
         fig.savefig(os.path.join("results", "changes.{}.lowess.most_variable.svg".format(cur_cell_type)), dpi=300, bbox_inches="tight")
 
+        d = analysis.accessibility.loc[variable, [s.name for s in sel_samples]]
+        d[d < 0] = 0
+
+        d = np.log2(1 + d)
+
         g = sns.clustermap(
-            analysis.accessibility.loc[variable, [s.name for s in sel_samples]].T,
-            xticklabels=False, yticklabels=[s.name for s in sel_samples], figsize=(8, 12), metric="correlation")
+            d2.T,
+            xticklabels=False, yticklabels=[s.name for s in sel_samples], figsize=(8, 12), metric="correlation", z_score=0)
         g.ax_heatmap.set_ylabel("Samples")
         g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
@@ -1681,6 +1818,73 @@ def variability_analysis(analysis, samples=None, cell_type=None):
     # save
     variability.to_csv(os.path.join("results", "{}.variability.lowess.csv".format(analysis.name)))
 
+    variability = pd.read_csv(os.path.join("results", "{}.variability.lowess.csv".format(analysis.name)), index_col=0)
+
+    g = sns.clustermap(
+        variability.ix[variability.index[(variability > variability.apply(np.absolute).apply(np.percentile, q=99.9)).any(axis=1)]],
+        yticklabels=False
+    )
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+
+    # All samples, all regions
+    g = sns.clustermap(
+        analysis.accessibility.ix[variability.index[(variability > variability.apply(np.absolute).apply(np.percentile, q=99.9)).any(axis=1)]].T,
+        xticklabels=False
+    )
+    [l.set_text(l.get_text().replace("nan-", "")) for l in g.ax_heatmap.get_yticklabels()]
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=3)
+    g.savefig(os.path.join("results", "changes.most_variable.across.all_cell_typs.png"), bbox_inches="tight", dpi=500)
+
+    g = sns.clustermap(
+        analysis.accessibility.ix[variability.index[(variability > variability.apply(np.absolute).apply(np.percentile, q=99.75)).any(axis=1)]].T,
+        xticklabels=False, z_score=0
+    )
+    [l.set_text(l.get_text().replace("nan-", "")) for l in g.ax_heatmap.get_yticklabels()]
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=3)
+    g.savefig(os.path.join("results", "changes.most_variable.across.all_cell_typs.z_score.png"), bbox_inches="tight", dpi=500)
+
+    # each cell type
+    for cur_cell_type in cell_types:
+        print(cur_cell_type)
+        sel_samples = [s for s in samples if s.cell_type == cur_cell_type]
+        variable = variability[variability[cur_cell_type] > np.percentile(np.absolute(variability[cur_cell_type]), q=99.5)].index
+        g = sns.clustermap(
+            analysis.accessibility.loc[variable, [s.name for s in sel_samples]].T,
+            xticklabels=False, figsize=(8, 12), metric="correlation")
+        g.ax_heatmap.set_ylabel("Samples")
+        [l.set_text(l.get_text().replace("nan-", "")) for l in g.ax_heatmap.get_yticklabels()]
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=8)
+        g.savefig(os.path.join("results", "changes.{}.most_variable.q9975.png".format(cur_cell_type)), bbox_inches="tight", dpi=300)
+
+
+def force_diff(analysis):
+    from scipy.stats import mannwhitneyu
+    from statsmodels.sandbox.stats.multicomp import multipletests
+
+    cell_types = set([s.cell_type for s in analysis.samples])
+    timepoints = set([s.timepoint for s in analysis.samples])
+    for cell_type in cell_types:
+        for timepoint in timepoints:
+            # divide samples in pos/neg based on response
+            resp = analysis.accessibility.columns[
+                (analysis.accessibility.columns.get_level_values("cell_type") == cell_type) &
+                (analysis.accessibility.columns.get_level_values("timepoint") == timepoint) &
+                (analysis.accessibility.columns.get_level_values("response") == "fast")
+            ]
+            non_resp = analysis.accessibility.columns[
+                (analysis.accessibility.columns.get_level_values("cell_type") == cell_type) &
+                (analysis.accessibility.columns.get_level_values("timepoint") == timepoint) &
+                (analysis.accessibility.columns.get_level_values("response") == "slow")
+            ]
+
+
+            for i in df.index:
+                mannwhitneyu(df.loc[i, resp], df.loc[i, non_resp])
+
+            
+        
+    
+    
 
 def cybersort(analysis):
     analysis = Analysis(name="cll-time_course", from_pickle=True)
@@ -2055,12 +2259,12 @@ def characterize_regions_structure(df, prefix, output_dir, universe_df=None):
 
         # join data, sort by subset data
         both = pd.DataFrame([df_count, df_universe_count], index=['subset', 'all']).T
-        both = both.sort("subset")
+        both = both.sort_values("subset")
         both['region'] = both.index
         data = pd.melt(both, var_name="set", id_vars=['region']).replace(np.nan, 0)
 
         # sort for same order
-        data.sort('region', inplace=True)
+        data.sort_values('region', inplace=True)
 
         # g = sns.FacetGrid(col="region", data=data, col_wrap=3, sharey=True)
         # g.map(sns.barplot, "set", "value")
@@ -2161,15 +2365,22 @@ def main():
 
     # Start project
     prj = Project("metadata/project_config.yaml")
-    qc = ["pass_qc", "pass_qc_TK", "pass_counts", "pass_corr"]
-    for s in prj.samples:
-        s.pass_qc = not any([float(getattr(s, t)) == 0 for t in [a for a in qc if hasattr(s, a)]])
-    # prj.samples = [s for s in prj.samples if s.library == "ATAC-seq" if s.pass_qc and s.include]
-    prj.samples = [s for s in prj.samples if s.library == "ATAC-seq" if s.pass_qc]
+    # qc = ["pass_qc", "pass_qc_TK", "pass_counts", "pass_corr"]
+    # for s in prj.samples:
+    #     s.pass_qc = not any([float(getattr(s, t)) == 0 for t in [a for a in qc if hasattr(s, a)]])
+    # # prj.samples = [s for s in prj.samples if s.library == "ATAC-seq" if s.pass_qc and s.include]
+    # prj.samples = [s for s in prj.samples if s.library == "ATAC-seq" if s.pass_qc and s.good_batch == "TRUE"]
 
     # Start analysis object
     analysis = Analysis(name="cll-time_course", prj=prj, samples=prj.samples)
+    # analysis = Analysis(name="cll-time_course.regrout", prj=prj, samples=prj.samples)
     atacseq_samples = [sample for sample in analysis.samples if sample.library == "ATAC-seq"]
+
+    sample_atributes = [
+        "sample_name",
+        "patient_id", "timepoint", "cell_type", "compartment", "response",
+        "patient_gender", "ighv_mutation_status", "CD38_cells_percentage",
+        "del11q", "del13q", "del17p", "tri12", "cll_cells_%", "cell_number", "batch"]
 
     if args.load:
         analysis = analysis.from_pickle()
@@ -2184,13 +2395,17 @@ def main():
         analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + "_peaks.chromatin_state_background.csv"))
         analysis.coverage = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + "_peaks.raw_coverage.csv"), index_col=0)
         analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + "_peaks.coverage_qnorm.csv"), index_col=0)
-        analysis.coverage_gc_corrected = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + "_peaks.coverage_gc_corrected.csv"), index_col=0)
+        analysis.coverage_gc_corrected = pd.read_csv(os.path.join(analysis.results_dir, "PCA_based_batch_correction.csv"), index_col=0)
+        analysis.coverage_gc_corrected.loc[:, 'chrom'] = map(lambda x: x[0], analysis.coverage_gc_corrected.index.str.split(":"))
+        analysis.coverage_gc_corrected.loc[:, 'start'] = map(lambda x: x[1].split("-")[0], analysis.coverage_gc_corrected.index.str.split(":"))
+        analysis.coverage_gc_corrected.loc[:, 'end'] = map(lambda x: x[1].split("-")[1], analysis.coverage_gc_corrected.index.str.split(":"))
+        # analysis.coverage_gc_corrected = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + "_peaks.coverage_gc_corrected.csv"), index_col=0)
         analysis.coverage_annotated = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + "_peaks.coverage_qnorm.annotated.csv"), index_col=0)
-        analysis.accessibility = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + ".accessibility.annotated_metadata.csv"), index=True)
+        analysis.accessibility = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + ".accessibility.annotated_metadata.csv"), index_col=0, header=range(len(sample_atributes)))
     else:
         # GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
         # Get consensus peak set from all samples
-        analysis.get_consensus_sites(atacseq_samples)
+        analysis.get_consensus_sites(analysis.samples)
         analysis.calculate_peak_support(analysis.samples, "summits")
 
         # GET CHROMATIN OPENNESS MEASUREMENTS, PLOT
@@ -2210,7 +2425,11 @@ def main():
         # Annotate peaks with closest gene, chromatin state,
         # genomic location, mean and variance measurements across samples
         analysis.annotate(analysis.samples, quant_matrix=analysis.coverage_gc_corrected)  # quant_matrix=analysis.coverage_qnorm
-        analysis.annotate_with_sample_metadata()
+        analysis.annotate_with_sample_metadata(attributes=sample_atributes)
+
+        analysis.samples = [s for s in analysis.samples if s.name in analysis.coverage_gc_corrected.columns.tolist()]
+        annotate(analysis, analysis.samples, quant_matrix=analysis.coverage_gc_corrected)
+        annotate_with_sample_metadata(analysis, attributes=sample_atributes)
 
         # Plots
         if args.plot:
@@ -2248,6 +2467,10 @@ def main():
     #         [s for s in atacseq_samples if s.cell_type == cell_type],
     #         variable="timepoint", cell_type=cell_type, output_dir=os.path.join("results", "ibrutinib_treatment"))
 
+    #
+
+    # timecourse package
+    # timecourse_analysis(analysis, atacseq_samples)
 
 if __name__ == '__main__':
     try:
