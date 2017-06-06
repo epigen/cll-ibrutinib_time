@@ -35,18 +35,17 @@ if(!file.exists(dirout(out.fscLVM, "matrix.csv.gz"))){
 
 nhidden <- 3
 for(nhidden in 1:5){
-	outDir <- dirout(out.fscLVM, "fscLVM_files_", nhidden, "hidden/")
-	dir.create(outDir)
+  out.fscLVM.x <- paste0(out.fscLVM, "fscLVM_files_", nhidden, "hidden/")
+	dir.create(dirout(out.fscLVM.x))
+  if(!file.exists(dirout(out.fscLVM.x, "X.csv"))){
   system(paste("python src/single_cell_RNA/90_fscLVM.py",
   	             dirout(out.fscLVM, "matrix.csv.gz"),
-  	             outDir,
+  	             dirout(out.fscLVM.x),
   	             "$RESOURCES/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt",
   	             nhidden
   	  ))
+  }
+  
   # ANALYZE
-  # 	outFSCLVM <- paste0(out.fscLVM, "fscLVM_files_", nhidden, "hidden/")
-  # 	balance.barcodes <- TRUE
-  # 	source("src/single_cell_RNA/90_fscLVM_test.R", echo=TRUE)
-  # 	balance.barcodes <- FALSE	
-  # 	source("src/single_cell_RNA/90_fscLVM_test.R", echo=TRUE)
+  source("src/single_cell_RNA/35_2_fscLVM_analysis.R", echo=TRUE)
 }
