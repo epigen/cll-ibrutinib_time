@@ -5,11 +5,11 @@ require(methods)
 require(pheatmap)
 require(enrichR) #devtools::install_github("definitelysean/enrichR")
 
-
 project.init2("cll-time_course")
 
-out <- "13_3_Overtime_Together_tobit/"
+out <- "12_2_TZero_Together/"
 dir.create(dirout(out))
+
 
 sample.x <- "allDataBest_NoDownSampling_noIGH"
 
@@ -22,41 +22,34 @@ cells <- gsub(paste0(sample.x, "_"), "", cells)
 
 res <- data.table()
 
-cell <- "Bcells"
+cell <- "Tcells1"
 for(cell in cells){
   message(cell)  
   datasetName <- paste0(sample.x, "_", cell)
   
   pat.dirs <- list.dirs(dirout(inDir, datasetName))
-  pat.dirs <- pat.dirs[grepl("_pat_", pat.dirs)]
+  pat.dirs <- pat.dirs[grepl("Cluster_TZero", pat.dirs)]
   
-  eff.sizes <- list()
+  stopifnot(length(pat.dirs)==1)
   
-  for(pat.dir in pat.dirs){
-    comp.files <- list.files(paste0(pat.dir, "/"))
-    comp.files <- comp.files[grepl("Diff_Cluster.+\\.tsv", comp.files)]
-    comp.files <- comp.files[!grepl("d280", comp.files)]
+  comp.files <- list.files(paste0(pat.dirs, "/"))
+  comp.files <- comp.files[grepl("Markers_Cluster.+\\.tsv", comp.files) & !grepl("Markers_Cluster.+\\_version2.tsv", comp.files)]
     
-    for(comp.file in comp.files){
-      nams <- strsplit((gsub("Diff_Cluster", "", gsub("\\.tsv", "", comp.file))), "vs")[[1]]
-      pat <- gsub("([A-Z]+)\\d?_.+", "\\1", nams[1])
-      direction <- ifelse(grepl("d0", gsub("(\\d+)d", "d\\1", nams)[1]), "early_vs_late", "late_vs_early")
-      
-      
-      hits <- fread(paste0(pat.dir, "/",comp.file))[order(V3)]
-      colnames(hits) <- c("gene", "pvalue", "logFC", "pct1", "pct2")
-      hits[,pct.diff := pct1 - pct2]
-      hits$cellType <- cell
-      hits$patient <- pat
-      
-      if(direction == "late_vs_early"){
-        hits[,logFC := -logFC]
-        hits[,pct.diff := -pct.diff]
-      }
-      res <- rbind(res, hits[,c("gene", "pvalue", "logFC", "pct.diff", "patient", "cellType")])
-    }
+  for(comp.file in comp.files){
+    pat <- gsub("([A-Z]+)\\d?_.+", "\\1", gsub("Markers_Cluster", "", gsub("\\.tsv", "", comp.file)))
+
+    hits <- fread(paste0(pat.dirs, "/",comp.file))[order(V3)]
+    colnames(hits) <- c("gene", "pvalue", "logFC", "pct1", "pct2")
+    hits[,pct.diff := pct1 - pct2]
+    hits$cellType <- cell
+    hits$patient <- pat
+    
+    res <- rbind(res, hits[,c("gene", "pvalue", "logFC", "pct.diff", "patient", "cellType")])
   }
 }
+
+
+res
 
 
 
@@ -76,14 +69,14 @@ res.sig <- res[qvalue < 0.05 & abs(logFC) > 0.3]
 
 
 # ANALYSIS OVER ALL CELLS -------------------------------------------------
+filter <- ""
 for(cell in c("All", unique(res$cellType))){
-  for(filter in c("")){
     res2 <- res.sig
     
     if(cell != "All"){
-      res2 <- res.sig[cellType == cell]
+      res2 <- res2[cellType == cell]
     }
-
+    
     gene.cnt <- res2[,.N, by="gene"]
     gene.cnt <- gene.cnt[order(N, decreasing=TRUE)][!grepl("RP", gene)]
     genes <- gene.cnt[1:min(100, nrow(gene.cnt))]$gene
@@ -115,7 +108,7 @@ for(cell in c("All", unique(res$cellType))){
       pheatmap(pCor,annotation_row=annot)
       dev.off()
     }, silent=T)
-
+    
     
     
     # ENRICHR
@@ -150,9 +143,5 @@ for(cell in c("All", unique(res$cellType))){
         dev.off()
       }
     }
-  }
 }
-
-
-
 

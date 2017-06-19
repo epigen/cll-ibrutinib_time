@@ -98,6 +98,13 @@ if(!file.exists(dirout(outS, cell,".RData"))){
     pbmc <- StashIdent(pbmc, save.name = paste0("ClusterNames_", x))
   }
   
+  # timepoint zero annotation
+  if(is.null(pbmc@data.info[["TZero"]])){
+    pbmc@data.info[["TZero"]] <- pbmc@data.info$sample
+    pbmc@data.info$TZero[!grepl("_0d", pbmc@data.info$TZero) & !grepl("d0", pbmc@data.info$TZero)] <- "IGNORED"
+    #     with(pbmc@data.info, table(sample, TZero))
+  }
+  
   save(pbmc, file=dirout(outS, cell,".RData"))
 } else {
   load(file=dirout(outS, cell,".RData"))
@@ -109,6 +116,13 @@ if(!file.exists(dirout(outS, cell,".RData"))){
       pbmc <- FindClusters(pbmc, pc.use = 1:10, resolution = x, print.output = 0, save.SNN = T)
       pbmc <- StashIdent(pbmc, save.name = paste0("ClusterNames_", x))
     }
+  }
+  
+  if(is.null(pbmc@data.info[["TZero"]])){
+    pbmc@data.info[["TZero"]] <- pbmc@data.info$sample
+    pbmc@data.info$TZero[!grepl("_0d", pbmc@data.info$TZero) & !grepl("d0", pbmc@data.info$TZero)] <- "IGNORED"
+    update <- TRUE
+    #     with(pbmc@data.info, table(sample, TZero))
   }
   
   if(update){

@@ -5,6 +5,7 @@ module load R/3.3.2
 datasets=("allDataBest_NoDownSampling_noIGH")
 cells=("Monos" "NurseLikeCells" "Bcells" "NKcells" "Tcells1")
 
+
 for dataset in ${datasets[@]}
 do   
   for cell in ${cells[@]}
@@ -13,7 +14,7 @@ do
     echo $cell
     outFile="${PROCESSED}/cll-time_course/results/single_cell_RNA/11_CellTypes/${dataset}_${cell}.log"
     echo $outFile
-    sbatch --job-name="Seurat $dataset $cell" --ntasks=12 --mem=180000 --partition=longq --time=3-00:00:00 \
+    sbatch --job-name="Seurat $dataset $cell" --ntasks=12 --mem=180000 --partition=longq --time=5-00:00:00 \
         --wrap="Rscript ${CODEBASE}/cll-time_course/src/single_cell_RNA/11_2_CellTypes_Script.R ${dataset} ${cell}" \
         --output=$outFile
   done

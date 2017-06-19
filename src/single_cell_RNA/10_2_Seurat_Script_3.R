@@ -19,7 +19,8 @@ enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chr
 # only those with >= 2 groups with > 1 cell
 clusterings <- colnames(pbmc@data.info)[apply(pbmc@data.info, 2, function(x) sum(table(x[x!="IGNORED"])>1)>1)]
 clusterings <- clusterings[!grepl("res", clusterings) & !clusterings %in% c("nUMI", "nGene", "orig.ident", "percent.mito")]
-
+# reorder to do the kmeans at the end
+clusterings <- c(clusterings[!grepl("ClusterNames", clusterings)], clusterings[grepl("ClusterNames", clusterings)])
 
 
 # PLOT MARKERS 2

@@ -22,10 +22,9 @@ pDat[ClusterNames_0.5 %in% c(6), cellType := "CD4"]
 pDat[ClusterNames_0.5 %in% c(2,3,9) & !ClusterNames_0.95 %in% c(14,19,10), cellType := "CD8"]
 # Plot this to check
 ggplot(pDat, aes(x=tSNE_1, y=tSNE_2, color=cellType)) + geom_point()
-ggsave(dirout(out, "Celltypes_tSNE.pdf"))
+ggsave(dirout(out, "Celltypes_tSNE.pdf"), width=7, height=7)
 # save this in the big file
-pbmc@data.info$cellType <- pDat$cellType
-save(pbmc, file=dirout("10_Seurat/", sample.x, "/",sample.x,".RData"))
+# pbmc@data.info$cellType <- pDat$cellType
 
 pDat$sample <- gsub("(\\d+)d", "d\\1", pDat$sample)
 pDat$patient <- gsub("([A-Z]+)\\d?\\_.+", "\\1", pDat$sample)
@@ -54,8 +53,18 @@ facsDat2[,sum(value), by="sample2"]
 
 mDat <- merge(scCounts, facsDat2, by="m")
 
-ggplot(mDat, aes(x=count, y=value, color=cellType, shape=sample2.x)) + geom_point() + ylab("FACS") + xlab("scRNA")
-ggsave(dirout(out, "FACS_vs_scRNA.pdf"))
+
+
+
+# PLOTS -------------------------------------------------------------------
+ggplot(mDat, aes(x=count, y=value/100, color=cellType, shape=sample2.x)) + 
+  geom_point(size=5) + ylab("FACS") + xlab("scRNA") + scale_shape_manual(values=c(97:104,107))
+ggsave(dirout(out, "FACS_vs_scRNA.pdf"), height=5, width=6)
+
+ggplot(mDat, aes(x=count, y=value/100, color=cellType, shape=sample2.x)) + 
+  geom_point(size=5) + ylab("FACS") + xlab("scRNA") + scale_shape_manual(values=c(97:104,107)) +
+  scale_x_log10() + scale_y_log10()
+ggsave(dirout(out, "FACS_vs_scRNA_log.pdf"), height=5, width=6)
 
 ggplot(mDat, aes(x=count, y=value, color=cellType)) + geom_point() + ylab("FACS") + xlab("scRNA")
 ggsave(dirout(out, "FACS_vs_scRNA_noShapes.pdf"))
