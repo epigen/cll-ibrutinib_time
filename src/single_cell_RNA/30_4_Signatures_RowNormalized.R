@@ -35,11 +35,13 @@ for(line in lines){
   x <- strsplit(line, "\t")[[1]]
   genesets[[x[1]]] <- x[3:length(x)]
 }
-
+load(dirout("20_AggregatedLists/lists.RData"))
+genesets <- c(genesets, cll.lists)
 
 
 # CALCULATE SCORE ---------------------------------------------------------
 data <- pbmc@data
+data@x <- exp(data@x) - 1
 data <- data - apply(data, 1, min)
 data <- data / apply(data, 1, max)
 
@@ -48,7 +50,7 @@ Dat1 <- pDat
 for(set.nam in names(genesets)){
   genes <- genesets[[set.nam]]
   genes <- genes[genes %in% rownames(data)]
-  Dat1[[set.nam]] <- log(apply(exp(data[genes,]), 2, sum))
+  Dat1[[set.nam]] <- apply(data[genes,], 2, mean)
 }
 qplot(sapply(names(genesets), function(nam) cor(Dat1[[nam]], Dat1$nUMI)), bins=10) + xlab("Correlation")
 ggsave(dirout(out, "CorrUMI_Raw.pdf"))

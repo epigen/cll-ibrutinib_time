@@ -35,18 +35,21 @@ for(line in lines){
   x <- strsplit(line, "\t")[[1]]
   genesets[[x[1]]] <- x[3:length(x)]
 }
-
+load(dirout("20_AggregatedLists/lists.RData"))
+genesets <- c(genesets, cll.lists)
 
 
 # CALCULATE SCORE ---------------------------------------------------------
 # (Here just trying to do different things and see how they correlate to nUMI...)
+data <- pbmc@data
+data@x <- exp(data@x) - 1
 
 # 1 calculate aggregated log counts
 Dat1 <- pDat
 for(set.nam in names(genesets)){
   genes <- genesets[[set.nam]]
-  genes <- genes[genes %in% rownames(pbmc@data)]
-  Dat1[[set.nam]] <- log(apply(exp(pbmc@data[genes,]), 2, sum))
+  genes <- genes[genes %in% rownames(data)]
+  Dat1[[set.nam]] <- log(apply(data[genes,], 2, sum))
 }
 qplot(sapply(names(genesets), function(nam) cor(Dat1[[nam]], Dat1$nUMI)), bins=10) + xlab("Correlation")
 ggsave(dirout(out, "CorrUMI_Raw.pdf"))
