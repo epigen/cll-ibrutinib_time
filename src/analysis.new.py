@@ -548,7 +548,7 @@ find results -name "*.symbols.txt" \
 
 # Run LOLA
 find results -name "*_regions.bed" \
--exec sbatch -J {}.lola -o {}.lola.log -p shortq -c 1 --mem 4000 \
+-exec sbatch -J {}.lola -o {}.lola.log -p shortq -c 8 --mem 24000 \
 --wrap "Rscript ~/jobs/run_LOLA.R {} ~/cll-time_course/results/cll-time_course_peak_set.bed hg19" \;
 
 # Run AME
@@ -585,21 +585,85 @@ for cell_type in cell_types:
             enr["cluster"] = cluster
             enrichments = enrichments.append(enr, ignore_index=True)
 
-n_top = 10
-for gene_set_library in enrichments['gene_set_library'].drop_duplicates():
-    enr = enrichments[enrichments['gene_set_library'] == gene_set_library]
+for n_top in [10, 20]:
+    for gene_set_library in enrichments['gene_set_library'].drop_duplicates():
+        enr = enrichments[enrichments['gene_set_library'] == gene_set_library]
 
-    # transform p-values
-    enr.loc[:, "q_value"] = -np.log10(enr["p_value"])
+        # transform p-values
+        enr.loc[:, "q_value"] = -np.log10(enr["p_value"])
+
+        # get top N enriched per set
+        enr.loc[:, "label"] = enr["cell_type"] + " " + enr["cluster"].astype(str)
+        t = enr.groupby("label")["q_value"].nlargest(n_top)
+        t = t[~t.index.get_level_values(0).str.contains("NK|Mono")]
+        terms = enr.loc[t.index.levels[1], "description"].drop_duplicates()
+
+        # make pivot table
+        enr_pivot = pd.pivot_table(enr, index="description", columns="label", values="q_value", fill_value=0).loc[terms, :]
+
+        g = sns.clustermap(
+            enr_pivot,
+            col_cluster=False,
+            metric="correlation", cbar_kws={"label": "-log10(P-value)"},
+            figsize=(4, 20), rasterized=True,
+        )
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.savefig(os.path.join("results", "enrichments.all_cell_types.all_clusters.{}.top{}.svg".format(gene_set_library, n_top)), dpi=300)
+
+        # reduce to maximum per cell type (across clusters)
+        enr_pivot.columns = enr_pivot.columns.str.replace(" .*", "")
+        enr_pivot = enr_pivot.T.groupby(level=0).max().T
+        g = sns.clustermap(
+            enr_pivot,
+            col_cluster=False,
+            metric="correlation", cbar_kws={"label": "max(-log10(P-value))"},
+            figsize=(4, 20), rasterized=True,
+        )
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.savefig(os.path.join("results", "enrichments.all_cell_types.all_clusters.{}.top{}.reduced_max.svg".format(gene_set_library, n_top)), dpi=300)
+
+
+# LOLA
+lola = pd.DataFrame()
+
+for cell_type in cell_types:
+    for n_clust in [1, 2, 4, 7]:
+        out_dir = os.path.join("results", "enrichment." + cell_type, "{}_clusters".format(n_clust))
+        for cluster in range(1, n_clust + 1):
+            if cluster == 1:
+                f = os.path.join(out_dir.replace("clusters", "cluster"), "allEnrichments.txt")
+            else:
+                f = os.path.join(out_dir + ".cluster_{}".format(cluster), "allEnrichments.txt")
+
+            try:
+                enr = pd.read_csv(f, sep="\t")
+            except IOError:
+                continue
+
+            enr["cell_type"] = cell_type
+            enr["cluster"] = cluster
+            lola = lola.append(enr, ignore_index=True)
+
+
+for n_top in [10, 20]:
+    #
+    enr = lola.copy()
+    enr["set_label"] = (
+        enr[['description', 'cellType', 'tissue', 'antibody', 'treatment']]
+        .astype(str)
+        .apply(lambda x: " ".join([y for y in set(x) if not y in ['None', 'nan']]), axis=1)
+    )
 
     # get top N enriched per set
     enr.loc[:, "label"] = enr["cell_type"] + " " + enr["cluster"].astype(str)
-    t = enr.groupby("label")["q_value"].nlargest(n_top)
+    t = enr.groupby("label")["pValueLog"].nlargest(n_top)
     t = t[~t.index.get_level_values(0).str.contains("NK|Mono")]
-    terms = enr.loc[t.index.levels[1], "description"].drop_duplicates()
+    terms = enr.loc[t.index.levels[1], "set_label"].drop_duplicates()
 
     # make pivot table
-    enr_pivot = pd.pivot_table(enr, index="description", columns="label", values="q_value", fill_value=0).loc[terms, :]
+    enr_pivot = pd.pivot_table(enr, index="set_label", columns="label", values="pValueLog", fill_value=0).loc[terms, :]
 
     g = sns.clustermap(
         enr_pivot,
@@ -609,7 +673,17 @@ for gene_set_library in enrichments['gene_set_library'].drop_duplicates():
     )
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-    g.savefig(os.path.join("results", "enrichments.all_cell_types.all_clusters.{}.top{}.svg".format(gene_set_library, n_top)), dpi=300)
+    g.savefig(os.path.join("results", "lola.all_cell_types.all_clusters.top{}.svg".format(n_top)), dpi=300)
+    # with z-score
+    g = sns.clustermap(
+        enr_pivot,
+        col_cluster=False,
+        metric="correlation", cbar_kws={"label": "-log10(P-value)"},
+        figsize=(4, 20), rasterized=True, z_score=1
+    )
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+    g.savefig(os.path.join("results", "lola.all_cell_types.all_clusters.top{}.z-score.svg".format(n_top)), dpi=300)
 
     # reduce to maximum per cell type (across clusters)
     enr_pivot.columns = enr_pivot.columns.str.replace(" .*", "")
@@ -622,5 +696,5 @@ for gene_set_library in enrichments['gene_set_library'].drop_duplicates():
     )
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-    g.savefig(os.path.join("results", "enrichments.all_cell_types.all_clusters.{}.top{}.reduced_max.svg".format(gene_set_library, n_top)), dpi=300)
+    g.savefig(os.path.join("results", "lola.all_cell_types.all_clusters.top{}.reduced_max.svg".format(n_top)), dpi=300)
 
