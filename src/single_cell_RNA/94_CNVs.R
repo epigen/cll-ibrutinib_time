@@ -22,7 +22,7 @@ plot(geneOrder$start)
 
 
 table(rownames(pbmc@data) %in% geneOrder$gene)
-mat <- pbmc@data
+mat <- pbmc@scale.data
 genes.used <- intersect(geneOrder$gene, rownames(mat))
 
 mat <- mat[genes.used,]
@@ -54,12 +54,16 @@ for(chr.x in unique(geneOrder$chr)){
   }
 }
 rownames(cnv.scores) <- rowNams
+cnv.scores <- cnv.scores[,order(as.numeric(gsub("[A-Z]+\\-(\\d+)","\\1",colnames(cnv.scores))))]
+
 
 save(cnv.scores, file=dirout(out.cnvs, "scores.RData"))
 
 pdf(dirout(out.cnvs, "hits.pdf"), height=10, width=10, onefile=F)
-pheatmap(cnv.scores[order(abs(apply(cnv.scores, 1, sum)), decreasing=TRUE)[1:200],order(abs(apply(cnv.scores, 2, sum)), decreasing=TRUE)[1:200]], 
-         cluster_rows=FALSE,
+# str(prows <-  rownames(cnv.scores)[order(abs(apply(cnv.scores, 1, sum)), decreasing=TRUE)[1:200]])
+# str(pcols <- order(abs(apply(cnv.scores, 2, sum)), decreasing=TRUE)[1:200])
+pheatmap(cnv.scores[,colnames(cnv.scores) %in% sample(colnames(cnv.scores), 500)], 
+         cluster_rows=FALSE, cluster_cols=FALSE,
          annotation_col=subset(pbmc@data.info, select=sample),
          annotation_row=data.frame(chromosome=gsub("(.+)\\_.+", "\\1", rownames(cnv.scores)),row.names=rownames(cnv.scores)),
          show_rownames=F,
@@ -67,4 +71,4 @@ pheatmap(cnv.scores[order(abs(apply(cnv.scores, 1, sum)), decreasing=TRUE)[1:200
          )
 dev.off()
          
-
+tail(rownames(cnv.scores))

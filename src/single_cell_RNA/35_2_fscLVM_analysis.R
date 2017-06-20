@@ -10,7 +10,7 @@ require(enrichR) #devtools::install_github("definitelysean/enrichR")
 normalization = ""
 # normalization = "normalize.by.sample"
 # normalization = "regress.out.nUMI"
-normalization = "normalize.by.timepoint.cell"
+# normalization = "normalize.by.timepoint.cell"
 # stopifnot((normalize.by.sample | regress.out.nUMI) | !(normalize.by.sample | regress.out.nUMI))
 
 # READ fscLVM files -------------------------------------------------------

@@ -76,10 +76,9 @@ plot(Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1$nUMI)
 
 plot(Dat1.cor$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1.cor$nUMI)
 
-pDat <- Dat1.cor
-
 
 # ANALYSIS ----------------------------------------------------------------
+pDat <- Dat1.cor
 pDat2 <- pDat
 pDat2 <- pDat2[timepoint %in% c("d0", "d120")]
 pDat2 <- pDat2[cellType %in% c("CD8", "CD4", "Mono", "CLL")]# & grepl("PT", sample)]
