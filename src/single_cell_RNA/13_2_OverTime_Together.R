@@ -49,7 +49,7 @@ for(cell in cells){
       hits$cellType <- cell
       hits$patient <- pat
       
-      if(direction == "late_vs_early"){
+      if(direction == "early_vs_late"){
         hits[,logFC := -logFC]
         hits[,pct.diff := -pct.diff]
       }

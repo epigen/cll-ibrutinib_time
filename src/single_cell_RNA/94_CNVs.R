@@ -45,7 +45,7 @@ mat2[mat2 < -3] <- -3
 chr.x <- 1
 i2 <- 0
 rowNams <- c()
-for(chr.x in unique(geneOrder$chr)){
+for(chr.x in unique(geneOrder2$chr)){
   geneOrder.chr <- geneOrder2[chr == chr.x]
   for(i in 1:ceiling((nrow(geneOrder.chr))/slide.stepsize)){
     i2 <- i2 + 1

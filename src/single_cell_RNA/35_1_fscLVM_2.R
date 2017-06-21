@@ -50,7 +50,7 @@ if(!file.exists(dirout(out.fscLVM, "matrix.csv.gz"))){
 
 
 nhidden <- 3
-for(nhidden in 1:3){
+for(nhidden in c(3)){
   out.fscLVM.x <- paste0(out.fscLVM, "fscLVM_files_", nhidden, "hidden/")
 	dir.create(dirout(out.fscLVM.x))
   if(!file.exists(dirout(out.fscLVM.x, "X.csv"))){

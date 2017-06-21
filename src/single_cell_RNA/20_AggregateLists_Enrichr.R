@@ -66,7 +66,7 @@ for(grp.x in names(hitSets)){
 }
 enrichRes$n <- sapply(strsplit(enrichRes$genes,","), length)
 enrichRes <- enrichRes[n > 3]
-write.table(enrichRes[qval < 0.05], file=dirout(out, cell, "_EnrichR",filter, ".tsv"), sep="\t", quote=F, row.names=F)
+write.table(enrichRes[qval < 0.05], file=dirout(out, "EnrichR", ".tsv"), sep="\t", quote=F, row.names=F)
 
 if(nrow(enrichRes) > 2 & length(unique(enrichRes$grp)) > 1){
   pDat <- dcast.data.table(enrichRes, make.names(category) ~ grp, value.var="qval")

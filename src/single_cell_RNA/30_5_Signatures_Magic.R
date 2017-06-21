@@ -7,7 +7,7 @@ require(pheatmap)
 require(gplots)
 
 project.init2("cll-time_course")
-out <- "30_4_Signatures_RowNormalized/"
+out <- "30_5_SignaturesMagic/"
 dir.create(dirout(out))
 
 
@@ -35,20 +35,29 @@ for(line in lines){
   x <- strsplit(line, "\t")[[1]]
   genesets[[x[1]]] <- x[3:length(x)]
 }
-
+load(dirout("20_AggregatedLists/lists.RData"))
+genesets <- c(genesets, cll.lists)
 
 
 # CALCULATE SCORE ---------------------------------------------------------
-data <- pbmc@data
+magicDat <- fread(dirout("15_Magic/OLD/magic.matrix.csv"))
+magicMT <- as.matrix(magicDat[,-"V1", with=F])
+rownames(magicMT) <- magicDat$V1
+data <- t(magicMT)
+
+stopifnot(all(colnames(data) == rownames(pbmc@data.info$sample)))
+
+# data <- t(scale(t(data)))
 data <- data - apply(data, 1, min)
 data <- data / apply(data, 1, max)
+boxplot(t(data[1:10,]))
 
 # 1 calculate aggregated log counts
 Dat1 <- pDat
 for(set.nam in names(genesets)){
   genes <- genesets[[set.nam]]
   genes <- genes[genes %in% rownames(data)]
-  Dat1[[set.nam]] <- log(apply(exp(data[genes,]), 2, mean))
+  Dat1[[set.nam]] <- apply(data[genes,], 2, mean)
 }
 qplot(sapply(names(genesets), function(nam) cor(Dat1[[nam]], Dat1$nUMI)), bins=10) + xlab("Correlation")
 ggsave(dirout(out, "CorrUMI_Raw.pdf"))
@@ -73,13 +82,11 @@ qplot(sapply(names(genesets), function(nam) cor(Dat1.cor[[nam]], Dat1.cor$nUMI))
 ggsave(dirout(out, "CorrUMI_Regressed.pdf"))
 
 plot(Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1$nUMI)
-
 plot(Dat1.cor$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1.cor$nUMI)
 
 
 
-pDat <- Dat1.cor
-
+pDat <- Dat1
 
 # ANALYSIS ----------------------------------------------------------------
 pDat2 <- pDat
@@ -126,8 +133,8 @@ for(pat in unique(pDat2$patient)){
     if(nrow(x[timepoint == "d0"]) > 5 & nrow(x[timepoint == "d120"]) >5){
       for(geneset in names(genesets)){
         p <- t.test(x[timepoint == "d0"][[geneset]], x[timepoint == "d120"][[geneset]])$p.value
-        ef <- log2(mean(x[timepoint == "d120"][[geneset]])/ mean(x[timepoint == "d0"][[geneset]]))
-        overTime.sig <- rbind(overTime.sig, data.table(patient=pat, cellType=cell, pvalue=p, logFC=ef, geneset=geneset))
+        ef <- mean(x[timepoint == "d120"][[geneset]]) - mean(x[timepoint == "d0"][[geneset]])
+        overTime.sig <- rbind(overTime.sig, data.table(patient=pat, cellType=cell, pvalue=p, Diff=ef, geneset=geneset))
       }
     }
   }
@@ -135,38 +142,72 @@ for(pat in unique(pDat2$patient)){
 overTime.sig[,pvalue2 := pmin(5, -1*log10(pvalue))]
 ggplot(
   overTime.sig, 
-  aes(x=paste0(cellType, "_", patient), y=geneset, color=logFC, size=pvalue2)) + 
+  aes(x=paste0(cellType, "_", patient), y=geneset, color=Diff, size=pvalue2)) + 
   geom_point() +
-  scale_color_gradient2(low="blue", mid="white", high="red") +
+  scale_color_gradient2(low="blue", mid="white", high="red") + theme_bw()
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ggsave(dirout(out, "0_Overview.pdf"),height=15, width=15)
 
 
 
 
-
+colnames(data) <- rownames(pbmc@data.info)
 # PLOT INDIVIDUAL EXAMPLES ------------------------------------------------
-
 pat <- "PT"
 set.nam <- "HALLMARK_INTERFERON_GAMMA_RESPONSE"
 n <- 100
 for(pat in unique(pDat$patient)){
   for(set.nam in names(genesets)){
     genes <- genesets[[set.nam]]
-    dat <- pbmc@data
+    dat <- data
     sampleAnnot <- subset(pbmc@data.info, grepl(pat, sample) & cellType %in% c("CD8", "CD4", "Mono", "CLL"))
     cells <- rownames(sampleAnnot)[do.call(c, lapply(split(1:nrow(sampleAnnot), factor(with(sampleAnnot, paste0(sample, cellType)))), function(x) sample(x, min(length(x), n))))]
     
     genes <- genes[genes %in% rownames(dat)]
     dat <- dat[genes, cells]
-    dat <- dat[apply(dat, 1, max) != 0,]
+    dat <- dat[apply(dat, 1, max) != 0,,drop=F]
     dat <- dat - apply(dat, 1, min)
     dat <- dat / apply(dat,1, max)
     apply(dat, 1, quantile, na.rm=T)
-    dat <- dat[, order(with(sampleAnnot[cells,],paste0(cellType, sample)))]
+    dat <- dat[, order(with(sampleAnnot[cells,],paste0(cellType, sample))),drop=F]
     
     pdf(dirout(out, set.nam, "_", pat, ".pdf"), height=min(29, nrow(dat) * 0.3 + 3), width=min(ncol(dat)*0.03+3,29), onefile=FALSE)
     pheatmap(dat, cluster_rows=F, cluster_cols=F, annotation_col=pbmc@data.info[,c("sample", "cellType", "nUMI"), drop=F],show_colnames=FALSE)
     dev.off()
   }
 }
+
+
+
+# RANDOM MATRIX -----------------------------------------------------------
+dat <- pbmc@data
+sampleAnnot <- subset(pbmc@data.info, grepl(pat, sample) & cellType %in% c("CD8", "CD4", "Mono", "CLL"))
+cells <- rownames(sampleAnnot)[do.call(c, lapply(split(1:nrow(sampleAnnot), factor(with(sampleAnnot, paste0(sample, cellType)))), function(x) sample(x, min(length(x), n))))]
+
+dat <- dat[sample(1:nrow(dat), 100), cells]
+dat <- dat[apply(dat, 1, max) != 0,,drop=F]
+dat <- dat - apply(dat, 1, min)
+dat <- dat / apply(dat,1, max)
+apply(dat, 1, quantile, na.rm=T)
+dat <- dat[, order(with(sampleAnnot[cells,],paste0(cellType, sample))),drop=F]
+
+pdf(dirout(out, "RandomGenes", ".pdf"), height=min(29, nrow(dat) * 0.3 + 1), width=min(ncol(dat)*0.03+3,29), onefile=FALSE)
+pheatmap(dat, cluster_rows=F, cluster_cols=F, annotation_col=pbmc@data.info[,c("sample", "cellType", "nUMI"), drop=F],show_colnames=FALSE)
+dev.off()
+
+
+# RANDOM MATRIX -----------------------------------------------------------
+dat <- data
+sampleAnnot <- subset(pbmc@data.info, grepl(pat, sample) & cellType %in% c("CD8", "CD4", "Mono", "CLL"))
+cells <- rownames(sampleAnnot)[do.call(c, lapply(split(1:nrow(sampleAnnot), factor(with(sampleAnnot, paste0(sample, cellType)))), function(x) sample(x, min(length(x), n))))]
+
+dat <- dat[sample(1:nrow(dat), 100), cells]
+dat <- dat[apply(dat, 1, max) != 0,,drop=F]
+dat <- dat - apply(dat, 1, min)
+dat <- dat / apply(dat,1, max)
+apply(dat, 1, quantile, na.rm=T)
+dat <- dat[, order(with(sampleAnnot[cells,],paste0(cellType, sample))),drop=F]
+
+pdf(dirout(out, "RandomGenes_Magic", ".pdf"), height=min(29, nrow(dat) * 0.3 + 1), width=min(ncol(dat)*0.03+3,29), onefile=FALSE)
+pheatmap(dat, cluster_rows=F, cluster_cols=F, annotation_col=pbmc@data.info[,c("sample", "cellType", "nUMI"), drop=F],show_colnames=FALSE)
+dev.off()

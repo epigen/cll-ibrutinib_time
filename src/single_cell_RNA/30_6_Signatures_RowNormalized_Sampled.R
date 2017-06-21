@@ -7,7 +7,7 @@ require(pheatmap)
 require(gplots)
 
 project.init2("cll-time_course")
-out <- "30_4_Signatures_RowNormalized/"
+out <- "30_6_Signatures_RowNormalized_Sampled/"
 dir.create(dirout(out))
 
 
@@ -46,10 +46,25 @@ data <- data - apply(data, 1, min)
 data <- data / apply(data, 1, max)
 
 Dat1 <- pDat
+
+n.draws <- 500
+
+(set.nam <- names(genesets)[1])
 for(set.nam in names(genesets)){
   genes <- genesets[[set.nam]]
   genes <- genes[genes %in% rownames(data)]
-  Dat1[[set.nam]] <- apply(data[genes,], 2, mean)
+  
+  score.x <- apply(data[genes,], 2, mean)
+  
+  # Background distribution
+  bg.distr <- matrix(NA, ncol=ncol(data), nrow=n.draws)
+  for(i in 1:n.draws){
+    bg.distr[i,] <- apply(data[sample(1:nrow(data), length(genes)),], 2, mean)
+  }
+  bg.mean <- apply(bg.distr, 2, mean)
+  bg.sd <- apply(bg.distr, 2, sd)
+  
+  Dat1[[set.nam]] <- (score.x - bg.mean)/bg.sd
 }
 qplot(sapply(names(genesets), function(nam) cor(Dat1[[nam]], Dat1$nUMI)), bins=10) + xlab("Correlation")
 ggsave(dirout(out, "CorrUMI_Raw.pdf"))
@@ -63,20 +78,23 @@ ggsave(dirout(out, "CorrUMI_AggLogCounts_hex.pdf"))
 
 
 # REGRESS OUT nUMI --------------------------------------------------------
-Dat1.cor <- Dat1
-set.nam <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
-for(set.nam in names(genesets)){
-  lm.fit <- lm(data=Dat1.cor, get(set.nam) ~ nUMI)
-  Dat1.cor[[set.nam]] <- lm.fit$residuals + coef(lm.fit)[1] # add intercept back
-}
-qplot(sapply(names(genesets), function(nam) cor(Dat1.cor[[nam]], Dat1.cor$nUMI)), bins=10) + xlab("Correlation")
-ggsave(dirout(out, "CorrUMI_Regressed.pdf"))
-
-plot(Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1$nUMI)
-
-plot(Dat1.cor$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1.cor$nUMI)
+# Dat1.cor <- Dat1
+# set.nam <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+# for(set.nam in names(genesets)){
+#   lm.fit <- lm(data=Dat1.cor, get(set.nam) ~ nUMI)
+#   Dat1.cor[[set.nam]] <- lm.fit$residuals + coef(lm.fit)[1] # add intercept back
+# }
+# qplot(sapply(names(genesets), function(nam) cor(Dat1.cor[[nam]], Dat1.cor$nUMI)), bins=10) + xlab("Correlation")
+# ggsave(dirout(out, "CorrUMI_Regressed.pdf"))
+# 
+# plot(Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1$nUMI)
+# 
+# plot(Dat1.cor$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1.cor$nUMI)
 
 # DO NOT USE REGRESSED SCORES, then can have < 0
+
+
+save(Dat1, file=dirout(out,"Scores.RData"))
 
 # ANALYSIS ----------------------------------------------------------------
 pDat <- Dat1
@@ -124,23 +142,23 @@ for(pat in unique(pDat2$patient)){
     x <- pDat2[patient == pat & cellType == cell]
     if(nrow(x[timepoint == "d0"]) > 5 & nrow(x[timepoint == "d120"]) >5){
       for(geneset in names(genesets)){
-        p <- wilcox.test(x[timepoint == "d0"][[geneset]], x[timepoint == "d120"][[geneset]])$p.value
-        ef <- log2(mean(x[timepoint == "d120"][[geneset]]) / mean(x[timepoint == "d0"][[geneset]]))
-        overTime.sig <- rbind(overTime.sig, data.table(patient=pat, cellType=cell, pvalue=p, logFC=ef, geneset=geneset))
+        p <- t.test(x[timepoint == "d0"][[geneset]], x[timepoint == "d120"][[geneset]])$p.value
+        ef <- mean(x[timepoint == "d120"][[geneset]]) - mean(x[timepoint == "d0"][[geneset]])
+        overTime.sig <- rbind(overTime.sig, data.table(patient=pat, cellType=cell, pvalue=p, Diff=ef, geneset=geneset))
       }
     }
   }
 }
-overTime.sig[is.nan(logFC), pvalue := 1]
-overTime.sig[is.nan(logFC), logFC := 0]
-# overTime.sig[logFC == Inf, logFC := max(overTime.sig$logFC[overTime.sig$logFC != Inf])]
-# overTime.sig[logFC == -Inf, logFC := min(overTime.sig$logFC[overTime.sig$logFC != -Inf])]
-overTime.sig[abs(logFC) > 1, logFC := 1 * sign(logFC)]
+# overTime.sig[is.nan(logFC), pvalue := 1]
+# overTime.sig[is.nan(logFC), logFC := 0]
+# # overTime.sig[logFC == Inf, logFC := max(overTime.sig$logFC[overTime.sig$logFC != Inf])]
+# # overTime.sig[logFC == -Inf, logFC := min(overTime.sig$logFC[overTime.sig$logFC != -Inf])]
+# overTime.sig[abs(logFC) > 1, logFC := 1 * sign(logFC)]
 overTime.sig[,pvalue2 := pmin(5, -1*log10(pvalue))]
 
 ggplot(
   overTime.sig, 
-  aes(x=paste0(cellType, "_", patient), y=geneset, color=logFC, size=pvalue2)) + 
+  aes(x=paste0(cellType, "_", patient), y=geneset, color=Diff, size=pvalue2)) + 
   geom_point() +
   scale_color_gradient2(low="blue", mid="white", high="red") + theme_bw() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) 

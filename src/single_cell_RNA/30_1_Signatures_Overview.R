@@ -49,7 +49,7 @@ Dat1 <- pDat
 for(set.nam in names(genesets)){
   genes <- genesets[[set.nam]]
   genes <- genes[genes %in% rownames(data)]
-  Dat1[[set.nam]] <- log(apply(data[genes,], 2, sum))
+  Dat1[[set.nam]] <- log(apply(data[genes,], 2, sum)+1)
 }
 qplot(sapply(names(genesets), function(nam) cor(Dat1[[nam]], Dat1$nUMI)), bins=10) + xlab("Correlation")
 ggsave(dirout(out, "CorrUMI_AggLogCounts.pdf"))
@@ -61,29 +61,29 @@ ggplot(Dat1, aes(x=nUMI, y=HALLMARK_TNFA_SIGNALING_VIA_NFKB)) + geom_hex() +
   ggtitle(paste("cor = ", round(cor(Dat1$nUMI, Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB),3)))
 ggsave(dirout(out, "CorrUMI_AggLogCounts_hex.pdf"))
 
-# 2 median log counts
-Dat2 <- pDat
-dat <- data
-dat <- dat[apply(dat, 1, max) > 0,]
-for(set.nam in names(genesets)){
-  genes <- genesets[[set.nam]]
-  genes <- genes[genes %in% rownames(dat)]
-  Dat2[[set.nam]] <- apply(dat[genes,], 2, median)
-}
-qplot(sapply(names(genesets), function(nam) cor(Dat2[[nam]], Dat2$nUMI)), bins=10) + xlab("Correlation")
-ggsave(dirout(out, "CorrUMI_MedianLogCounts.pdf"))
-
-# 3 median scaled counts
-Dat3 <- pDat
-dat <- pbmc@scale.data
-dat <- dat[apply(dat, 1, max) > 0,]
-for(set.nam in names(genesets)){
-  genes <- genesets[[set.nam]]
-  genes <- genes[genes %in% rownames(dat)]
-  Dat3[[set.nam]] <- apply(dat[genes,], 2, median)
-}
-qplot(sapply(names(genesets), function(nam) cor(Dat3[[nam]], Dat3$nUMI)), bins=10) + xlab("Correlation")
-ggsave(dirout(out, "CorrUMI_MedianScaled.pdf"))
+# # 2 median log counts
+# Dat2 <- pDat
+# dat <- data
+# dat <- dat[apply(dat, 1, max) > 0,]
+# for(set.nam in names(genesets)){
+#   genes <- genesets[[set.nam]]
+#   genes <- genes[genes %in% rownames(dat)]
+#   Dat2[[set.nam]] <- apply(dat[genes,], 2, median)
+# }
+# qplot(sapply(names(genesets), function(nam) cor(Dat2[[nam]], Dat2$nUMI)), bins=10) + xlab("Correlation")
+# ggsave(dirout(out, "CorrUMI_MedianLogCounts.pdf"))
+# 
+# # 3 median scaled counts
+# Dat3 <- pDat
+# dat <- pbmc@scale.data
+# dat <- dat[apply(dat, 1, max) > 0,]
+# for(set.nam in names(genesets)){
+#   genes <- genesets[[set.nam]]
+#   genes <- genes[genes %in% rownames(dat)]
+#   Dat3[[set.nam]] <- apply(dat[genes,], 2, median)
+# }
+# qplot(sapply(names(genesets), function(nam) cor(Dat3[[nam]], Dat3$nUMI)), bins=10) + xlab("Correlation")
+# ggsave(dirout(out, "CorrUMI_MedianScaled.pdf"))
 
 
 pDat <- Dat1
@@ -135,23 +135,27 @@ for(pat in unique(pDat2$patient)){
     x <- pDat2[patient == pat & cellType == cell]
     if(nrow(x[timepoint == "d0"]) > 5 & nrow(x[timepoint == "d120"]) >5){
       for(geneset in names(genesets)){
-        p <- t.test(x[timepoint == "d0"][[geneset]], x[timepoint == "d120"][[geneset]])$p.value
-        ef <- log2(mean(x[timepoint == "d120"][[geneset]])/ mean(x[timepoint == "d0"][[geneset]]))
+        p <- wilcox.test(x[timepoint == "d0"][[geneset]], x[timepoint == "d120"][[geneset]])$p.value
+        ef <- log2(mean(x[timepoint == "d120"][[geneset]]) / mean(x[timepoint == "d0"][[geneset]]))
         overTime.sig <- rbind(overTime.sig, data.table(patient=pat, cellType=cell, pvalue=p, logFC=ef, geneset=geneset))
       }
     }
   }
 }
-overTime.sig[,pvalue2 := pmin(5, -1*log10(overTime.sig$pvalue))]
+overTime.sig[is.nan(logFC), pvalue := 1]
+overTime.sig[is.nan(logFC), logFC := 0]
+# overTime.sig[logFC == Inf, logFC := max(overTime.sig$logFC[overTime.sig$logFC != Inf])]
+# overTime.sig[logFC == -Inf, logFC := min(overTime.sig$logFC[overTime.sig$logFC != -Inf])]
+overTime.sig[abs(logFC) > 1, logFC := 1 * sign(logFC)]
+overTime.sig[,pvalue2 := pmin(5, -1*log10(pvalue))]
+
 ggplot(
   overTime.sig, 
   aes(x=paste0(cellType, "_", patient), y=geneset, color=logFC, size=pvalue2)) + 
   geom_point() +
-  scale_color_gradient2(low="blue", mid="white", high="red") +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  scale_color_gradient2(low="blue", mid="white", high="red") + theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
 ggsave(dirout(out, "0_Overview.pdf"),height=15, width=15)
-
-
 
 
 
@@ -169,11 +173,11 @@ for(pat in unique(pDat$patient)){
     
     genes <- genes[genes %in% rownames(dat)]
     dat <- dat[genes, cells]
-    dat <- dat[apply(dat, 1, max) != 0,]
+    dat <- dat[apply(dat, 1, max) != 0,,drop=F]
     dat <- dat - apply(dat, 1, min)
     dat <- dat / apply(dat,1, max)
     apply(dat, 1, quantile, na.rm=T)
-    dat <- dat[, order(with(sampleAnnot[cells,],paste0(cellType, sample)))]
+    dat <- dat[, order(with(sampleAnnot[cells,],paste0(cellType, sample))),drop=F]
     
     pdf(dirout(out, set.nam, "_", pat, ".pdf"), height=min(29, nrow(dat) * 0.3 + 3), width=min(ncol(dat)*0.03+3,29), onefile=FALSE)
     pheatmap(dat, cluster_rows=F, cluster_cols=F, annotation_col=pbmc@data.info[,c("sample", "cellType", "nUMI"), drop=F],show_colnames=FALSE)

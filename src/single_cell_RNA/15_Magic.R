@@ -10,6 +10,7 @@ dir.create(dirout(out))
 load(dirout("10_Seurat/allDataBest_NoDownSampling_noIGH/allDataBest_NoDownSampling_noIGH.RData"))
 
 exp.csv <- pbmc@data
+exp.csv@x <- exp(exp.csv@x) - 1
 str(exp.csv)
 table(gsub("\\w+\\-(\\d)","\\1", colnames(pbmc@data)), pbmc@data.info$sample) # this is just to see if the rows are ordered like data.info
 exp.csvT <- t(as.matrix(exp.csv))

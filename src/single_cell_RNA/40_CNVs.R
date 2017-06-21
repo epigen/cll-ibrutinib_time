@@ -7,23 +7,37 @@ require(pheatmap)
 
 project.init2("cll-time_course")
 
-out <- "31_ScoreCards_tobit/"
+out <- "40_CNVs/"
 dir.create(dirout(out))
 
 sample.x <- "allDataBest_NoDownSampling_noIGH"
 inDir <- "11_CellTypes_tobit/"
-
+load(file=dirout("10_Seurat/", sample.x, "/",sample.x,".RData"))
 
 # Read genesets
-file <- "/data/groups/lab_bock/shared/resources/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt"
-lines <- readLines(file)
 genesets <- list()
-for(line in lines){
-  x <- strsplit(line, "\t")[[1]]
-  genesets[[x[1]]] <- x[3:length(x)]
+(gene.annot <- fread(paste0(Sys.getenv("RESOURCES"), "/genomes/hg38/10X/refdata-cellranger-GRCh38-1.2.0/genes/genes.gtf")))
+table(gene.annot$V3)
+a2 <- gene.annot[V3 == "gene"]
+a2[,gene := gsub('.+\\; gene_name \\"(.+?)\\"\\; .+', "\\1", V9)]
+length(unique(a2$gene))
+geneOrder <- a2[,c("V1", "V4", "gene"),with=F]
+colnames(geneOrder) <- c("chr", "start", "gene")
+geneOrder <- geneOrder[chr %in% c(as.character(1:22), "X", "Y")]
+
+geneOrder2 <- geneOrder[gene %in% rownames(pbmc@data)]
+slide.stepsize <- 50
+chr.x <- 1
+i2 <- 0
+for(chr.x in unique(geneOrder2$chr)){
+  geneOrder.chr <- geneOrder2[chr == chr.x]
+  for(i in 1:ceiling((nrow(geneOrder.chr))/slide.stepsize)){
+    i2 <- i2 + 1    
+    genesets[[paste0(chr.x, "_", i2)]] <- geneOrder.chr[((i-1)*slide.stepsize+1):min(i*slide.stepsize, nrow(geneOrder.chr))]$gene
+  }
 }
-load(dirout("20_AggregatedLists/lists.RData"))
-genesets <- c(genesets, cll.lists)
+
+
 
 # Read in diff expr data and calculate scores
 cells <- list.files(dirout(inDir))
@@ -44,14 +58,14 @@ for(cell in cells){
         pvalue = tryCatch({ t.test(res[[pat]][rn %in% genesets[[gs]]]$avg_diff)$p.value },error=function(e){1}), 
         effectsize = -1 * median(res[[pat]][rn %in% genesets[[gs]]]$avg_diff, na.rm=TRUE),
         geneset = gs
-        ))
+      ))
       try({
-      fullList <- rbind(fullList, data.table(
-        cellType = cell, 
-        patient = pat, 
-        geneset = gs,
-        res[[pat]][rn %in% genesets[[gs]]]
-      ))}, silent=TRUE)
+        fullList <- rbind(fullList, data.table(
+          cellType = cell, 
+          patient = pat, 
+          geneset = gs,
+          res[[pat]][rn %in% genesets[[gs]]]
+        ))}, silent=TRUE)
     }
   }
 }
@@ -66,9 +80,9 @@ ggplot(
   scorecards, 
   aes(x=paste0(cellType, "_", patient), y=geneset, color=effectsize, size=pvalue2)) + 
   geom_point() +
-  scale_color_gradient2(low="blue", mid="white", high="red") + theme_bw(24) +
+  scale_color_gradient2(low="blue", mid="white", high="red") + theme_bw(10) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
-ggsave(dirout(out, "0_Overview.pdf"),height=20, width=20)
+ggsave(dirout(out, "0_Overview.pdf"),height=29, width=8)
 
 
 
