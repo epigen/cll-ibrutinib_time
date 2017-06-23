@@ -324,30 +324,31 @@ analysis.gene_annotation.index = (
 alpha = 0.1
 min_fold = 0.25
 n_top = 500
-for cell_type in cell_types:
+for cell_type in cell_types[1:]:
     print(cell_type)
 
-    # Filter for cell type
-    if cell_type != "CD8":
-        diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("240d|280d")), :]
-    elif cell_type == "Bcell":
-        diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("8d|30d|240d|280d")), :]
-    elif cell_type == "NK":
-        diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("1d|240d|280d")), :]
-    elif cell_type == "Mono":
-        diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("8d|240d|280d")), :]
-    else:
-        diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("2d|240d|280d")), :]
+    # # Filter for cell type
+    # if cell_type != "CD8":
+    #     diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("240d|280d")), :]
+    # elif cell_type == "Bcell":
+    #     diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("8d|30d|240d|280d")), :]
+    # elif cell_type == "NK":
+    #     diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("1d|240d|280d")), :]
+    # elif cell_type == "Mono":
+    #     diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("8d|240d|280d")), :]
+    # else:
+    #     diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("2d|240d|280d")), :]
+    diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (all_diff2.loc[:, "comparison"] == "timepoint120d - timepoint000d"), :]
 
-    # Filter for thresholds
-    diff_regions = diff2.loc[
-        (diff2.loc[:, "q_value"] < alpha) &
-        (np.absolute(diff2.loc[:, "fold_change"]) > min_fold),
-        ['region']
-    ]
-    # If there aren't any significant, take top N to visualize
-    if diff_regions.shape[0] < 100:
-        diff_regions = diff2.loc[(diff2.loc[:, "cell_type"] == cell_type), :].sort_values("p_value").head(n_top)['region']
+    # # Filter for thresholds
+    # diff_regions = diff2.loc[
+    #     (diff2.loc[:, "q_value"] < alpha) &
+    #     (np.absolute(diff2.loc[:, "fold_change"]) > min_fold),
+    #     ['region']
+    # ]
+    # # If there aren't any significant, take top N to visualize
+    # if diff_regions.shape[0] < 100:
+    diff_regions = diff2.loc[(diff2.loc[:, "cell_type"] == cell_type), :].sort_values("p_value").head(n_top)['region']
     diff_regions = diff_regions.squeeze().drop_duplicates()
 
     sample_mask = (
@@ -424,139 +425,139 @@ for cell_type in cell_types:
 
     # for all regions
     out_dir = os.path.join("results", "enrichment." + cell_type)
-    if cell_type in ["Mono", "NK"]:
-        out_dir2 = os.path.join(out_dir, "1_cluster")
+    # if cell_type in ["Mono", "NK"]:
+    out_dir2 = os.path.join(out_dir, "1_cluster")
 
-        for path in [out_dir, out_dir2]:
-            if not os.path.exists(path):
-                os.makedirs(path)
+    for path in [out_dir, out_dir2]:
+        if not os.path.exists(path):
+            os.makedirs(path)
 
-            characterize_regions_function(
-                analysis,
-                df=analysis.coverage_annotated.loc[diff_regions, :],
-                output_dir=out_dir2,
-                prefix="cluster_{}".format(1)
-            )
+        characterize_regions_function(
+            analysis,
+            df=analysis.coverage_annotated.loc[diff_regions, :],
+            output_dir=out_dir2,
+            prefix="cluster_{}".format(1)
+        )
     # for two clusters
-    if cell_type in ["CLL", "CD4", "CD8"]:
-        # cluster again
-        g = sns.clustermap(
-            analysis.accessibility.loc[diff_regions, sample_mask].T.astype(float),
-            row_cluster=False, metric="correlation", z_score=1, vmin=-1, vmax=4
-        )
-        clusters = fcluster(g.dendrogram_col.linkage, t=2, criterion='maxclust')
+    # if cell_type in ["CLL", "CD4", "CD8"]:
+    # cluster again
+    g = sns.clustermap(
+        analysis.accessibility.loc[diff_regions, sample_mask].T.astype(float),
+        row_cluster=False, metric="correlation", z_score=1, vmin=-1, vmax=4
+    )
+    clusters = fcluster(g.dendrogram_col.linkage, t=2, criterion='maxclust')
 
-        # plot again with cluster identities
-        g = sns.clustermap(
-            analysis.accessibility.loc[diff_regions, sample_mask].T.astype(float),
-            row_cluster=False,
-            xticklabels=False,
-            metric="correlation", z_score=1, vmin=-1, vmax=4, cbar_kws={"label": "Accesibility (Z-score)"},
-            row_colors=color_df.iloc[1:, sample_mask].values,
-            col_colors=[sns.color_palette("colorblind", 2)[i - 1] for i in clusters],
-            figsize=(12, 12), rasterized=True,
-        )
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.savefig(os.path.join(out_dir2, "clustermap.sorted.labeled.svg"), dpi=300)
+    # plot again with cluster identities
+    g = sns.clustermap(
+        analysis.accessibility.loc[diff_regions, sample_mask].T.astype(float),
+        row_cluster=False,
+        xticklabels=False,
+        metric="correlation", z_score=1, vmin=-1, vmax=4, cbar_kws={"label": "Accesibility (Z-score)"},
+        row_colors=color_df.iloc[1:, sample_mask].values,
+        col_colors=[sns.color_palette("colorblind", 2)[i - 1] for i in clusters],
+        figsize=(12, 12), rasterized=True,
+    )
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+    g.savefig(os.path.join(out_dir2, "clustermap.sorted.labeled.svg"), dpi=300)
 
-        for cluster in np.unique(clusters):
-            out_dir2 = os.path.join(out_dir, "2_clusters.cluster_{}".format(cluster))
-            if not os.path.exists(out_dir2):
-                os.makedirs(out_dir2)
-
-            index = diff_regions[clusters == cluster]
-
-            characterize_regions_function(
-                analysis,
-                df=analysis.coverage_annotated.loc[index, :],
-                output_dir=out_dir2,
-                prefix="cluster_{}".format(cluster)
-            )
-    # for four clusters
-    if cell_type in ["CD8", "CD4"]:
-        out_dir2 = os.path.join(out_dir, "4_clusters")
+    for cluster in np.unique(clusters):
+        out_dir2 = os.path.join(out_dir, "2_clusters.cluster_{}".format(cluster))
         if not os.path.exists(out_dir2):
             os.makedirs(out_dir2)
-        clusters = fcluster(g.dendrogram_col.linkage, t=4, criterion='maxclust')
 
-        # plot again with cluster identities
-        g = sns.clustermap(
-            analysis.accessibility.loc[diff_regions, sample_mask].T.astype(float),
-            row_cluster=False,
-            xticklabels=False,
-            metric="correlation", z_score=1, vmin=-1, vmax=4, cbar_kws={"label": "Accesibility (Z-score)"},
-            row_colors=color_df.iloc[1:, sample_mask].values,
-            col_colors=[sns.color_palette("colorblind", 4)[i - 1] for i in clusters],
-            figsize=(12, 12), rasterized=True,
+        index = diff_regions[clusters == cluster]
+
+        characterize_regions_function(
+            analysis,
+            df=analysis.coverage_annotated.loc[index, :],
+            output_dir=out_dir2,
+            prefix="cluster_{}".format(cluster)
         )
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.savefig(os.path.join(out_dir2, "clustermap.sorted.labeled.svg"), dpi=300)
+    # # for four clusters
+    # if cell_type in ["CD8", "CD4"]:
+    #     out_dir2 = os.path.join(out_dir, "4_clusters")
+    #     if not os.path.exists(out_dir2):
+    #         os.makedirs(out_dir2)
+    #     clusters = fcluster(g.dendrogram_col.linkage, t=4, criterion='maxclust')
 
-        for cluster in np.unique(clusters):
-            out_dir2 = os.path.join(out_dir, "4_clusters.cluster_{}".format(cluster))
-            if not os.path.exists(out_dir2):
-                os.makedirs(out_dir2)
+    #     # plot again with cluster identities
+    #     g = sns.clustermap(
+    #         analysis.accessibility.loc[diff_regions, sample_mask].T.astype(float),
+    #         row_cluster=False,
+    #         xticklabels=False,
+    #         metric="correlation", z_score=1, vmin=-1, vmax=4, cbar_kws={"label": "Accesibility (Z-score)"},
+    #         row_colors=color_df.iloc[1:, sample_mask].values,
+    #         col_colors=[sns.color_palette("colorblind", 4)[i - 1] for i in clusters],
+    #         figsize=(12, 12), rasterized=True,
+    #     )
+    #     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+    #     g.savefig(os.path.join(out_dir2, "clustermap.sorted.labeled.svg"), dpi=300)
 
-            index = diff_regions[clusters == cluster]
+    #     for cluster in np.unique(clusters):
+    #         out_dir2 = os.path.join(out_dir, "4_clusters.cluster_{}".format(cluster))
+    #         if not os.path.exists(out_dir2):
+    #             os.makedirs(out_dir2)
 
-            characterize_regions_function(
-                analysis,
-                df=analysis.coverage_annotated.loc[index, :],
-                output_dir=out_dir2,
-                prefix="cluster_{}".format(cluster)
-            )
+    #         index = diff_regions[clusters == cluster]
 
-    # for seven clusters
-    if cell_type in ["CD4"]:
-        out_dir2 = os.path.join(out_dir, "7_clusters")
-        if not os.path.exists(out_dir2):
-            os.makedirs(out_dir2)
-        clusters = fcluster(g.dendrogram_col.linkage, t=7, criterion='maxclust')
+    #         characterize_regions_function(
+    #             analysis,
+    #             df=analysis.coverage_annotated.loc[index, :],
+    #             output_dir=out_dir2,
+    #             prefix="cluster_{}".format(cluster)
+    #         )
 
-        # plot again with cluster identities
-        g = sns.clustermap(
-            analysis.accessibility.loc[diff_regions, sample_mask].T.astype(float),
-            row_cluster=False,
-            xticklabels=False,
-            metric="correlation", z_score=1, vmin=-1, vmax=4, cbar_kws={"label": "Accesibility (Z-score)"},
-            row_colors=color_df.iloc[1:, sample_mask].values,
-            col_colors=[sns.color_palette("colorblind", 7)[i - 1] for i in clusters],
-            figsize=(12, 12), rasterized=True,
-        )
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.savefig(os.path.join(out_dir2, "clustermap.sorted.labeled.svg"), dpi=300)
+    # # for seven clusters
+    # if cell_type in ["CD4"]:
+    #     out_dir2 = os.path.join(out_dir, "7_clusters")
+    #     if not os.path.exists(out_dir2):
+    #         os.makedirs(out_dir2)
+    #     clusters = fcluster(g.dendrogram_col.linkage, t=7, criterion='maxclust')
 
-        for cluster in np.unique(clusters):
-            out_dir2 = os.path.join(out_dir, "7_clusters.cluster_{}".format(cluster))
-            if not os.path.exists(out_dir2):
-                os.makedirs(out_dir2)
+    #     # plot again with cluster identities
+    #     g = sns.clustermap(
+    #         analysis.accessibility.loc[diff_regions, sample_mask].T.astype(float),
+    #         row_cluster=False,
+    #         xticklabels=False,
+    #         metric="correlation", z_score=1, vmin=-1, vmax=4, cbar_kws={"label": "Accesibility (Z-score)"},
+    #         row_colors=color_df.iloc[1:, sample_mask].values,
+    #         col_colors=[sns.color_palette("colorblind", 7)[i - 1] for i in clusters],
+    #         figsize=(12, 12), rasterized=True,
+    #     )
+    #     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+    #     g.savefig(os.path.join(out_dir2, "clustermap.sorted.labeled.svg"), dpi=300)
 
-            index = diff_regions[clusters == cluster]
+    #     for cluster in np.unique(clusters):
+    #         out_dir2 = os.path.join(out_dir, "7_clusters.cluster_{}".format(cluster))
+    #         if not os.path.exists(out_dir2):
+    #             os.makedirs(out_dir2)
 
-            characterize_regions_function(
-                analysis,
-                df=analysis.coverage_annotated.loc[index, :],
-                output_dir=out_dir2,
-                prefix="cluster_{}".format(cluster)
-            )
+    #         index = diff_regions[clusters == cluster]
+
+    #         characterize_regions_function(
+    #             analysis,
+    #             df=analysis.coverage_annotated.loc[index, :],
+    #             output_dir=out_dir2,
+    #             prefix="cluster_{}".format(cluster)
+    #         )
 
 
 # Run Enrichr
-find results -name "*.symbols.txt" \
--exec sbatch -J {}.enrichr -o {}.enrichr.log -p shortq -c 1 --mem 4000 \
+find results -not -path "results/_old*" -name "*.symbols.txt" \
+-exec sbatch -J enrichr.{} -o {}.enrichr.log -p shortq -c 1 --mem 4000 \
 --wrap "python ~/jobs/run_Enrichr.py --input-file {} --output-file {}.enrichr.csv" \;
 
 # Run LOLA
-find results -name "*_regions.bed" \
--exec sbatch -J {}.lola -o {}.lola.log -p shortq -c 8 --mem 24000 \
+find results -not -path "results/_old*" -name "*_regions.bed" \
+-exec sbatch -J lola.{} -o {}.lola.log -p shortq -c 8 --mem 24000 \
 --wrap "Rscript ~/jobs/run_LOLA.R {} ~/cll-time_course/results/cll-time_course_peak_set.bed hg19" \;
 
 # Run AME
-for F in `find results -name "*_regions.fa"`
+for F in `find results -not -path "results/_old*" -name "*_regions.fa"`
 do
 DIR=`dirname $F`
 echo $F $DIR
-sbatch -J "${F}.meme_ame" -o "${F}.meme_ame.log" -p shortq -c 1 --mem 4000 \
+sbatch -J "meme_ame.${F}" -o "${F}.meme_ame.log" -p shortq -c 1 --mem 4000 \
 --wrap \
 "fasta-dinucleotide-shuffle -c 1 -f "$F" > "$F".shuffled.fa; \
 ame --bgformat 1 --scoring avg --method ranksum --pvalue-report-threshold 0.05 \
@@ -568,7 +569,8 @@ done
 enrichments = pd.DataFrame()
 
 for cell_type in cell_types:
-    for n_clust in [1, 2, 4, 7]:
+    # for n_clust in [1, 2, 4, 7]:
+    for n_clust in [1, 2]:
         out_dir = os.path.join("results", "enrichment." + cell_type, "{}_clusters".format(n_clust))
         for cluster in range(1, n_clust + 1):
             if cluster == 1:
@@ -582,8 +584,10 @@ for cell_type in cell_types:
                 continue
 
             enr["cell_type"] = cell_type
+            enr["n_clust"] = n_clust
             enr["cluster"] = cluster
             enrichments = enrichments.append(enr, ignore_index=True)
+enrichments.to_csv(os.path.join("results", "enrichment.all_cell_types.csv"), index=False)
 
 for n_top in [10, 20]:
     for gene_set_library in enrichments['gene_set_library'].drop_duplicates():
@@ -593,7 +597,7 @@ for n_top in [10, 20]:
         enr.loc[:, "q_value"] = -np.log10(enr["p_value"])
 
         # get top N enriched per set
-        enr.loc[:, "label"] = enr["cell_type"] + " " + enr["cluster"].astype(str)
+        enr.loc[:, "label"] = enr["cell_type"] + " " + enr["n_clust"].astype(str) + " " + enr["cluster"].astype(str)
         t = enr.groupby("label")["q_value"].nlargest(n_top)
         t = t[~t.index.get_level_values(0).str.contains("NK|Mono")]
         terms = enr.loc[t.index.levels[1], "description"].drop_duplicates()
@@ -629,7 +633,8 @@ for n_top in [10, 20]:
 lola = pd.DataFrame()
 
 for cell_type in cell_types:
-    for n_clust in [1, 2, 4, 7]:
+    # for n_clust in [1, 2, 4, 7]:
+    for n_clust in [1, 2]:
         out_dir = os.path.join("results", "enrichment." + cell_type, "{}_clusters".format(n_clust))
         for cluster in range(1, n_clust + 1):
             if cluster == 1:
@@ -643,9 +648,10 @@ for cell_type in cell_types:
                 continue
 
             enr["cell_type"] = cell_type
+            enr["n_clust"] = n_clust
             enr["cluster"] = cluster
             lola = lola.append(enr, ignore_index=True)
-
+lola.to_csv(os.path.join("results", "lola.all_cell_types.csv"), index=False)
 
 for n_top in [10, 20]:
     #
@@ -657,7 +663,7 @@ for n_top in [10, 20]:
     )
 
     # get top N enriched per set
-    enr.loc[:, "label"] = enr["cell_type"] + " " + enr["cluster"].astype(str)
+    enr.loc[:, "label"] = enr["cell_type"] + " " + enr["n_clust"].astype(str) + " " + enr["cluster"].astype(str)
     t = enr.groupby("label")["pValueLog"].nlargest(n_top)
     t = t[~t.index.get_level_values(0).str.contains("NK|Mono")]
     terms = enr.loc[t.index.levels[1], "set_label"].drop_duplicates()
@@ -698,3 +704,78 @@ for n_top in [10, 20]:
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
     g.savefig(os.path.join("results", "lola.all_cell_types.all_clusters.top{}.reduced_max.svg".format(n_top)), dpi=300)
 
+
+
+# # One step back:
+# # just take the differential regions per cluster and measure overlaps
+# import pyupset
+
+# filenames = glob.glob(os.path.join("results", "enrichment.*", "*", "cluster_*_regions.bed"))
+# diffs = dict()
+# for filename in filenames:
+#     df = pd.read_csv(filename, header=None, sep="\t")
+#     diffs[filename.replace("results/enrichment.", "")] = df
+
+# pyupset.plot(diffs)
+
+
+
+
+# # One step back:
+# # just take the differential genes per cluster and measure overlaps
+# import pyupset
+
+# filenames = glob.glob(os.path.join("results", "enrichment.*", "*", "cluster_*_genes.symbols.txt"))
+# diffs = dict()
+# for filename in filenames:
+#     df = pd.read_csv(filename, header=None, names=['gene'])
+#     diffs[filename.replace("results/enrichment.", "")] = df
+
+# pyupset.plot(diffs)
+
+
+
+
+
+# filenames = glob.glob(os.path.join("results", "enrichment.*", "*", "cluster_*_regions.bed"))
+# diffs = pd.DataFrame()
+# for filename in filenames:
+#     df = pd.read_csv(filename, header=None, names=['region'])
+#     df["cluster"] = filename.replace("results/enrichment.", "")
+#     diffs = diffs.append(df, ignore_index=True)
+
+# diffs["intercept"] = 1
+
+# p = pd.pivot_table(diffs, index="region", columns="cluster", values="intercept", fill_value=0)
+
+# q = pd.DataFrame()
+# for col1 in p.columns:
+#     for col2 in p.columns:
+#         q.loc[col1, col2] = ((p[col1] == 1) & (p[col2] == 1)).sum()
+
+# g = sns.clustermap(np.log(1 + q), figsize=(12, 12), cbar_kws={"label": "log(shared diff regions)"})
+# g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+# g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+
+
+
+
+# filenames = glob.glob(os.path.join("results", "enrichment.*", "*", "cluster_*_genes.symbols.txt"))
+# diffs = pd.DataFrame()
+# for filename in filenames:
+#     df = pd.read_csv(filename, header=None, names=['gene'])
+#     df["cluster"] = filename.replace("results/enrichment.", "")
+#     diffs = diffs.append(df, ignore_index=True)
+
+# diffs["intercept"] = 1
+
+# p = pd.pivot_table(diffs, index="gene", columns="cluster", values="intercept", fill_value=0)
+
+# q = pd.DataFrame()
+# for col1 in p.columns:
+#     for col2 in p.columns:
+#         q.loc[col1, col2] = ((p[col1] == 1) & (p[col2] == 1)).sum()
+
+# g = sns.clustermap(np.log(1 + q), figsize=(12, 12), cbar_kws={"label": "log(shared diff genes)"})
+# g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+# g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
