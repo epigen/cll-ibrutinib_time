@@ -44,6 +44,12 @@ for(line in lines){
 load(dirout("20_AggregatedLists/lists.RData"))
 genesets <- c(genesets, cll.lists)
 
+file.remove(dirout(out, "Genesets.tsv"))
+lapply(names(genesets), function(lnam){
+  write(paste(c(lnam, genesets[[lnam]]), collapse="\t"), file=dirout(out, "Genesets.tsv"), append=TRUE, ncolumns = max(sapply(genesets, length)))
+  })
+
+
 # Jaccard of genesets
 genesets.jac <- lapply(genesets, function(x) x[x %in% rownames(pbmc@data)])
 genesets.jac <- genesets.jac[sapply(genesets.jac, length) > 0]
@@ -131,10 +137,19 @@ if(!file.exists(dirout(out,"Scores.RData"))){
 # ANALYSIS OVER TIME ----------------------------------------------------------------
 pDat <- Dat1
 pDat2 <- pDat
+# just a little trick to add PT2 as PT: 0 vs 280
+pDat2[timepoint == "d280" & patient == "PT",patient := "PT2"]
+pDat2[timepoint == "d280" & patient == "PT2",timepoint := "d120"]
+pDat2.pt <- pDat2[timepoint == "d0" & patient == "PT"]
+pDat2.pt[,patient := "PT2"]
+pDat2 <- rbind(pDat2, pDat2.pt)
+# keep only d0 vs d120
 pDat2 <- pDat2[timepoint %in% c("d0", "d120")]
 pDat2 <- pDat2[cellType %in% c("CD8", "CD4", "Mono", "CLL")]# & grepl("PT", sample)]
 
 out.details <- paste0(out, "Details/")
+dir.create(dirout(out.details))
+
 
 geneset <- "HALLMARK_MYC_TARGETS_V1"
 for(geneset in names(genesets)){

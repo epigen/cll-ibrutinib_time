@@ -34,16 +34,17 @@ ggplot(
 ggsave(dirout(out, "UMI_boxplot_byCell.pdf"))
 
 # Read genesets
-genesets <- list()
-set.sizes <- c(20, 50, 100, 500, 1000)
-i2 <- 0
-for(size.i in set.sizes){
-	for(i in 1:10){
-		i2 <- i2 + 1
-		genesets[[paste0(i2, "_set_", size.i,"_", i)]] <- sample(rownames(pbmc@data), size.i)
-	}
-}
-save(genesets, file=dirout(out, "genesets.RData"))
+# genesets <- list()
+# set.sizes <- c(20, 50, 100, 500, 1000)
+# i2 <- 0
+# for(size.i in set.sizes){
+# 	for(i in 1:10){
+# 		i2 <- i2 + 1
+# 		genesets[[paste0(i2, "_set_", size.i,"_", i)]] <- sample(rownames(pbmc@data), size.i)
+# 	}
+# }
+# save(genesets, file=dirout(out, "genesets.RData"))
+load(dirout(out, "genesets.RData"))
 
 # Jaccard of genesets
 genesets.jac <- lapply(genesets, function(x) x[x %in% rownames(pbmc@data)])
@@ -99,28 +100,6 @@ if(!file.exists(dirout(out,"Scores.RData"))){
   qplot(sapply(names(genesets), function(nam) cor(Dat1[[nam]], Dat1$nUMI)), bins=10) + xlab("Correlation")
   ggsave(dirout(out, "CorrUMI_Raw.pdf"))
   
-  names(Dat1)
-  ggplot(Dat1[patient=="PT" & cellType == "Mono"], aes(x=nUMI, y=HALLMARK_TNFA_SIGNALING_VIA_NFKB)) + geom_point()
-  ggsave(dirout(out, "CorrUMI_AggLogCounts_PT_Mono.pdf"))
-  ggplot(Dat1, aes(x=nUMI, y=HALLMARK_TNFA_SIGNALING_VIA_NFKB)) + geom_hex() + 
-    ggtitle(paste("cor = ", round(cor(Dat1$nUMI, Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB),3)))
-  ggsave(dirout(out, "CorrUMI_AggLogCounts_hex.pdf"))
-  
-  
-  # REGRESS OUT nUMI --------------------------------------------------------
-  # Dat1.cor <- Dat1
-  # set.nam <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
-  # for(set.nam in names(genesets)){
-  #   lm.fit <- lm(data=Dat1.cor, get(set.nam) ~ nUMI)
-  #   Dat1.cor[[set.nam]] <- lm.fit$residuals + coef(lm.fit)[1] # add intercept back
-  # }
-  # qplot(sapply(names(genesets), function(nam) cor(Dat1.cor[[nam]], Dat1.cor$nUMI)), bins=10) + xlab("Correlation")
-  # ggsave(dirout(out, "CorrUMI_Regressed.pdf"))
-  # 
-  # plot(Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1$nUMI)
-  # 
-  # plot(Dat1.cor$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1.cor$nUMI)
-  
   # DO NOT USE REGRESSED SCORES, then can have < 0
   save(Dat1, file=dirout(out,"Scores.RData"))
   
@@ -129,13 +108,26 @@ if(!file.exists(dirout(out,"Scores.RData"))){
 }
 
 
+colnames(Dat1) <- gsub("^\\d+_", "", colnames(Dat1))
+names(genesets) <- gsub("^\\d+_", "", names(genesets))
+
 # ANALYSIS OVER TIME ----------------------------------------------------------------
 pDat <- Dat1
 pDat2 <- pDat
+# just a little trick to add PT2 as PT: 0 vs 280
+pDat2[timepoint == "d280" & patient == "PT",patient := "PT2"]
+pDat2[timepoint == "d280" & patient == "PT2",timepoint := "d120"]
+pDat2.pt <- pDat2[timepoint == "d0" & patient == "PT"]
+pDat2.pt[,patient := "PT2"]
+pDat2 <- rbind(pDat2, pDat2.pt)
+# keep only d0 vs d120
 pDat2 <- pDat2[timepoint %in% c("d0", "d120")]
 pDat2 <- pDat2[cellType %in% c("CD8", "CD4", "Mono", "CLL")]# & grepl("PT", sample)]
 
 out.details <- paste0(out, "Details/")
+dir.create(dirout(out.details))
+
+
 
 geneset <- "HALLMARK_MYC_TARGETS_V1"
 for(geneset in names(genesets)){
@@ -164,7 +156,7 @@ for(geneset in names(genesets)){
   ggsave(dirout(out.details, geneset, "_HM.pdf"), width=5, height=4)
 }
 
-venn(list(alpha=genesets$HALLMARK_INTERFERON_ALPHA_RESPONSE, gamma=genesets$HALLMARK_INTERFERON_GAMMA_RESPONSE))
+# venn(list(alpha=genesets$HALLMARK_INTERFERON_ALPHA_RESPONSE, gamma=genesets$HALLMARK_INTERFERON_GAMMA_RESPONSE))
 
 
 # Make one large heatmap over time

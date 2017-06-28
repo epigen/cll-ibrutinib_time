@@ -62,10 +62,13 @@ for(cell in cells){
 
 # PREPARE THE DATA --------------------------------------------------------
 res[,qvalue  := p.adjust(pvalue, method="BH")]
+write.table(res, file=dirout(out, "SigGenes_overTime.tsv"), quote=F, row.names=F,sep="\t")
+
 res$qvalue2  <- p.adjust(res$pvalue, method="BH")
 with(res[pvalue < 0.05], table(patient, cellType))
 with(res[qvalue < 0.05], table(patient, cellType))
 with(res[qvalue2 < 0.05], table(patient, cellType))
+
 
 res[,cellPat := paste0(cellType, "_", patient)]
 res[,logqval := pmin(5, -log(qvalue))]

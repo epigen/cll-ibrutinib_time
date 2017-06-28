@@ -107,33 +107,12 @@ if(!file.exists(dirout(out,"Scores.RData"))){
     genes <- genesets[[set.nam]]
     genes <- genes[genes %in% rownames(data)]
     
-    score.x <- apply(data[genes,], 2, mean)    
+    score.x <- apply(data[genes,,drop=F], 2, mean)    
     Dat1[[set.nam]] <- (score.x - bg.mean)/bg.sd
   }
   qplot(sapply(names(genesets), function(nam) cor(Dat1[[nam]], Dat1$nUMI)), bins=10) + xlab("Correlation")
   ggsave(dirout(out, "CorrUMI_Raw.pdf"))
-  
-  names(Dat1)
-  ggplot(Dat1[patient=="PT" & cellType == "Mono"], aes(x=nUMI, y=HALLMARK_TNFA_SIGNALING_VIA_NFKB)) + geom_point()
-  ggsave(dirout(out, "CorrUMI_AggLogCounts_PT_Mono.pdf"))
-  ggplot(Dat1, aes(x=nUMI, y=HALLMARK_TNFA_SIGNALING_VIA_NFKB)) + geom_hex() + 
-    ggtitle(paste("cor = ", round(cor(Dat1$nUMI, Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB),3)))
-  ggsave(dirout(out, "CorrUMI_AggLogCounts_hex.pdf"))
-  
-  
-  # REGRESS OUT nUMI --------------------------------------------------------
-  # Dat1.cor <- Dat1
-  # set.nam <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
-  # for(set.nam in names(genesets)){
-  #   lm.fit <- lm(data=Dat1.cor, get(set.nam) ~ nUMI)
-  #   Dat1.cor[[set.nam]] <- lm.fit$residuals + coef(lm.fit)[1] # add intercept back
-  # }
-  # qplot(sapply(names(genesets), function(nam) cor(Dat1.cor[[nam]], Dat1.cor$nUMI)), bins=10) + xlab("Correlation")
-  # ggsave(dirout(out, "CorrUMI_Regressed.pdf"))
-  # 
-  # plot(Dat1$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1$nUMI)
-  # 
-  # plot(Dat1.cor$HALLMARK_TNFA_SIGNALING_VIA_NFKB, Dat1.cor$nUMI)
+
   
   # DO NOT USE REGRESSED SCORES, then can have < 0
   save(Dat1, file=dirout(out,"Scores.RData"))
