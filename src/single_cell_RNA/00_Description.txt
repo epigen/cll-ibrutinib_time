@@ -1,0 +1,36 @@
+04_SequencingSaturation   # test to see if we should sequence further - answer was no
+10_Seurat   # OLD analyses of cellranger-filtered datasets by seurat
+10_Seurat_raw   # analysis of unfiltered datasets
+11_CellrangerRKit   # OLD cellranger analysis
+11_CellTypes    # OLD analysis of different cell types (using seurat default diff test, not tobit)
+11_CellTypes_tobit    # now using tobit for diff tests
+12_1_TimePoint0   # OLD summarization of genes and associated enrichr terms for differences between patients at t0
+12_2_TZero_Together   # same as above but taken all data together
+13_1_Over_time    # OLD Analysis of changes in expression over time (per patient)
+13_2_Overtime_Together    # OLD same as above but for full dataset together
+13_3_Overtime_Together_tobit    # same as above but from tobit differential expression
+14_scRNA_FACS   # comparison of cell-types to FACS data
+15_Magic    # OLD magick normalized dataset
+20_AggregatedLists    # lists from the literature to compare our data to
+30_1_SignaturesOverview   # OLD first attempt at calculating signatures (sum over genes?)
+30_3_SignaturesRegressed    # OLD another attempt, regressing out nUMI from the signature to account for differences between time-points in data quality
+30_4_Signatures_RowNormalized   # OLD another attempt, normalizing genes to be between 0 and 1 before aggregating signatures
+30_5_SignaturesMagic    # OLD Signatures based on magick values (didn't help with nUMI differences)
+30_6_Signatures_RowNormalized_Sampled   # OLD first attempt at current procedure: Aggregate signature from 0-1 normalized values, compare to other signatures of same size
+30_7_Signatures_RowNormalized_Sampled   # OLD second attempt
+30_7_Signatures_RowNormalized_Sampled_2   # use this, it contains the comparison PT t0 vs t280
+30_8_Signatures_RowNormalized_DownSampled   # OLD the same procedure as above but on the (cellranger) downsampled dataset (didn't help with nUMI problem)
+30_OLD    # OLD previous version
+31_ScoreCards   # OLD Scorecards of mSigDB calculated on diff expression
+31_ScoreCards_tobit   # as above but on tobit diff expr
+35_fscLVM   # fscLVM analysis to get signatures (mSigDB)
+35_fscLVM_2   # OLD fscLVM analysis but including lists from 20 #> broke the analysis, not sure why
+40_CNVs   # OLD not sure
+41_2_CNVs_Signatures_RandomOnce   # OLD also not sure
+41_3_2_CNV_vs_normal    # OLD compare to normal but what's normal? Other celltypes have differnet expression? never made sense out of it
+41_3_3_CNV_PCs    # OLD got signatures into PCs, to see if subgroups of cells become apparent, but nothing came out (no subtypes)
+41_3_CNVs_Sigs_Once_min100    # currently used analysis, windows of 100 genes across the genome
+41_3_CNVs_Sigs_Once_min50   # currently used analysis, windows of 50 genes across the genome
+41_4_CNVs_Sigs_Once_min20   # currently used analysis, windows of 20 genes across the genome
+41_9_Random   # Random signatures, see that effect size for random is -1 to 1 and the direction is uniform --> other signatures are significant
+41_CNVs_Signatures    # OLD - not sure
