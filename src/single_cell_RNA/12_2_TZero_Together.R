@@ -55,6 +55,9 @@ res
 
 # PREPARE THE DATA --------------------------------------------------------
 res[,qvalue  := p.adjust(pvalue, method="BH")]
+write.table(res, file=dirout(out, "SigGenes_TZero.tsv"), quote=F, row.names=F,sep="\t")
+
+
 res$qvalue2  <- p.adjust(res$pvalue, method="BH")
 with(res[pvalue < 0.05], table(patient, cellType))
 with(res[qvalue < 0.05], table(patient, cellType))

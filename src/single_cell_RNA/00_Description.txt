@@ -5,7 +5,7 @@
 11_CellTypes    # OLD analysis of different cell types (using seurat default diff test, not tobit)
 11_CellTypes_tobit    # now using tobit for diff tests
 12_1_TimePoint0   # OLD summarization of genes and associated enrichr terms for differences between patients at t0
-12_2_TZero_Together   # same as above but taken all data together
+12_2_TZero_Together   # same as above but taken all data together (based on tobit)
 13_1_Over_time    # OLD Analysis of changes in expression over time (per patient)
 13_2_Overtime_Together    # OLD same as above but for full dataset together
 13_3_Overtime_Together_tobit    # same as above but from tobit differential expression
