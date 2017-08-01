@@ -8,16 +8,24 @@ import pybedtools
 import seaborn as sns
 from looper.models import Project, Sample
 from scipy.cluster.hierarchy import fcluster
+from scipy.stats import pearsonr, spearmanr
+from sklearn.metrics import (explained_variance_score, mean_absolute_error,
+                             mean_squared_error, r2_score)
 from statsmodels.stats.multitest import multipletests
 
 from ngs_toolkit.atacseq import ATACSeqAnalysis
-from ngs_toolkit.general import (normalize_quantiles_r,
+from ngs_toolkit.general import (collect_differential_enrichment,
+                                 differential_enrichment,
+                                 normalize_quantiles_r,
+                                 plot_differential_enrichment,
                                  subtract_principal_component)
-from sklearn.metrics import mean_squared_error, mean_absolute_error, explained_variance_score, r2_score
-from scipy.stats import pearsonr, spearmanr
-
 
 sns.set_style("white")
+
+
+def z_score(df, axis=1):
+    from scipy.stats import zscore
+    return pd.DataFrame(zscore(df, axis=axis), index=df.index, columns=df.columns)
 
 
 def deseq_analysis(
@@ -132,6 +140,8 @@ ref_norm = pd.DataFrame(
         .values),
         index=to_norm.index,
         columns=to_norm.columns).T
+ref_norm.to_csv(os.path.join(analysis.results_dir, "coverage.cell_type_reference.qnorm.csv"))
+
 
 # Normalize Bulk samples independently
 to_norm = analysis.coverage.loc[:, analysis.coverage.columns.str.contains("Bulk")]
@@ -147,6 +157,8 @@ to_deconv.columns = pd.MultiIndex.from_arrays(cols.T.values, names=["library", "
 
 
 to_deconv = to_deconv.loc[:, to_deconv.columns.get_level_values("replicate").isnull()]
+
+to_deconv.to_csv(os.path.join(analysis.results_dir, "coverage.Bulk.qnorm.csv"))
 
 
 # Get mean of cell type and fractional contributions
@@ -196,6 +208,8 @@ deconv_norm = pd.DataFrame(
         columns=to_norm.columns)
 
 deconv_norm.to_csv(os.path.join(analysis.results_dir, "coverage.cell_type_deconvoluted.qnorm.csv"))
+
+deconv_norm = pd.read_csv(os.path.join(analysis.results_dir, "coverage.cell_type_deconvoluted.qnorm.csv"), index_col=0, header=range(4))
 
 # Do some unsupervised analysis
 analysis.samples = deconv_norm.columns.to_frame().apply(Sample, axis=1).tolist()
@@ -404,8 +418,6 @@ for cell_type in experiment_matrix["cell_type"].drop_duplicates():
         independent_filtering=False
     )
 
-
-
 sorted_norm = pd.read_csv(os.path.join(analysis.results_dir, "coverage.sorted_samples.qnorm.csv"), index_col=0)
 
 quantity = "accessibility"
@@ -417,20 +429,20 @@ for cell_type in experiment_matrix["cell_type"].drop_duplicates():
 
     all_diff =  df[(df['padj'] < 0.05) & (df['comparison_name'].isin('timepoint' + pd.Series(['0d', '30d', '120d'])))].index.drop_duplicates()
 
-    matrix = deconv_norm.loc[
+    matrix_deconv = deconv_norm.loc[
         all_diff,
         (deconv_norm.columns.get_level_values("patient_id") != "KI") &
         (deconv_norm.columns.get_level_values("cell_type") == cell_type) &
         (deconv_norm.columns.get_level_values("timepoint") != "3d")]
 
-    group_matrix = matrix.T.reset_index().groupby("timepoint").mean().T.loc[all_diff]
+    group_matrix = matrix_deconv.T.reset_index().groupby("timepoint").mean().T.loc[all_diff]
 
-    if type(matrix.columns) is pd.core.indexes.multi.MultiIndex:
-        matrix.columns = matrix.columns.get_level_values("sample_name")
+    if type(matrix_deconv.columns) is pd.core.indexes.multi.MultiIndex:
+        matrix_deconv.columns = matrix_deconv.columns.get_level_values("sample_name")
 
     # Deconv data
-    figsize = (max(5, 0.12 * matrix.shape[1]), 5)
-    g = sns.clustermap(matrix,
+    figsize = (max(5, 0.12 * matrix_deconv.shape[1]), 5)
+    g = sns.clustermap(matrix_deconv,
         yticklabels=False, z_score=0, cbar_kws={"label": "Z-score of {}\non differential {}".format(quantity, var_name)},
         xticklabels=True,
         metric="correlation", rasterized=True, figsize=figsize)
@@ -447,16 +459,16 @@ for cell_type in experiment_matrix["cell_type"].drop_duplicates():
     g.fig.savefig(os.path.join(analysis.results_dir, cell_type + ".diff_{}.groups.deconv_samples.clustermap.z0.svg".format(var_name)), bbox_inches="tight", dpi=300)
 
     # Now sorted data
-    matrix = sorted_norm.loc[
+    matrix_sorted = sorted_norm.loc[
         all_diff,
         (~sorted_norm.columns.str.contains("KI")) &
         (sorted_norm.columns.str.contains(cell_type.replace("Tcell", "").replace("cell", ""))) &
         (~sorted_norm.columns.str.contains("3d"))]
-    if type(matrix.columns) is pd.core.indexes.multi.MultiIndex:
-        matrix.columns = matrix.columns.get_level_values("sample_name")
-    figsize = (max(5, 0.12 * matrix.shape[1]), 5)
+    if type(matrix_sorted.columns) is pd.core.indexes.multi.MultiIndex:
+        matrix_sorted.columns = matrix_sorted.columns.get_level_values("sample_name")
+    figsize = (max(5, 0.12 * matrix_sorted.shape[1]), 5)
 
-    g = sns.clustermap(matrix,
+    g = sns.clustermap(matrix_sorted,
         yticklabels=False, z_score=0, cbar_kws={"label": "Z-score of {}\non differential {}".format(quantity, var_name)},
         xticklabels=True,
         metric="correlation", rasterized=True, figsize=figsize)
@@ -464,69 +476,138 @@ for cell_type in experiment_matrix["cell_type"].drop_duplicates():
     g.fig.savefig(os.path.join(analysis.results_dir, cell_type + ".diff_{}.samples.sorted_samples.clustermap.z0.svg".format(var_name)), bbox_inches="tight", dpi=300)
 
     # Now Bulk data
-    matrix = sorted_norm.loc[
+    matrix_bulk = sorted_norm.loc[
         all_diff,
         (~sorted_norm.columns.str.contains("KI")) &
         (sorted_norm.columns.str.contains("Bulk")) &
         (~sorted_norm.columns.str.contains("3d"))]
-    if type(matrix.columns) is pd.core.indexes.multi.MultiIndex:
-        matrix.columns = matrix.columns.get_level_values("sample_name")
-    figsize = (max(5, 0.12 * matrix.shape[1]), 5)
+    if type(matrix_bulk.columns) is pd.core.indexes.multi.MultiIndex:
+        matrix_bulk.columns = matrix_bulk.columns.get_level_values("sample_name")
+    figsize = (max(5, 0.12 * matrix_bulk.shape[1]), 5)
 
-    g = sns.clustermap(matrix,
+    g = sns.clustermap(matrix_bulk,
         yticklabels=False, z_score=0, cbar_kws={"label": "Z-score of {}\non differential {}".format(quantity, var_name)},
         xticklabels=True,
         metric="correlation", rasterized=True, figsize=figsize)
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
     g.fig.savefig(os.path.join(analysis.results_dir, cell_type + ".diff_{}.samples.bulk_samples.clustermap.z0.svg".format(var_name)), bbox_inches="tight", dpi=300)
 
+    # Now joint synthetic and sorted
+    matrix_joint = z_score(matrix_sorted).join(z_score(matrix_deconv))
+    figsize = (max(5, 0.12 * matrix_joint.shape[1]), 5)
+
+    g = sns.clustermap(matrix_joint.sort_index(axis=1),
+        yticklabels=False, z_score=0, cbar_kws={"label": "Z-score of {}\non differential {}".format(quantity, var_name)},
+        col_cluster=True,
+        xticklabels=True,
+        metric="correlation", rasterized=True, figsize=figsize)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+    g.fig.savefig(os.path.join(analysis.results_dir, cell_type + ".diff_{}.samples.joint_synthetic_sorted.clustermap.z0.svg".format(var_name)), bbox_inches="tight", dpi=300)
 
 
+# Get enrichment of regions
+all_diff = pd.DataFrame()
+for cell_type in experiment_matrix["cell_type"].drop_duplicates():
+    df = pd.read_csv(os.path.join(analysis.results_dir, "deseq", cell_type + ".deseq_result.all_comparisons.csv"), index_col=0)
+    print(cell_type, df[(df['padj'] < 0.05)].shape)
+
+    df2 =  df.loc[(df['padj'] < 0.05) & (df['comparison_name'].isin('timepoint' + pd.Series(['0d', '30d', '120d']))), :]
+
+    df2.loc[:, 'comparison_name'] = cell_type + "_" + df2['comparison_name'].str.replace("timepoint", "")
+
+    all_diff = all_diff.append(df2.reset_index(), ignore_index=True)
+all_diff.to_csv(os.path.join(analysis.results_dir, "deseq", "all_cell_types" + ".deseq_result.all_comparisons.csv"), index=False)
 
 
+all_diff = pd.read_csv(os.path.join(analysis.results_dir, "deseq", "all_cell_types" + ".deseq_result.all_comparisons.csv"))
 
 
+# Get enrichments of regions found in the differential comparisons
+output_dir = analysis.results_dir
+output_prefix = "deseq"
 
+differential_enrichment(
+    analysis, differential=all_diff.set_index("index"),
+    data_type="ATAC-seq", genome="hg19",
+    directional=False,
+    output_dir=output_dir, output_prefix=output_prefix)
 
+collect_differential_enrichment(
+    differential=all_diff,
+    directional=False,
+    data_type="ATAC-seq",
+    permissive=True,
+    output_dir=output_dir, output_prefix=output_prefix)
+
+# Visualize enrichments
+enrichment_table = pd.read_csv(os.path.join(analysis.results_dir, output_prefix + ".lola.csv"))
+plot_differential_enrichment(
+    enrichment_table,
+    enrichment_type="lola",
+    data_type="ATAC-seq", top_n=25,
+    output_dir=output_dir, output_prefix=output_prefix)
 
 
 
 # Annotate peaks
+analysis.samples = prj.samples
 analysis.get_peak_gene_annotation()
 analysis.get_peak_genomic_location()
-analysis.get_peak_chromatin_state()
+analysis.get_peak_chromatin_state(os.path.join("data", "external", "E032_15_coreMarks_mnemonics.bed"))
 analysis.calculate_peak_support([s for s in analysis.samples if s.cell_type == "Bulk"], "summits")
+analysis.annotate(quant_matrix="coverage", samples=[s for s in prj.samples if s.name in analysis.coverage.columns])
 
 analysis.gene_annotation = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + "_peaks.gene_annotation.csv"))
 analysis.region_annotation = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + "_peaks.region_annotation.csv"))
 analysis.chrom_state_annotation = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + "_peaks.chromatin_state.csv"))
 analysis.support = pd.read_csv(os.path.join(analysis.results_dir, analysis.name + "_peaks.support.csv"))
 
-analysis.to_annot = analysis.accessibility.copy()
-analysis.to_annot.columns = analysis.to_annot.columns.get_level_values("sample_name")
-analysis.to_annot = analysis.to_annot.join(analysis.coverage[["chrom", "start", "end"]])
-analysis.annotate(quant_matrix="to_annot")
 
 
-# # Let's try a naive differential accessibility
-# design_matrix = pd.DataFrame([s.as_series() for s in analysis.samples])
-# design_matrix.loc[design_matrix['timepoint'] == "150d", "timepoint"] = "120d"
 
-# results = pd.DataFrame()
-# for cell_type in design_matrix['cell_type'].drop_duplicates():
 
-#     des = design_matrix[design_matrix['cell_type'] == cell_type]
-#     acc = analysis.accessibility.loc[:, analysis.accessibility.columns.get_level_values("sample_name").isin(des["sample_name"])]
 
-#     acc = acc.loc[acc.mean(axis=1) >= 1.5]
 
-#     res = least_squares_fit(
-#         quant_matrix=acc.T, design_matrix=des,
-#         standardize_data=True,
-#         test_model="~ timepoint", null_model="~ 1", multiple_correction_method="fdr_bh")
 
-#     res['mean'] = acc.mean(1)
-#     res['max_beta'] = res[res.columns[res.columns.str.contains("timepoint")]].apply(lambda x: max(abs(x)), axis=1)
-#     res['cell_type'] = cell_type
-#     res.index.name = "region"
-#     res.sort_values("p_value").to_csv("~/res.csv")
+
+
+#  Try pseudotime ordering
+from mapalign.embed import DiffusionMapEmbedding
+from sklearn.manifold import SpectralEmbedding
+
+# on a subset of regions (e.g. differential)
+all_diff = pd.read_csv(os.path.join(analysis.results_dir, "deseq", "all_cell_types" + ".deseq_result.all_comparisons.csv"))
+r = all_diff['index'].drop_duplicates()
+
+
+d = pd.read_csv("results/cll-time_course_peaks.coverage.joint_qnorm.pca_fix.power.all.diff_timepoint.limma.csv")
+r = d.loc[d['q_value'] < 0.05, "region"].drop_duplicates()
+
+
+
+deconv_norm = pd.read_csv(os.path.join(analysis.results_dir, "coverage.cell_type_deconvoluted.qnorm.csv"), index_col=0, header=range(4))
+to_deconv = pd.read_csv(os.path.join(analysis.results_dir, "coverage.Bulk.qnorm.csv"), index_col=0, header=range(5))
+
+to_deconv = to_deconv.loc[:, ~to_deconv.columns.get_level_values("patient_id").isin(["KI", "FE", "KZ"])]
+# X = deconv_norm.loc[r, deconv_norm.columns.get_level_values("cell_type") == "CLL"]
+X = deconv_norm.loc[r, deconv_norm.columns.get_level_values("cell_type") == "CLL"]
+
+
+group_mean = X.T.groupby(level=['timepoint']).mean()
+t = 100
+de = DiffusionMapEmbedding(alpha=0.5, diffusion_time=t, affinity='markov',
+                           n_components=10).fit_transform(X.T)
+ed = (de - de[0, :])
+ed = np.sqrt(np.sum(ed * ed , axis=1))
+ed /= max(ed)
+
+rank = pd.Series(ed).rank().astype(int)
+g = sns.clustermap(X.dropna(), z_score=0, row_cluster=True)
+g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, visible=False)
+g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+
+
+
+q = SpectralEmbedding().fit_transform(X.T)
+plt.scatter(q[:, 0], q[:, 1], c=ed)
+[plt.text(q[i, 0], q[i, 1], X.columns[i]) for i in range(len(X.columns))]
