@@ -248,7 +248,7 @@ for(cl.x in clusterings){
         enrichRes <- enrichRes[n > 3]
         write.table(enrichRes[qval < 0.05], file=dirout(outS, "Enrichr_",x,".tsv"), sep="\t", quote=F, row.names=F)
               
-        if(nrow(enrichRes) > 2 & length(unique(enrichRes$grp)) > 1){
+#         if(nrow(enrichRes) > 2 & length(unique(enrichRes$grp)) > 1){
           pDat <- dcast.data.table(enrichRes, make.names(category) ~ grp, value.var="qval")
           pDatM <- as.matrix(pDat[,-"category", with=F])
           pDat$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", pDat$category)
@@ -256,15 +256,15 @@ for(cl.x in clusterings){
           row.names(pDatM) <- pDat$category
           pDatM[is.na(pDatM)] <- 1
           str(pDatM <- pDatM[apply(pDatM <= 5e-2,1,sum)>=1,apply(pDatM <= 5e-2,2,sum)>=1, drop=F])
-          if(nrow(pDatM) >=2 & ncol(pDatM) >= 2){
+#           if(nrow(pDatM) >=2 & ncol(pDatM) >= 2){
             pDatM <- -log10(pDatM)
             pDatM[pDatM > 4] <- 4
             # pDatM[pDatM < 1.3] <- 0
             pdf(dirout(outS, "Enrichr_",x,".pdf"),onefile=FALSE, width=min(29, 6+ ncol(pDatM)*0.3), height=min(29, nrow(pDatM)*0.3 + 4))
             pheatmap(pDatM) #, color=gray.colors(12, start=0, end=1), border_color=NA)
             dev.off()
-          }
-        }
+#           }
+#         }
       }
 #     }
   }
