@@ -69,11 +69,11 @@ if(!file.exists(dirout(outS, sample.x, ".RData"))){
   # CCA ---------------------------------------------------------------------
   pbmc <- RunCCA(object = obj1, object2 = obj2, genes.use = var.genes.union)
   
-  pdf(dirout(outS, "CCA_1_9.pdf", width=15, height=15))
+  pdf(dirout(outS, "CCA_1_9.pdf"), width=15, height=15)
   DimHeatmap(object = pbmc, reduction.type = "cca", cells.use = 500, dim.use = 1:9, do.balanced = TRUE)
   dev.off()
   
-  pdf(dirout(outS, "CCA_10_18.pdf", width=15, height=15))
+  pdf(dirout(outS, "CCA_10_18.pdf"), width=15, height=15)
   DimHeatmap(object = pbmc, reduction.type = "cca", cells.use = 500, dim.use = 10:18, do.balanced = TRUE)
   dev.off()
   

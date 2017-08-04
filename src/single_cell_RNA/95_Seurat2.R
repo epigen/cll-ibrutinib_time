@@ -220,7 +220,8 @@ for(cl.x in clusterings){
 
 # ENRICHR -----------------------------------------------------------------
 message("EnrichR on markers")
-library(enrichR) #devtools::install_github("definitelysean/enrichR")
+# library(enrichR) #devtools::install_github("definitelysean/enrichR")
+source("src/single_cell_RNA/FUNC_Enrichr.R")
 cl.x <- "patient"
 cl.x <- "sample"
 for(cl.x in clusterings){
@@ -247,24 +248,36 @@ for(cl.x in clusterings){
         enrichRes$n <- sapply(strsplit(enrichRes$genes,","), length)
         enrichRes <- enrichRes[n > 3]
         write.table(enrichRes[qval < 0.05], file=dirout(outS, "Enrichr_",x,".tsv"), sep="\t", quote=F, row.names=F)
-              
-#         if(nrow(enrichRes) > 2 & length(unique(enrichRes$grp)) > 1){
-          pDat <- dcast.data.table(enrichRes, make.names(category) ~ grp, value.var="qval")
-          pDatM <- as.matrix(pDat[,-"category", with=F])
-          pDat$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", pDat$category)
-          pDat$category <- substr(pDat$category, 0, 50)
-          row.names(pDatM) <- pDat$category
-          pDatM[is.na(pDatM)] <- 1
-          str(pDatM <- pDatM[apply(pDatM <= 5e-2,1,sum)>=1,apply(pDatM <= 5e-2,2,sum)>=1, drop=F])
-#           if(nrow(pDatM) >=2 & ncol(pDatM) >= 2){
-            pDatM <- -log10(pDatM)
-            pDatM[pDatM > 4] <- 4
-            # pDatM[pDatM < 1.3] <- 0
-            pdf(dirout(outS, "Enrichr_",x,".pdf"),onefile=FALSE, width=min(29, 6+ ncol(pDatM)*0.3), height=min(29, nrow(pDatM)*0.3 + 4))
-            pheatmap(pDatM) #, color=gray.colors(12, start=0, end=1), border_color=NA)
-            dev.off()
-#           }
-#         }
+        
+        enrichRes$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", enrichRes$category)
+        enrichRes$category <- substr(enrichRes$category, 0, 50)
+        
+        enrichRes[, mLog10Q := pmin(-log10(qval),4)]
+        enrichRes <- enrichRes[order(oddsRatio)]
+        enrichRes$category <- factor(enrichRes$category, levels=enrichRes$category)
+        
+        ggplot(enrichRes[category %in% enrichRes[,.(min(qval)), by="category"][V1 < 0.05]$category], 
+               aes(x=grp, y=category, color=log10(oddsRatio), alpha=mLog10Q, size=n)) + 
+          geom_point() + scale_color_gradient(low="white", high="red") + theme_bw(8)
+        ggsave(dirout(outS, "Enrichr_",x,"2.pdf"), width=min(29, 6+ length(unique(enrichRes$grp))*0.3), height=min(29, length(unique(enrichRes$category))*0.3 + 4))
+        
+# #         if(nrow(enrichRes) > 2 & length(unique(enrichRes$grp)) > 1){
+#           pDat <- dcast.data.table(enrichRes, make.names(category) ~ grp, value.var="qval")
+#           pDatM <- as.matrix(pDat[,-"category", with=F])
+#           pDat$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", pDat$category)
+#           pDat$category <- substr(pDat$category, 0, 50)
+#           row.names(pDatM) <- pDat$category
+#           pDatM[is.na(pDatM)] <- 1
+#           str(pDatM <- pDatM[apply(pDatM <= 5e-2,1,sum)>=1,apply(pDatM <= 5e-2,2,sum)>=1, drop=F])
+# #           if(nrow(pDatM) >=2 & ncol(pDatM) >= 2){
+#             pDatM <- -log10(pDatM)
+#             pDatM[pDatM > 4] <- 4
+#             # pDatM[pDatM < 1.3] <- 0
+#             pdf(dirout(outS, "Enrichr_",x,".pdf"),onefile=FALSE, width=min(29, 6+ ncol(pDatM)*0.3), height=min(29, nrow(pDatM)*0.3 + 4))
+#             pheatmap(pDatM) #, color=gray.colors(12, start=0, end=1), border_color=NA)
+#             dev.off()
+# #           }
+# #         }
       }
 #     }
   }
