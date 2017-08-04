@@ -257,8 +257,9 @@ for(cl.x in clusterings){
         enrichRes$category <- factor(enrichRes$category, levels=enrichRes$category)
         
         ggplot(enrichRes[category %in% enrichRes[,.(min(qval)), by="category"][V1 < 0.05]$category], 
-               aes(x=grp, y=category, color=log10(oddsRatio), alpha=mLog10Q, size=n)) + 
-          geom_point() + scale_color_gradient(low="white", high="red") + theme_bw(8)
+               aes(x=grp, y=category, color=log10(oddsRatio), size=n)) + 
+          geom_point() + scale_color_gradient(low="white", high="red") + theme_bw(12) + 
+          theme(axis.text.x = element_text(angle = 90, hjust = 1))
         ggsave(dirout(outS, "Enrichr_",x,"2.pdf"), width=min(29, 6+ length(unique(enrichRes$grp))*0.3), height=min(29, length(unique(enrichRes$category))*0.3 + 4))
         
 # #         if(nrow(enrichRes) > 2 & length(unique(enrichRes$grp)) > 1){
