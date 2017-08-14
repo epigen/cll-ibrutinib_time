@@ -217,6 +217,14 @@ analysis.deconvolved_data = deconv_norm
 analysis.unsupervised(quant_matrix="deconvolved_data", samples=None, attributes_to_plot=["patient_id", "timepoint", "cell_type"], plot_prefix="deconvolved_data")
 
 
+c = np.log2(1 + deconv_norm).corr()
+g = sns.clustermap(c, xticklabels=False, figsize=(0.12 * c.shape[0], 0.12 * c.shape[0]), cbar_kws={"label": "Pearson correlation"})
+g.ax_row_dendrogram.set_rasterized(True)
+g.ax_col_dendrogram.set_rasterized(True)
+g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize='xx-small', rasterized=True)
+g.savefig(os.path.join(analysis.results_dir, "cll-time_course.deconvolved_data.qnorm.log2.corr.clustermap.svg"), bbox_inches="tight", dpi=300)
+
+
 # Check patient characteristics are still preserved
 corr = deconv_norm.corr()
 np.fill_diagonal(corr.values, np.nan)
@@ -586,14 +594,14 @@ r = d.loc[d['q_value'] < 0.05, "region"].drop_duplicates()
 
 
 deconv_norm = pd.read_csv(os.path.join(analysis.results_dir, "coverage.cell_type_deconvoluted.qnorm.csv"), index_col=0, header=range(4))
-to_deconv = pd.read_csv(os.path.join(analysis.results_dir, "coverage.Bulk.qnorm.csv"), index_col=0, header=range(5))
-
-to_deconv = to_deconv.loc[:, ~to_deconv.columns.get_level_values("patient_id").isin(["KI", "FE", "KZ"])]
+# to_deconv = pd.read_csv(os.path.join(analysis.results_dir, "coverage.Bulk.qnorm.csv"), index_col=0, header=range(5))
+# to_deconv = to_deconv.loc[:, ~to_deconv.columns.get_level_values("patient_id").isin(["KI", "FE", "KZ"])]
 # X = deconv_norm.loc[r, deconv_norm.columns.get_level_values("cell_type") == "CLL"]
-X = deconv_norm.loc[r, deconv_norm.columns.get_level_values("cell_type") == "CLL"]
+X = np.log2(deconv_norm.loc[r, deconv_norm.columns.get_level_values("cell_type") != "Q"])
 
+X = X.loc[:, ~X.columns.get_level_values("patient_id").isin(["KI"])]
 
-group_mean = X.T.groupby(level=['timepoint']).mean()
+# group_mean = X.T.groupby(level=['timepoint']).mean()
 t = 100
 de = DiffusionMapEmbedding(alpha=0.5, diffusion_time=t, affinity='markov',
                            n_components=10).fit_transform(X.T)
@@ -601,13 +609,133 @@ ed = (de - de[0, :])
 ed = np.sqrt(np.sum(ed * ed , axis=1))
 ed /= max(ed)
 
-rank = pd.Series(ed).rank().astype(int)
-g = sns.clustermap(X.dropna(), z_score=0, row_cluster=True)
-g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, visible=False)
+rank = pd.Series(ed).rank().astype(int) - 1
+g = sns.clustermap(X.dropna(), z_score=0, row_cluster=True, metric="correlation", figsize=(0.12 * X.shape[1], 8), rasterized=True)
+g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, visible=False, fontsize="xx-small")
 g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
-
+g.savefig("/home/arendeiro/m.png", dpi=300, bbox_inches="tight")
 
 
 q = SpectralEmbedding().fit_transform(X.T)
 plt.scatter(q[:, 0], q[:, 1], c=ed)
 [plt.text(q[i, 0], q[i, 1], X.columns[i]) for i in range(len(X.columns))]
+
+
+
+
+
+
+deconv_norm = pd.read_csv(os.path.join(analysis.results_dir, "coverage.cell_type_deconvoluted.qnorm.csv"), index_col=0, header=range(4))
+X = deconv_norm.loc[:, ~deconv_norm.columns.get_level_values("patient_id").isin(["KI"])]
+X = X.loc[:, X.columns.get_level_values("cell_type").isin(["CLL"])]
+X = X.loc[:, ~X.columns.get_level_values("timepoint").isin(["240d"])]
+
+
+from sklearn.decomposition import PCA
+from scipy.stats import zscore
+
+pca = PCA()
+pcs = pd.DataFrame(pca.fit_transform(np.log2(1 + X.T)), index=X.columns)
+
+t = 100
+de = DiffusionMapEmbedding(alpha=0.5, diffusion_time=t, affinity='markov',
+                           n_components=2).fit_transform(pcs.iloc[:, :10])
+
+times = pcs.index.get_level_values("timepoint").str.replace("d", "").astype(int)
+plt.scatter(zscore(de[:, 0]), zscore(de[:, 1]), c=np.log10(1 + times), cmap="inferno")
+
+plt.scatter(zscore(pcs.loc[:, 0]), zscore(pcs.loc[:, 1]), c=np.log10(1 + times), cmap="inferno")
+
+
+
+# Gaussian Process based
+
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel
+
+import multiprocessing
+import parmap
+
+
+white_kernel = 1.0 * WhiteKernel()
+kernel = 1.0 * RBF() + WhiteKernel()
+white_gp = GaussianProcessRegressor(kernel=white_kernel, alpha=0.0)
+gp = GaussianProcessRegressor(kernel=kernel, alpha=0.0)
+
+white_lls = list()
+lls = list()
+for region in X.index:
+    print(region)
+    y = X.loc[region, :]
+    x = np.log2(1 + X.columns.get_level_values('timepoint').str.replace("d", "").astype(int).values.reshape((y.shape[0], 1)))
+    y = y.values
+
+    white_lls.append(white_gp.fit(x, y).log_marginal_likelihood())
+    lls.append(gp.fit(x, y).log_marginal_likelihood())
+
+res = pd.DataFrame([white_lls, lls], columns=X.index[:len(lls)], index=["constant", "varying"]).T
+
+
+res["lldiff"] = res["varying"] - res["constant"]
+res["2lldiff"] = 2 * res["varying"] - 2 * res["constant"]
+plt.scatter(res["constant"], res["2lldiff"])
+
+
+# Visualize variable regions
+n_regions = 4
+top_regions = res["2lldiff"].sort_values().tail(n_regions).index
+
+fig, axis = plt.subplots(n_regions, 2, figsize=(2 * 4, n_regions * 4))
+for i, region in enumerate(top_regions):
+    y = X.loc[region, :].groupby(level="patient_id").apply(zscore).apply(pd.Series).stack()
+    x = np.log2(1 + X.columns.get_level_values('timepoint').str.replace("d", "").astype(int).values.reshape((y.shape[0], 1)))
+    y = y.values
+    X_ = np.linspace(-2, max(x) + 2)
+
+    white_gp = white_gp.fit(x, y)
+    y_mean, y_cov = white_gp.predict(X_[:, np.newaxis], return_cov=True)  # , return_std=True)
+    axis[i, 0].plot(X_, y_mean, 'k', lw=3, zorder=9)
+    axis[i, 0].fill_between(X_, y_mean - np.sqrt(np.diag(y_cov)),
+                    y_mean + np.sqrt(np.diag(y_cov)),
+                    alpha=0.5, color='k')
+    axis[i, 0].scatter(x[:, 0], y, c='r', s=50, zorder=10)
+    gp = gp.fit(x, y)
+    y_mean, y_cov = gp.predict(X_[:, np.newaxis], return_cov=True)
+    axis[i, 1].plot(X_, y_mean, 'k', lw=3, zorder=9)
+    axis[i, 1].fill_between(X_, y_mean - np.sqrt(np.diag(y_cov)),
+                    y_mean + np.sqrt(np.diag(y_cov)),
+                    alpha=0.5, color='k')
+    axis[i, 1].scatter(x[:, 0], y, c='r', s=50, zorder=10)
+fig.tight_layout()
+
+
+# With GPy
+
+import GPy
+import multiprocessing
+import parmap
+import matplotlib.pyplot as plt
+
+# deconv_norm = pd.read_csv(os.path.join(analysis.results_dir, "coverage.cell_type_deconvoluted.qnorm.csv"), index_col=0, header=range(4))
+deconv_norm = pd.read_csv(os.path.join("results_deconvolve", "coverage.cell_type_deconvoluted.qnorm.csv"), index_col=0, header=range(4))
+X = deconv_norm.loc[:, ~deconv_norm.columns.get_level_values("patient_id").isin(["KI"])]
+X = X.loc[:, X.columns.get_level_values("cell_type").isin(["CLL"])]
+X = X.loc[:, ~X.columns.get_level_values("timepoint").isin(["240d"])]
+
+chunks = 200
+cell_type = "CLL"
+output_prefix = "gp_fit_job"
+output_dir = "/scratch/users/arendeiro/gp_fit_job"
+r = np.arange(0, X.shape[0], chunks)
+
+for start, end in zip(r, r[1:]) + [(r[-1], X.shape[0])]:
+    range_name = "{}-{}".format(start, end)
+    name = "-".join([output_prefix, range_name])
+    log = os.path.join(output_dir, "log", name + ".log")
+    job = """python ~/jobs/gp_fit_job.py --data-range {} --range-delim - --cell-type {} --output-prefix {} --output-dir {}""".format(
+        range_name, cell_type, output_prefix, os.path.join(output_dir, "output"))
+    cmd = """sbatch -J {} -o {} -p shortq -c 1 --mem 8000 --wrap "{}" """.format(
+        name, log, job)
+
+    if not os.path.exists(os.path.join(output_dir, "output", output_prefix + range_name + ".csv")):
+        os.system(cmd)
