@@ -16,6 +16,33 @@ from ngs_toolkit.general import subtract_principal_component
 sns.set_style("white")
 
 
+
+def get_principal_component_by_attribute(df, pc=1, attributes=["CLL"]):
+    """
+    Given a matrix (n_samples, n_variables), remove `pc` (1-based) from matrix.
+    """
+    import numpy as np
+    from sklearn.decomposition import PCA
+    from ngs_toolkit.general import z_score
+
+    pc -= 1
+
+    X2 = pd.DataFrame(index=df.index)
+    for attr in attributes:
+        print(attr)
+        sel = df.index[df.index.str.contains(attr)]
+        X = df.loc[sel, :]
+
+        # PCA
+        pca = PCA()
+        X_hat = pca.fit_transform(X)
+
+        # Remove PC
+        X2.loc[sel, "pc"] = X_hat[:, pc]
+        X2.loc[sel, "pc_zscore"] = z_score(X_hat[:, pc])
+    return X2
+
+
 def subtract_principal_component_by_attribute(df, pc=1, attributes=["CLL"]):
     """
     Given a matrix (n_samples, n_variables), remove `pc` (1-based) from matrix.
@@ -41,6 +68,135 @@ def subtract_principal_component_by_attribute(df, pc=1, attributes=["CLL"]):
         if X2.loc[sample, :].isnull().all():
             X2.loc[sample, :] = df.loc[sample, :]
     return X2
+
+
+def remove_batch_effect(quant_matrix, design_matrix, test_model, null_model="~ 1", standardize_data=True):
+    """
+    Fit a least squares model with only categorical predictors.
+    Gets p-values by getting the log likelihood ration compared to a `null_model`.
+    
+    `quant_matrix` is a (samples, variables) matrix.
+    `design_matrix` is a (samples, variables) dataframe with all the variables in `test_model`.
+    """
+    from sklearn.preprocessing import StandardScaler
+    import patsy
+    from scipy.linalg import lstsq
+    from scipy import stats
+    from statsmodels.sandbox.stats.multicomp import multipletests
+
+    # # to test
+    # quant_matrix = np.random.random(10000000).reshape(100, 100000)
+    # P = np.concatenate([[0] * 50, [1] * 50])
+    # Q = np.concatenate([[0] * 25, [1] * 25] + [[0] * 25, [1] * 25])
+    # design_matrix = pd.DataFrame([P, Q], index=["P", "Q"]).T
+    # quant_matrix = quant_matrix.T * (1 + (design_matrix.sum(axis=1) * 4).values)
+    # quant_matrix = pd.DataFrame(quant_matrix.T)
+    # test_model = "~ Q + P"
+    # null_model = "~ 1"
+
+    if standardize_data:
+        norm = StandardScaler()
+        quant_matrix = pd.DataFrame(
+            norm.fit_transform(quant_matrix),
+            index=quant_matrix.index, columns=quant_matrix.columns)
+
+    A1 = patsy.dmatrix(test_model, design_matrix)
+    betas1, residuals1, _, _ = lstsq(A1, quant_matrix)
+
+    A0 = patsy.dmatrix(null_model, design_matrix)
+    betas0, residuals0, _, _ = lstsq(A0, quant_matrix)
+
+    results = pd.DataFrame(betas1.T, columns=A1.design_info.column_names, index=quant_matrix.columns)
+
+    # Calculate the log-likelihood ratios
+    n = float(quant_matrix.shape[0])
+    results['model_residuals'] = residuals1
+    results['null_residuals'] = residuals0
+    results['model_log_likelihood'] = (-n / 2.) * np.log(2 * np.pi) - n / 2. * np.log(results['model_residuals'] / n) - n / 2.
+    results['null_log_likelihood'] = (-n / 2.) * np.log(2 * np.pi) - n / 2. * np.log(results['null_residuals'] / n) - n / 2.
+
+    results['log_likelihood_ratio'] = results['model_log_likelihood'] - results['null_log_likelihood']
+    results['p_value'] = stats.chi2.sf(2 * results['log_likelihood_ratio'], df=betas1.shape[0] - betas0.shape[0])
+    results['q_value'] = multipletests(results['p_value'], method=multiple_correction_method)[1]
+
+    if not standardize_data:
+        results["mean"] = quant_matrix.mean(axis=0)
+
+    return results
+
+
+def deseq_analysis(
+        count_matrix, experiment_matrix, formula,
+        output_dir, output_prefix,
+        overwrite=True, alpha=0.05, independent_filtering=False,):
+    """
+    Perform differential comparisons with DESeq2.
+    """
+    import pandas as pd
+    from rpy2.robjects import numpy2ri, pandas2ri
+    import rpy2.robjects as robjects
+    numpy2ri.activate()
+    pandas2ri.activate()
+
+    def r2pandas_df(r_df):
+        import numpy as np
+        df = pd.DataFrame(np.asarray(r_df)).T
+        df.columns = [str(x) for x in r_df.colnames]
+        df.index = [str(x) for x in r_df.rownames]
+        return df
+
+    robjects.r('require("DESeq2")')
+    _as_formula = robjects.r('as.formula')
+    _DESeqDataSetFromMatrix = robjects.r('DESeqDataSetFromMatrix')
+    _DESeq = robjects.r('DESeq')
+    _results = robjects.r('results')
+    _as_data_frame = robjects.r('as.data.frame')
+    _resultsNames = robjects.r('resultsNames')
+
+    # order experiment and count matrices in same way
+    experiment_matrix = experiment_matrix.loc[count_matrix.columns, :]
+    if experiment_matrix.index.name != "sample_name":
+        try:
+            experiment_matrix = experiment_matrix.set_index("sample_name")
+        except KeyError:
+            pass
+
+    # save the matrices just in case
+    count_matrix.to_csv(os.path.join(output_dir, output_prefix + ".count_matrix.tsv"), sep="\t")
+    experiment_matrix.to_csv(os.path.join(output_dir, output_prefix + ".experiment_matrix.tsv"), sep="\t")
+    comparison_table.to_csv(os.path.join(output_dir, output_prefix + ".comparison_table.tsv"), sep="\t")
+
+    # Run DESeq analysis
+    dds = _DESeqDataSetFromMatrix(
+        countData=count_matrix.astype(int),
+        colData=experiment_matrix,
+        design=_as_formula(formula))
+    dds = _DESeq(dds, parallel=True)
+    # _save(dds, file=os.path.join(output_dir, output_prefix + ".deseq_dds_object.Rdata"))
+
+    comps = [str(x) for x in _resultsNames(dds)][3:]
+    results = pd.DataFrame()
+    for comp in comps:
+        out_file = os.path.join(output_dir, output_prefix + ".deseq_result.{}_vs_000d.csv".format(comp))
+        if not overwrite and os.path.exists(out_file):
+            continue
+        print("Doing comparison '{}'".format(comp))
+
+        res = _as_data_frame(
+            _results(dds, contrast=np.array(["timepoint", comp.replace("timepoint", ""), "000d"]), alpha=alpha, independentFiltering=independent_filtering, parallel=True))
+
+        # convert to pandas dataframe
+        res2 = r2pandas_df(res)
+        res2.loc[:, "comparison_name"] = comp
+
+        # save
+        res2.to_csv(out_file)
+        # append
+        results = results.append(res2.reset_index(), ignore_index=True)
+
+    # save all
+    results.to_csv(os.path.join(output_dir, output_prefix + ".deseq_result.all_comparisons.csv"), index=False)
+
 
 
 # Start project and analysis objects
@@ -110,6 +266,100 @@ analysis.to_annot = analysis.accessibility.copy()
 analysis.to_annot.columns = analysis.to_annot.columns.get_level_values("sample_name")
 analysis.to_annot = analysis.to_annot.join(analysis.coverage[["chrom", "start", "end"]])
 analysis.annotate(quant_matrix="to_annot")
+
+
+# # Let's try a naive differential accessibility
+# design_matrix = pd.DataFrame([s.as_series() for s in analysis.samples])
+# design_matrix.loc[design_matrix['timepoint'] == "150d", "timepoint"] = "120d"
+
+# results = pd.DataFrame()
+# for cell_type in design_matrix['cell_type'].drop_duplicates():
+
+#     des = design_matrix[design_matrix['cell_type'] == cell_type]
+#     acc = analysis.accessibility.loc[:, analysis.accessibility.columns.get_level_values("sample_name").isin(des["sample_name"])]
+
+#     acc = acc.loc[acc.mean(axis=1) >= 1.5]
+
+#     res = least_squares_fit(
+#         quant_matrix=acc.T, design_matrix=des,
+#         standardize_data=True,
+#         test_model="~ timepoint", null_model="~ 1", multiple_correction_method="fdr_bh")
+
+#     res['mean'] = acc.mean(1)
+#     res['max_beta'] = res[res.columns[res.columns.str.contains("timepoint")]].apply(lambda x: max(abs(x)), axis=1)
+#     res['cell_type'] = cell_type
+#     res.index.name = "region"
+#     res.sort_values("p_value").to_csv("~/res.csv")
+
+
+
+# # Let's try to add the PC1 location of each sample per cell type as covariate to DESeq2
+# from ngs_toolkit.general import plot_differential
+# cov = get_principal_component_by_attribute(
+#     analysis.coverage.T.drop(["chrom", "start", "end"]),
+#     pc=1, attributes=cell_types)
+# cov.to_csv(os.path.join("results", "per_cell_type_pc1_position.csv"))
+
+# comparison_table = pd.DataFrame(
+#         [s.as_series() for s in analysis.samples]
+#     ).set_index("sample_name")[['cell_type', 'timepoint', 'batch']]
+# comparison_table = comparison_table.join(cov)
+
+# comparison_table.loc[comparison_table['timepoint'] == "150d", 'timepoint'] = '120d'
+
+
+# output_dir = os.path.join("results", "differential_analysis_ATAC-seq.deseq")
+# output_prefix = "differential_analysis"
+
+# analysis.support.index = (
+#     analysis.support["chrom"] + ":" +
+#     analysis.support["start"].astype(str) + "-" +
+#     analysis.support["end"].astype(str))
+
+# for cell_type in comparison_table['cell_type'].drop_duplicates():
+
+#     c = comparison_table[comparison_table['cell_type'] == cell_type]
+#     cov = analysis.coverage.loc[:, c.index]
+
+#     deseq_analysis(
+#         count_matrix=cov;
+#         experiment_matrix=c;
+#         formula="~ pc_zscore + timepoint";
+#         output_dir=output_dir;
+#         output_prefix=output_prefix + "." + cell_type;
+#         overwrite=True; alpha=0.05; independent_filtering=True
+#         )
+
+#     results = pd.read_csv(os.path.join(output_dir, output_prefix + "." + cell_type + ".deseq_result.all_comparisons.csv"), index_col=0)
+
+#     # exclude peaks not called in ~10% of samples
+#     mask = analysis.support.columns.str.contains(cell_type)
+#     support = (analysis.support.loc[:, mask] >= 1).sum(axis=1) / mask.sum()
+#     pass_support = support[support > 0.5].index
+#     # exclude sex chroms
+#     pass_support = pass_support[~pass_support.str.contains("chrX|chrY|chrUn_|_random")]
+
+#     results = results.loc[pass_support, :]
+
+#     for comp in results["comparison_name"].drop_duplicates():
+#         results.loc[results['comparison_name'] == comp, "padj"] = _padjust(
+#             results.loc[results['comparison_name'] == comp, "pvalue"], method="BH")
+
+
+#     # Visualize regions and samples found in the differential comparisons
+#     plot_differential(
+#         analysis,
+#         results[~results['comparison_name'].str.contains("pc")],
+#         None,
+#         samples=[s for s in analysis.samples if s.name in c.index],
+#         data_type="ATAC-seq",
+#         alpha=0.05,
+#         corrected_p_value=True,
+#         fold_change=None,
+#         output_dir=output_dir,
+#         output_prefix=output_prefix + "." + cell_type)
+
+
 
 
 """
@@ -205,11 +455,27 @@ for (cell_type in c("Bulk", "Bcell", "CLL", "CD4", "CD8", "NK", "Mono")){
 """
 
 # recover regions
+analysis.support.index = (
+    analysis.support["chrom"] + ":" +
+    analysis.support["start"].astype(str) + "-" +
+    analysis.support["end"].astype(str))
+
 for i, cell_type in enumerate(cell_types):
+    print(cell_type)
     diff = pd.read_csv(os.path.join(
-        "results", "cll-time_course_peaks.coverage.joint_qnorm.pca_fix.power.{}.diff_timepoint.limma.csv".format(cell_type)))
+        "results", "cll-time_course_peaks.coverage.joint_qnorm.pca_fix.power.{}.diff_timepoint.limma.csv".format(cell_type)),
+        index_col=0)
     diff["cell_type"] = cell_type
 
+    # filter out regions never called as a peak
+    # in the respective cell type
+    sample_names = [s.name for s in analysis.samples if s.cell_type == cell_type]
+    cell_type_support = (analysis.support[sample_names] >= 1).sum(1) / float(len(sample_names))
+    specific_regions = cell_type_support[cell_type_support >= 0.5].index
+    specific_regions = specific_regions[~specific_regions.str.contains("chrX|chrY|_random|Un_")]
+    diff = diff.loc[specific_regions, :].reset_index()
+
+    # Append
     if i == 0:
         all_diff = diff
     else:
@@ -225,27 +491,40 @@ for i, cell_type in enumerate(cell_types):
 timepoints = all_diff.columns[all_diff.columns.str.contains("_mean")].str.replace("_mean", "")
 comparisons = all_diff.columns[all_diff.columns.str.contains("_p_value")].str.replace("_p_value", "")
 
-means = all_diff[["region", "cell_type"] + (timepoints + "_mean").tolist()].drop_duplicates()
+means = all_diff[["index", "cell_type"] + (timepoints + "_mean").tolist()].drop_duplicates()
 means.to_csv(os.path.join(
         "results", "cll-time_course_peaks.coverage.joint_qnorm.pca_fix.power.all.diff_timepoint.limma.mean.csv"), index=False)
 
 means = pd.read_csv(os.path.join(
         "results", "cll-time_course_peaks.coverage.joint_qnorm.pca_fix.power.all.diff_timepoint.limma.mean.csv"))
-means.index = means["region"]
+means.index = means["index"]
+
 
 # arrange in long format
 # and correct p-values
+import pandas as pd
+from rpy2.robjects import numpy2ri, pandas2ri
+import rpy2.robjects as robjects
+numpy2ri.activate()
+pandas2ri.activate()
+_padjust = robjects.r('p.adjust')
+
+
 all_diff2 = pd.DataFrame()
 for cell_type in cell_types:
     for comparison in comparisons:
         print(cell_type, comparison)
         d = all_diff.loc[
             all_diff["cell_type"] == cell_type,
-            ["region", "{}_foldchange".format(comparison), "{}_p_value".format(comparison), "cell_type"]
+            ["index", "{}_foldchange".format(comparison), "{}_p_value".format(comparison), "cell_type"]
         ]
-        d.columns = ["region", "fold_change", "p_value", "cell_type"]
+        d = d.dropna()
+        if d.shape[0] == 0:
+            continue
+        d.columns = ["index", "fold_change", "p_value", "cell_type"]
         d["comparison"] = comparison
-        d["q_value"] = multipletests(d["p_value"], method="fdr_bh")[1]
+        # d["q_value"] = multipletests(d["p_value"], method="fdr_bh")[1]
+        d["q_value"] = _padjust(d["p_value"], method="BH")
         all_diff2 = all_diff2.append(d, ignore_index=True)
 all_diff2 = all_diff2.dropna()
 
@@ -272,7 +551,7 @@ analysis.accessibility = analysis.accessibility[
 
 # make timepoints numeric
 df = analysis.accessibility.columns.to_series().reset_index().drop(0, axis=1)
-df["timepoint"] = df["timepoint"].str.replace("d", "").astype(int)
+# df["timepoint"] = df["timepoint"].str.replace("d", "").astype(int)
 analysis.accessibility.columns = pd.MultiIndex.from_arrays(df.T.values, names=df.columns)
 
 # get color dataframe
@@ -287,9 +566,10 @@ g = sns.clustermap(
     xticklabels=False,
     metric="correlation", z_score=1, vmin=-1, vmax=4, cbar_kws={"label": "Accesibility (Z-score)"},
     row_colors=color_df.iloc[1:, :].values,
-    figsize=(20, 20), rasterized=True
+    figsize=(20, max(6, analysis.accessibility.shape[1] * 0.12)), rasterized=True
 )
 g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+g.ax_col_dendrogram.set_rasterized(True)
 g.savefig(os.path.join("results", "cll-time_course_peaks.coverage.joint_qnorm.pca_fix.power.diff_timepoint.limma.all_diff.svg"), dpi=300)
 
 g = sns.clustermap(
@@ -298,9 +578,10 @@ g = sns.clustermap(
     xticklabels=False,
     metric="correlation", z_score=1, vmin=-1, vmax=4, cbar_kws={"label": "Accesibility (Z-score)"},
     row_colors=color_df.iloc[1:, :].values,
-    figsize=(20, 20), rasterized=True
+    figsize=(20, max(6, analysis.accessibility.shape[1] * 0.12)), rasterized=True
 )
 g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+g.ax_col_dendrogram.set_rasterized(True)
 g.savefig(os.path.join("results", "cll-time_course_peaks.coverage.joint_qnorm.pca_fix.power.diff_timepoint.limma.all_diff.sorted.svg"), dpi=300)
 
 
@@ -310,6 +591,8 @@ comparisons = all_diff2["comparison"].drop_duplicates()
 # to censor potentially:
 samples_to_exclude = [
     "KAF_30d_Bulk",
+    "KAF_30d_CD4",
+    "KAF_30d_CD8",
     "PBGY_1d_NK",
     "PBGY_8d_Mono",
     "PBGY_8d_Bcell",
@@ -338,17 +621,23 @@ for cell_type in cell_types[1:]:
     #     diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("8d|240d|280d")), :]
     # else:
     #     diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (~all_diff2.loc[:, "comparison"].str.contains("2d|240d|280d")), :]
-    diff2 = all_diff2.loc[(all_diff2.loc[:, "cell_type"] == cell_type) & (all_diff2.loc[:, "comparison"] == "timepoint120d - timepoint000d"), :]
+    diff2 = all_diff2.loc[
+        (all_diff2.loc[:, "cell_type"] == cell_type) &
+        (
+            (all_diff2.loc[:, "comparison"] == "timepoint120d - timepoint000d")  |
+            (all_diff2.loc[:, "comparison"] == "timepoint030d - timepoint000d")
+        ), :]
 
     # # Filter for thresholds
-    # diff_regions = diff2.loc[
-    #     (diff2.loc[:, "q_value"] < alpha) &
-    #     (np.absolute(diff2.loc[:, "fold_change"]) > min_fold),
-    #     ['region']
-    # ]
+    diff_regions = diff2.loc[
+        (diff2.loc[:, "q_value"] < alpha),#  &
+        # (np.absolute(diff2.loc[:, "fold_change"]) > min_fold),
+        ['region']
+    ]
     # # If there aren't any significant, take top N to visualize
-    # if diff_regions.shape[0] < 100:
-    diff_regions = diff2.loc[(diff2.loc[:, "cell_type"] == cell_type), :].sort_values("p_value").head(n_top)['region']
+    if diff_regions.shape[0] < 100:
+        print("No diff")
+        diff_regions = diff2.loc[(diff2.loc[:, "cell_type"] == cell_type), :].sort_values("p_value").head(n_top)['region']
     diff_regions = diff_regions.squeeze().drop_duplicates()
 
     sample_mask = (
@@ -356,15 +645,15 @@ for cell_type in cell_types[1:]:
         (analysis.accessibility.columns.get_level_values("cell_type") == cell_type) &
         (analysis.accessibility.columns.get_level_values("timepoint") < 240))
     # accessibility of samples from cell type
-    g = sns.clustermap(
-        analysis.accessibility.loc[diff_regions, sample_mask].T.astype(float),
-        xticklabels=False,
-        metric="correlation", z_score=1, vmin=-1, vmax=4, cbar_kws={"label": "Accesibility (Z-score)"},
-        row_colors=color_df.iloc[1:, sample_mask].values,
-        figsize=(20, 20), rasterized=True
-    )
-    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-    g.savefig(os.path.join("results", "cll-time_course_peaks.coverage.joint_qnorm.pca_fix.power.diff_timepoint.limma.{}_diff.svg".format(cell_type)), dpi=300)
+    # g = sns.clustermap(
+    #     analysis.accessibility.loc[diff_regions, sample_mask].T.astype(float),
+    #     xticklabels=False,
+    #     metric="correlation", z_score=1, vmin=-1, vmax=4, cbar_kws={"label": "Accesibility (Z-score)"},
+    #     row_colors=color_df.iloc[1:, sample_mask].values,
+    #     figsize=(20, 20), rasterized=True
+    # )
+    # g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+    # g.savefig(os.path.join("results", "cll-time_course_peaks.coverage.joint_qnorm.pca_fix.power.diff_timepoint.limma.{}_diff.svg".format(cell_type)), dpi=300)
 
     # sorted
     g = sns.clustermap(
@@ -542,27 +831,27 @@ for cell_type in cell_types[1:]:
     #         )
 
 
-# Run Enrichr
-find results -not -path "results/_old*" -name "*.symbols.txt" \
--exec sbatch -J enrichr.{} -o {}.enrichr.log -p shortq -c 1 --mem 4000 \
---wrap "python ~/jobs/run_Enrichr.py --input-file {} --output-file {}.enrichr.csv" \;
+# # Run Enrichr
+# find results -not -path "results/_old*" -name "*.symbols.txt" \
+# -exec sbatch -J enrichr.{} -o {}.enrichr.log -p shortq -c 1 --mem 4000 \
+# --wrap "python ~/jobs/run_Enrichr.py --input-file {} --output-file {}.enrichr.csv" \;
 
-# Run LOLA
-find results -not -path "results/_old*" -name "*_regions.bed" \
--exec sbatch -J lola.{} -o {}.lola.log -p shortq -c 8 --mem 24000 \
---wrap "Rscript ~/jobs/run_LOLA.R {} ~/cll-time_course/results/cll-time_course_peak_set.bed hg19" \;
+# # Run LOLA
+# find results -not -path "results/_old*" -name "*_regions.bed" \
+# -exec sbatch -J lola.{} -o {}.lola.log -p shortq -c 8 --mem 24000 \
+# --wrap "Rscript ~/jobs/run_LOLA.R {} ~/cll-time_course/results/cll-time_course_peak_set.bed hg19" \;
 
-# Run AME
-for F in `find results -not -path "results/_old*" -name "*_regions.fa"`
-do
-DIR=`dirname $F`
-echo $F $DIR
-sbatch -J "meme_ame.${F}" -o "${F}.meme_ame.log" -p shortq -c 1 --mem 4000 \
---wrap \
-"fasta-dinucleotide-shuffle -c 1 -f "$F" > "$F".shuffled.fa; \
-ame --bgformat 1 --scoring avg --method ranksum --pvalue-report-threshold 0.05 \
---control "$F".shuffled.fa -o "$DIR" "$F" ~/resources/motifs/motif_databases/HUMAN/HOCOMOCOv10.meme"
-done
+# # Run AME
+# for F in `find results -not -path "results/_old*" -name "*_regions.fa"`
+# do
+# DIR=`dirname $F`
+# echo $F $DIR
+# sbatch -J "meme_ame.${F}" -o "${F}.meme_ame.log" -p shortq -c 1 --mem 4000 \
+# --wrap \
+# "fasta-dinucleotide-shuffle -c 1 -f "$F" > "$F".shuffled.fa; \
+# ame --bgformat 1 --scoring avg --method ranksum --pvalue-report-threshold 0.05 \
+# --control "$F".shuffled.fa -o "$DIR" "$F" ~/resources/motifs/motif_databases/HUMAN/HOCOMOCOv10.meme"
+# done
 
 
 # Collect enrichments and plot
@@ -720,7 +1009,6 @@ for n_top in [10, 20]:
 
 
 
-
 # # One step back:
 # # just take the differential genes per cluster and measure overlaps
 # import pyupset
@@ -779,3 +1067,80 @@ for n_top in [10, 20]:
 # g = sns.clustermap(np.log(1 + q), figsize=(12, 12), cbar_kws={"label": "log(shared diff genes)"})
 # g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
 # g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+
+
+
+#
+
+#
+
+#
+
+#
+
+
+# Comparison with scRNA-seq diff genes
+
+# read in 
+diff_genes = pd.read_csv(os.path.join("metadata", "scRNA_diff_genes_over_time.tsv"), sep="\t")
+diff_genes = diff_genes.loc[diff_genes['qvalue'] < 0.05, :]
+all_diff_genes = diff_genes.loc[diff_genes.index, "gene"].drop_duplicates()
+
+diff_peaks = analysis.coverage_annotated[analysis.coverage_annotated['gene_name'].isin(all_diff_genes)].drop_duplicates().index
+
+g = sns.clustermap(
+    analysis.accessibility.loc[diff_peaks, :],
+    z_score=0, metric="correlation", robust=True,
+    yticklabels=False, xticklabels=analysis.accessibility.columns.get_level_values("sample_name"), rasterized=True,
+    figsize=(18, 6)
+)
+g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+g.ax_row_dendrogram.set_rasterized(True)
+g.savefig(os.path.join("results", "scRNA_diff_genes_over_time.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+
+for cell_type in diff_genes['cellType'].drop_duplicates():
+    print(cell_type)
+    if cell_type in ["NurseLikeCells", "Tcells1"]:
+        mask = analysis.accessibility.columns.get_level_values("cell_type").str.contains("CD4|CD8")
+    elif cell_type == "Bcells":
+        mask = analysis.accessibility.columns.get_level_values("cell_type").str.contains("Bcell|Bulk|CLL")
+    elif cell_type == "Monos":
+        mask = analysis.accessibility.columns.get_level_values("cell_type").str.contains("Mono")
+    else:
+        mask = analysis.accessibility.columns.get_level_values("cell_type").str.contains(cell_type.replace("cells", ""))
+
+    df = analysis.accessibility[analysis.accessibility.columns[mask]]
+    df = df[df.columns[df.columns.get_level_values("timepoint") != 240]]
+    df = df.sort_index(axis=1, level=['cell_type', 'patient_id', 'timepoint'])
+
+    dg = diff_genes.loc[(diff_genes['qvalue'] < 1e-4) & (diff_genes['cellType'] == cell_type), "gene"].drop_duplicates()
+    diff_peaks = analysis.coverage_annotated[analysis.coverage_annotated['gene_name'].isin(dg)].drop_duplicates().index
+
+    g = sns.clustermap(
+        df.loc[diff_peaks, :],
+        z_score=0, metric="correlation", robust=True, col_cluster=False,
+        yticklabels=False, xticklabels=df.columns.get_level_values("sample_name"), rasterized=True,
+        figsize=(max(0.12 * df.shape[1], 6) , 6)
+    )
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+    g.ax_row_dendrogram.set_rasterized(True)
+    g.savefig(os.path.join("results", "scRNA_diff_genes_over_time.{}_specific.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+    for patient_id in diff_genes['patient'].drop_duplicates():
+
+        df2 = df[df.columns[df.columns.get_level_values("patient_id") == patient_id]]
+        df2 = df2[df2.columns[df2.columns.get_level_values("timepoint") != 240]]
+        df2 = df2.sort_index(axis=1, level=['cell_type', 'patient_id', 'timepoint'])
+
+        if df2.shape[1] <= 2:
+            continue
+        g = sns.clustermap(
+            df2.loc[diff_peaks, :],
+            z_score=0, metric="correlation", robust=True, col_cluster=False,
+            yticklabels=False, xticklabels=df2.columns.get_level_values("sample_name"), rasterized=True,
+            figsize=(max(0.12 * df2.shape[1], 6) , 6)
+        )
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+        g.ax_row_dendrogram.set_rasterized(True)
+        g.savefig(os.path.join("results", "scRNA_diff_genes_over_time.{}-{}_specific.clustermap.svg".format(cell_type, patient_id)), dpi=300, bbox_inches="tight")
