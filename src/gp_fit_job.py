@@ -126,6 +126,88 @@ def fit_gaussian_process(matrix, library="GPy"):
             return np.nan, np.nan
         return m.log_marginal_likelihood(), w_m.log_marginal_likelihood()
 
+    def gpy_hierarchical_fit_optimize(index, matrix):
+        import GPy
+        import scipy
+
+        y = matrix.loc[index, :].values[:, None]
+        x = np.log2(1 + matrix.columns.get_level_values('timepoint').str.replace("d", "").astype(int).values.reshape((y.shape[0], 1)))
+
+        # construct a hierarchical GPy kernel. 
+        kern_upper = GPy.kern.RBF(input_dim=1, variance=1.0, name='upper')
+        kern_lower = GPy.kern.RBF(input_dim=1, variance=0.1, name='lower')
+        kernel = GPy.kern.Hierarchical(kernels=[kern_upper, kern_lower])
+
+        # construct a 'grid' on which to examine samples
+        # the first column contains time (T). the second columns contains
+        # zeros, ones and twos to represent three replications.
+        from sklearn.preprocessing import LabelEncoder
+        t = np.log2(1 + matrix.columns.get_level_values("timepoint").str.replace("d", "").astype(int))
+        patient_encoder = LabelEncoder()
+        patient_encoder.fit(matrix.columns.get_level_values("patient_id"))
+        p = patient_encoder.transform(matrix.columns.get_level_values("patient_id"))
+        X = pd.DataFrame(np.concatenate([t.values.reshape(-1, 1), p.reshape(-1, 1)], 1), columns=['T', 'patient_id'])
+        X['y'] = y
+        X = X.sort_values('T')
+
+        m = GPy.models.GPRegression(
+            X[['T', 'patient_id']].values,
+            X[['y']].values,
+            kernel)
+        m.likelihood.variance = 0.01
+        m.optimize('bfgs', messages=1)
+
+        fig, axis = plt.subplots(1, len(patient_encoder.classes_), figsize=(20, 2), sharex=True, sharey=True)
+        # axis[0].scatter(t, y)
+        Xplot = X[['T']].values
+        mu, var = m.predict(Xplot, kern=kern_upper)
+        GPy.plotting.matplot_dep.base_plots.gpplot(Xplot, mu, mu - 2 * np.sqrt(var), mu + 2 * np.sqrt(var), ax=axis[0], edgecol='r', fillcol='r')
+        # mu, var = m.predict(Xplot, kern=kern_lower)
+        # GPy.plotting.matplot_dep.base_plots.gpplot(Xplot, mu, mu - 2 * np.sqrt(var), mu + 2 * np.sqrt(var), ax=axis[0], edgecol='b', fillcol='b')
+        axis[0].set_title('Underlying\nfunction $f_{nr}(t)$')
+        axis[0].set_ylabel('Chromatin accessibility')
+
+        # plot each of the functions f_{nr}(t)
+        for patient in range(1, len(patient_encoder.classes_)):
+            m.plot(fixed_inputs=[(1, patient)], ax=axis[patient], which_data_rows=(X.loc[:, "patient_id"]==patient).values, legend=None)
+            axis[patient].set_title("Patient {}".format(patient_encoder.inverse_transform(patient)))
+            axis[patient].plot(Xplot, mu, 'r--', linewidth=1)
+        for ax in axis:
+            ax.set_xlabel('Time (log2)')
+        fig.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "hierarchy.top_variable.example.svg"])), dpi=300, bbox_inches="tight")
+
+
+        white_kernel = GPy.kern.Bias(input_dim=1)
+        try:
+            m.optimize()
+        except RuntimeWarning:
+            return [np.nan] * 11
+        w_m = GPy.models.GPRegression(x, y, white_kernel)
+        try:
+            w_m.optimize()
+        except RuntimeWarning:
+            return [np.nan] * 11
+
+        # D statistic
+        d = 2 * (m.log_likelihood() - w_m.log_likelihood())
+
+        # p-value
+        # the RBF + Bias kernel has 4 parameters and the Bias 2, so the chisquare has 2 degrees of freedom is 2
+        p = scipy.stats.chi2.sf(d, df=2)
+
+        # Let's calculate the STD of the posterior mean
+        # because we have several y inputs for each x value
+        # the posterior mean values retrieved will also be duplicated
+        # let's make sure our STD is computed on the unique values only
+        mean_posterior_std = (
+            pd.DataFrame([x.squeeze(), m.posterior.mean.squeeze()], index=['x', 'posterior'])
+            .T
+            .groupby('x')['posterior']
+            .apply(lambda i: i.unique()[0])
+            .std())
+
+        return [d, p, mean_posterior_std, m.log_likelihood()] + m.param_array.tolist() + [w_m.log_likelihood()] + w_m.param_array.tolist()
+
     print("Fitting with library {}.".format(library))
 
     if library == "GPy":
@@ -140,6 +222,13 @@ def fit_gaussian_process(matrix, library="GPy"):
         print("Finished.")
         return pd.DataFrame(ll, index=matrix.index, columns=['RBF'] + ['White'])
 
+    elif library == "GPy_hierarchical":
+        ll = [gpy_hierarchical_fit_optimize(i, matrix) for i in matrix.index]
+        print("Finished.")
+        return pd.DataFrame(ll, index=matrix.index, columns=
+                            ["D", "p_value", "mean_posterior_std"] +
+                            ['RBF'] + ['sum.rbf.variance', 'sum.rbf.lengthscale', 'sum.bias.variance', 'rbf.Gaussian_noise.variance'] +
+                            ['White'] + ['bias.variance', 'bias.Gaussian_noise.variance'])
 
 def main():
     """
