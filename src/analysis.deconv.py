@@ -743,22 +743,24 @@ def submit_job_if_possible(cmd, total_job_lim=800, refresh_time=10, in_between_t
 sorted_norm = pd.read_csv(os.path.join("results", "cll-time_course" + "_peaks.coverage.joint_qnorm.pca_fix.power.csv"), index_col=0, header=range(8))
 deconv_norm = pd.read_csv(os.path.join("results_deconvolve", "coverage.cell_type_deconvoluted.qnorm.csv"), index_col=0, header=range(4))
 
-chunks = 200
+chunks = 2000
 total_job_lim = 800
 refresh_time = 10
-in_between_time = 0.3
+in_between_time = 0.01
 output_prefix = "gp_fit_job"
 output_dir = "/scratch/users/arendeiro/gp_fit_job"
 
-for matrix_name, matrix in [("sorted", sorted_norm), ("deconv", deconv_norm)]:
+library = "GPy"
+
+for matrix_name, matrix in tqdm.tqdm([("sorted", sorted_norm), ("deconv", deconv_norm)], desc="matrix"):
     r = np.arange(0, matrix.shape[0], chunks)
-    for cell_type in matrix.columns.get_level_values("cell_type").drop_duplicates():
-        for start, end in tqdm.tqdm(zip(r, r[1:]) + [(r[-1], matrix.shape[0])]):
+    for cell_type in tqdm.tqdm(matrix.columns.get_level_values("cell_type").drop_duplicates(), desc="cell_type"):
+        for start, end in tqdm.tqdm(zip(r, r[1:]) + [(r[-1], matrix.shape[0])], desc="chunk"):
             range_name = "{}-{}".format(start, end)
-            name = ".".join([output_prefix, matrix_name, cell_type, range_name])
+            name = ".".join([output_prefix, matrix_name, cell_type, range_name, library])
             log = os.path.join(output_dir, "log", name + ".log")
-            job = """python ~/jobs/gp_fit_job.py --data-range {} --range-delim - --matrix-type {} --cell-type {} --output-prefix {} --output-dir {}""".format(
-                range_name, matrix_name, cell_type, name, os.path.join(output_dir, "output"))
+            job = """python ~/jobs/gp_fit_job.py --data-range {} --range-delim - --matrix-type {} --cell-type {} --library {} --output-prefix {} --output-dir {}""".format(
+                range_name, matrix_name, cell_type, library, name, os.path.join(output_dir, "output"))
             cmd = """sbatch -J {} -o {} -p shortq -c 1 --mem 8000 --wrap "{}" """.format(
                 name, log, job)
 
@@ -767,40 +769,74 @@ for matrix_name, matrix in [("sorted", sorted_norm), ("deconv", deconv_norm)]:
 
 
     fits = pd.DataFrame()
+    r = np.arange(0, matrix.shape[0], chunks)
     for cell_type in tqdm.tqdm(matrix.columns.get_level_values("cell_type").drop_duplicates(), desc="cell_type"):
         for start, end in tqdm.tqdm(zip(r, r[1:]) + [(r[-1], matrix.shape[0])], desc="chunk"):
             range_name = "{}-{}".format(start, end)
-            name = ".".join([output_prefix, matrix_name, cell_type, range_name])
+            name = ".".join([output_prefix, matrix_name, cell_type, range_name, library])
             df = pd.read_csv(os.path.join(output_dir, "output", name + ".csv"), index_col=0)
             df['cell_type'] = cell_type
 
             fits = fits.append(df)
 
-    fits["over"] = (2 * fits["RBF"]) - (2 * fits["White"])
+    # correct p-values
+    from statsmodels.stats.multitest import multipletests
+    # TODO: check this holds the order
+    fits['q_value'] = np.concatenate(fits.groupby("cell_type", sort=False)['p_value'].apply(lambda x: multipletests(x, method="fdr_bh")[1]))
 
-    fits.to_csv(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, "all_fits.csv"])), index=True)
-    # fits = pd.read_csv(os.path.join("results_deconvolve", output_prefix + ".all_fits.csv"), index_col=0)
+    fits.to_csv(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "all_fits.csv"])), index=True)
+    # fits = pd.read_csv(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "all_fits.csv"])), index_col=0)
 
+    # Visualize the relationship between the fits and parameters
+    g = sns.PairGrid(fits.drop("cell_type", axis=1).sample(n=2000))
+    g.map(plt.scatter, alpha=0.2, s=2, rasterized=True)
+    g.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "fits.parameters.pairwise.all_cell_types.svg"])), dpi=300, bbox_inches="tight")
 
-    # Plot likelihood relashionships
-
+    # Plot likelihood relationships
     g = sns.FacetGrid(data=fits, col="cell_type", col_wrap=2)
     g.map(plt.scatter, "RBF", "White", alpha=0.1, s=2, rasterized=True)
-    g.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, "fits.RBF_over_White.cell_types.svg"])), dpi=300, bbox_inches="tight")
+    g.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "fits.RBF_vs_White.cell_types.svg"])), dpi=300, bbox_inches="tight")
 
     g = sns.FacetGrid(data=fits, col="cell_type", col_wrap=2)
-    g.map(plt.scatter, "White", "over", alpha=0.1, s=2, rasterized=True)
-    g.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, "fits.over_White.cell_types.svg"])), dpi=300, bbox_inches="tight")
+    g.map(plt.scatter, "White", "D", alpha=0.1, s=2, rasterized=True)
+    g.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "fits.D_vs_White.cell_types.svg"])), dpi=300, bbox_inches="tight")
+
+    n_cell_types = len(fits['cell_type'].drop_duplicates())
+    n_row = n_col = int(np.ceil(np.sqrt(n_cell_types)))
+    fig, axis = plt.subplots(n_row, n_col, figsize=(n_col * 4, n_row * 4))
+    axis = axis.flatten()
+    for i, cell_type in enumerate(fits['cell_type'].drop_duplicates()):
+        f = fits[fits['cell_type'] == cell_type].head(60000)
+        d = axis[i].scatter(f['White'], f["D"], c=f["mean_posterior_std"], cmap="BuGn", edgecolor='grey', alpha=0.5, s=5, rasterized=True)
+        plt.colorbar(d, ax=axis[i], label='STD of posterior mean')
+        axis[i].set_xlabel("log L(Data|Constant)")
+        axis[i].set_ylabel("D statistic\n(2 * [log L(Data|Varying) - log L(Data|Constant)])")
+        axis[i].set_title(cell_type)
+    fig.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "fits.D_vs_White.mean_posterior_std.cell_types.svg"])), dpi=300, bbox_inches="tight")
 
 
-    # Plot some of the top examples
-    n_top = 12
-    e = fits[fits['cell_type'] != "NKcell"].sort_values("over").tail(n_top)
+    # Let's rank regions
+    fits['mean_posterior_std_rank'] = fits['mean_posterior_std'].rank(ascending=False)
+    fits['D_rank'] = fits['D'].rank(ascending=False)
+    fits['RBF_rank'] = fits['RBF'].rank(ascending=False)
+    fits['White_rank'] = fits['White'].rank(ascending=True)
+
+    fits['rank_max'] = fits[["mean_posterior_std_rank", "D_rank", "RBF_rank", "White_rank"]].max(axis=1)
+    fits['rank_min'] = fits[["mean_posterior_std_rank", "D_rank", "RBF_rank", "White_rank"]].min(axis=1)
+    fits['rank_mean'] = fits[["mean_posterior_std_rank", "D_rank", "RBF_rank", "White_rank"]].mean(axis=1)
+
+    n_top = 6
+    e = fits[~fits['cell_type'].str.contains("NK")].sort_values("rank_mean").head(n_top)
     examples = e.index
     example_ct = e['cell_type']
-    example_acc = np.log2(matrix.loc[examples])
+    if matrix_name == "deconv":
+        example_acc = np.log2(matrix.loc[examples])
+    else:
+        example_acc = matrix.loc[examples]
     cell_types = example_acc.columns.get_level_values("cell_type").drop_duplicates()
     example_acc['cell_type'] = example_ct
+
+    # Plot some of the top examples
 
     n_col = len(cell_types)
 
@@ -812,31 +848,45 @@ for matrix_name, matrix in [("sorted", sorted_norm), ("deconv", deconv_norm)]:
                 region,
                 samples
             ].drop_duplicates().squeeze()
-            x = np.log2(cur.index.get_level_values("timepoint").str.replace("d", "").astype(int).values)
+            x = np.log2(1 + cur.index.get_level_values("timepoint").str.replace("d", "").astype(int).values)
             axis[i, j].scatter(x, cur.values, alpha=0.8, s=5)
+
+            # Let's fit again the DPs just to demonstrate
+            kernel = GPy.kern.RBF(input_dim=1) + GPy.kern.Bias(input_dim=1)
+            white_kernel = GPy.kern.Bias(input_dim=1)
+
+            m = GPy.models.GPRegression(x.reshape(-1, 1), cur.values.reshape(-1, 1), kernel)
+            m.optimize()
+            m.plot_f(ax=axis[i, j], lower=2.5, upper=97.5, legend=None, plot_density=True, plot_data=False, color="red")
+
+            # w_m = GPy.models.GPRegression(x.reshape(-1, 1), cur.values.reshape(-1, 1), white_kernel)
+            # w_m.optimize()
+
     for i, ax in enumerate(axis[:, 0]):
         ax.set_ylabel(examples[i])
         # ax.set_title(example_acc.iloc[i]['cell_type'].squeeze())
     for i, ax in enumerate(axis[0, :]):
         ax.set_title(cell_types[i])
-    fig.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, "all_over10_variable.scatter.all_samples.svg"])), dpi=300, bbox_inches="tight")
+    fig.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "top_variable.scatter.all_samples.svg"])), dpi=300, bbox_inches="tight")
 
 
     # Visualize accessibility of changing regions
-    var_threshold = 15
+    alpha = 0.01
+    varying = fits[(fits['p_value'] < alpha)].index.drop_duplicates()
 
-    varying = fits[(fits['over'] > var_threshold)].index.drop_duplicates()
+    if matrix_name == "deconv":
+        matrix = np.log2(matrix)
 
     g = sns.clustermap(matrix.loc[varying].T, z_score=1, xticklabels=False, rasterized=True, figsize=(8, 0.2 * matrix.shape[1]))
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.ax_col_dendrogram.set_rasterized(True)
-    g.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, "all_over10_variable.clustermap.all_samples.svg"])), dpi=300, bbox_inches="tight")
+    g.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "all_D10_variable.clustermap.all_samples.svg"])), dpi=300, bbox_inches="tight")
 
 
     for cell_type in fits['cell_type'].drop_duplicates():
         print(cell_type)
-        varying = fits[(fits["cell_type"] == cell_type) & (fits['over'] > var_threshold)].index.drop_duplicates()
+        varying = fits[(fits["cell_type"] == cell_type) & (fits['p_value'] < alpha)].index.drop_duplicates()
 
         matrix2 = matrix[matrix.columns[
             (matrix.columns.get_level_values("cell_type") == cell_type) &
@@ -847,7 +897,24 @@ for matrix_name, matrix in [("sorted", sorted_norm), ("deconv", deconv_norm)]:
         g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
         g.ax_col_dendrogram.set_rasterized(True)
-        g.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, cell_type, "all_over10_variable.clustermap.svg"])), dpi=300, bbox_inches="tight")
+        g.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, cell_type, "variable.clustermap.svg"])), dpi=300, bbox_inches="tight")
+
+        tp = pd.Series(matrix2.columns.get_level_values("timepoint").str.replace("d", "").astype(int), index=matrix2.columns).sort_values()
+
+        g = sns.clustermap(matrix2.loc[varying, tp.index].T, row_cluster=False, col_cluster=True, z_score=1, xticklabels=False, rasterized=True, figsize=(8, 0.2 * matrix2.shape[1]))
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.ax_col_dendrogram.set_rasterized(True)
+        g.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, cell_type, "variable.clustermap.sorted.svg"])), dpi=300, bbox_inches="tight")
+
+
+
+
+    # Get enrichments
+    from gprofiler import Gprofiler
+    gp = Gprofiler()
+    res = gp.gprofile(query)
+    res = pd.DataFrame(res, columns=["#", "signf", "p-value", "T", "Q", "Q&T", "Q&T/Q", "Q&T/T", "term ID", "t type", "t group", "t name", "t depth", "Q&T list"])
 
 
     # Cluster expression patterns
@@ -860,7 +927,7 @@ for matrix_name, matrix in [("sorted", sorted_norm), ("deconv", deconv_norm)]:
 
     for cell_type in matrix.columns.get_level_values("cell_type").drop_duplicates():
 
-        varying = fits[(fits["cell_type"] == cell_type) & (fits['over'] > var_threshold)].index.drop_duplicates()
+        varying = fits[(fits["cell_type"] == cell_type) & (fits['p_value'] < alpha)].index.drop_duplicates()
 
         # Get acc matrix for cell type
         if matrix_name == "sorted":
@@ -874,12 +941,16 @@ for matrix_name, matrix in [("sorted", sorted_norm), ("deconv", deconv_norm)]:
         # z score row-wise
         matrix2 = matrix2.apply(lambda x: (x - x.mean()) / x.std(), axis=1)
 
-        m = GPclust.MOHGP(times.reshape(-1, 1), k_underlying, k_corruption, matrix2.values, K=3, alpha=1., prior_Z="DP")
+        # mean per timepoint
+        # matrix3 = matrix2.T.groupby(level='timepoint').mean().T
+        # times = np.log2(1 + matrix3.columns.str.replace("d", "").astype(int).values)
+
+        m = GPclust.MOHGP(times.reshape(-1, 1), k_underlying, k_corruption, matrix2.values, K=4, alpha=1., prior_Z="DP")
         m.hyperparam_opt_interval = 1000 # how often to optimize the hyperparameters
 
         m.hyperparam_opt_args['messages'] = False # turn off the printing of the optimization
         m.optimize(verbose=True)
-        m.systematic_splits(verbose=False)
+        m.systematic_splits(verbose=True)
         m.reorder()
 
         # Save optimized model
@@ -888,13 +959,23 @@ for matrix_name, matrix in [("sorted", sorted_norm), ("deconv", deconv_norm)]:
         # Plot clusters
         fig = plt.figure()
         m.plot(newfig=False, on_subplots=True, colour=True, in_a_row=False, joined=False, errorbars=False)
+        [ax.set_rasterized(True) for ax in fig.axes]
         fig.savefig(os.path.join("results_deconvolve", output_prefix + "." + cell_type + ".MOHCP.fitted_model.clusters.svg"), dpi=300, bbox_inches="tight")
 
         # Posterior parameters
-        fig, axis = plt.subplots(1)
-        axis.matshow(m.phi.T, cmap=plt.cm.hot, vmin=0, vmax=1, aspect='auto')
-        axis.set_xlabel('data index')
-        axis.set_ylabel('cluster index')
+        fig, axis = plt.subplots(2, 1,
+            gridspec_kw={'height_ratios':[12, 1]},
+            figsize=(3 * 4, 1 * 4),
+            tight_layout=True)
+        mat = axis[0].imshow(m.phi.T, cmap=plt.cm.hot, vmin=0, vmax=1, aspect='auto')
+        axis[0].set_xlabel('data index')
+        axis[0].set_ylabel('cluster index')
+        axis[1].set_aspect(0.1)
+        plt.colorbar(mat, cax=axis[1], label="Posterior probability", orientation="horizontal")
         fig.savefig(os.path.join("results_deconvolve", output_prefix + "." + cell_type + ".MOHCP.fitted_model.posterior_probs.svg"), dpi=300, bbox_inches="tight")
-        
 
+
+        g = sns.clustermap(m.phi.T, cmap=plt.cm.hot, vmin=0, vmax=1, xticklabels=False, rasterized=True, cbar_kws={"label": "Posterior probability"})
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.savefig(os.path.join("results_deconvolve", output_prefix + "." + cell_type + ".MOHCP.fitted_model.posterior_probs.clustermap.svg"), dpi=300, bbox_inches="tight")
