@@ -28,6 +28,7 @@ from ngs_toolkit.general import (collect_differential_enrichment,
                                  subtract_principal_component)
 
 sns.set_style("white")
+plt.rcParams['svg.fonttype'] = 'none'
 
 # random seed
 SEED = int("".join(
@@ -65,35 +66,32 @@ def subtract_principal_component_by_attribute(df, pc=1, attributes=["CLL"]):
     return X2
 
 
-def count_jobs_running(cmd="squeue", sep="\n"):
-    """
-    Count running jobs on a cluster by invoquing a command that lists the jobs.
-    """
-    import subprocess
-    return subprocess.check_output(cmd).split(sep).__len__()
-
-
-def submit_job_if_possible(cmd, total_job_lim=800, refresh_time=10, in_between_time=5):
-    """
-    If less than `total_job_lim` jobs are running, submit, else, try again in `refresh_time` seconds. 
-    """
-    import time
-    import os
-
-    submit = count_jobs_running() < total_job_lim
-    while not submit:
-        time.sleep(refresh_time)
-        submit = count_jobs_running() < total_job_lim
-    os.system(cmd)
-    time.sleep(in_between_time)
-
-
 def fit_gaussian_processes(matrix, matrix_name="sorted"):
     """
     Estimate temporal variability of regulatory elements by comparing
     the fit of a Gaussian Process (GP) regression model with a
     variable kernel with and another with a static kernel.
     """
+    def count_jobs_running(cmd="squeue", sep="\n"):
+        """
+        Count running jobs on a cluster by invoquing a command that lists the jobs.
+        """
+        import subprocess
+        return subprocess.check_output(cmd).split(sep).__len__()
+
+    def submit_job_if_possible(cmd, total_job_lim=800, refresh_time=10, in_between_time=5):
+        """
+        If less than `total_job_lim` jobs are running, submit, else, try again in `refresh_time` seconds. 
+        """
+        import time
+        import os
+
+        submit = count_jobs_running() < total_job_lim
+        while not submit:
+            time.sleep(refresh_time)
+            submit = count_jobs_running() < total_job_lim
+        os.system(cmd)
+        time.sleep(in_between_time)
 
     # Fit GPs in parallel jobs per cell type and in chunks
     chunks = 2000
@@ -251,12 +249,10 @@ def gather_MOHGP(matrix, matrix_name="sorted", posterior_threshold=0.8):
 
         # Read in their posterior probabilities matrix (Phi) of cluster assignments
         name = ".".join([output_prefix, matrix_name, cell_type, "GPclust"])
-        try:
-            phi = pd.DataFrame(
-                np.fromfile(os.path.join("results_deconvolve", name + "." + cell_type + ".MOHCP.posterior_probs_phi.np")).reshape((len(variable), 4)),
-                index=variable)
-        except:
-            continue
+
+        phi = pd.DataFrame(
+            np.fromfile(os.path.join("results_deconvolve", name + "." + cell_type + ".MOHCP.posterior_probs_phi.np")).reshape((len(variable), 4)),
+            index=variable)
 
         # Threshold probabilities to filter out some regions
         assigned = (phi > posterior_threshold).any(axis=1)
@@ -294,7 +290,7 @@ def gather_MOHGP(matrix, matrix_name="sorted", posterior_threshold=0.8):
         g.savefig(os.path.join("results_deconvolve", output_prefix + "." + cell_type + ".MOHCP.fitted_model.clustermap.cluster_labels.only_posterior_above_threshold.svg"), dpi=300, bbox_inches="tight")
 
         # only variable and with assignments above threshold: mean per timepoint
-        matrix_mean = matrix2.loc[assigned, tp.index].T
+        matrix_mean = matrix2.loc[assigned, tp.index].T.groupby(level="timepoint").mean()
         g = sns.clustermap(
             matrix_mean,
             col_colors=[plt.get_cmap("Paired")(i) for i in phi.loc[assigned].apply(np.argmax, axis=1)],
@@ -334,8 +330,42 @@ def gather_MOHGP(matrix, matrix_name="sorted", posterior_threshold=0.8):
     return assignments
 
 
+def cluster_dynamics(assignments):
+    cluster_labels = pd.DataFrame({
+        "Bcell": {0: "down", 1: "up", 2: "other", 3: "other"},
+        # "Bulk": {0: "down", 1: "up2", 2: "up1", 3: "other"},
+        "Bulk": {0: "down", 1: "up", 2: "up", 3: "other"},
+        "CD4": {0: "down", 1: "up", 2: "middle", 3: "extremes"},
+        "CD8": {0: "down", 1: "up", 2: "middle", 3: "extremes"},
+        "CLL": {0: "down", 1: "up", 2: "extremes", 3: "middle"},
+        # "NK": {0: "down", 1: "up", 2: "extremes2", 3: "extremes1"},
+        "NK": {0: "down", 1: "up", 2: "extremes", 3: "extremes"},
+        "Mono": {0: "extremes", 1: "up", 2: "down", 3: "other"}
+    })
+    cluster_labels.index.name = "cluster"
 
+    cluster_counts = assignments.groupby(['cell_type', 'cluster'])['index'].count().to_frame(name="count")
 
+    counts = pd.merge(cluster_counts.reset_index(), pd.melt(cluster_labels.reset_index(), id_vars="cluster", var_name="cell_type", value_name='cluster_name'))
+
+    counts2 = counts.groupby(['cell_type', 'cluster_name'])['count'].sum().to_frame(name="count")
+
+    counts_fraction = (counts2 / counts2.groupby(level='cell_type').sum()) * 100.
+
+    fig, axis = plt.subplots(1, 2, figsize=(4 * 2, 4), tight_layout=True)
+    sns.factorplot(
+        data=counts2.reset_index(), x="cell_type", y="count",
+        hue="cluster_name", order=counts2.groupby(level="cell_type").sum().sort_values('count', ascending=False).index,
+        kind="bar", ax=axis[0])
+    sns.factorplot(
+        data=counts_fraction.reset_index(), x="cell_type", y="count",
+        hue="cluster_name", order=counts_fraction.reorder_levels([1, 0]).loc['down'].sort_values('count', ascending=False).index,
+        kind="bar", ax=axis[1])
+    axis[0].set_ylabel("Count")
+    axis[1].set_ylabel("% of total")
+    sns.despine(fig)
+    fig.savefig(os.path.join("results_deconvolve", output_prefix + "." + cell_type + ".MOHCP.cluster_name.counts.barplot.svg"), bbox_inches="tight")
+    
 
 # Start project and analysis objects
 prj = Project("metadata/project_config.yaml")
@@ -433,14 +463,17 @@ fits = gather_gaussian_processes(matrix, matrix_name="sorted")
 # Cluster variable regulatory elements with hierarchical mixtures of GPs (MOHGP)
 fit_MOHGP(analysis.accessibility, matrix_name="sorted")
 assignments = gather_MOHGP(matrix, matrix_name="sorted", posterior_threshold=0.8)
+
 assignments = pd.merge(assignments.reset_index(), fits.reset_index(), on=['index', 'cell_type'], how='left')
 assignments.to_csv(os.path.join("results_deconvolve", output_prefix + ".GP_fits.MOHCP_clusters.csv"), index=False)
 
 
-# Get enrichments of region clusters
+# Plot distribution of clusters per cell type dependent on their dynamic pattern
+cluster_dynamics(assignments)
 
+
+# Get enrichments of region clusters
 assignments['comparison_name'] = assignments['cell_type'] + "_" + assignments['cluster'].astype(str)
-assignments.index.name = "region"
 
 
 differential_enrichment(
@@ -493,6 +526,9 @@ plot_differential_enrichment(
     comp_variable="comparison_name",
     output_prefix=".".join([output_prefix, matrix_name, "GPclust"]),
     top_n=5)
+
+
+
 
 
 
