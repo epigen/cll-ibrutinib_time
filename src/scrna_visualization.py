@@ -149,12 +149,14 @@ for database in combined_diff_enrichment['database'].drop_duplicates():
 
 
 # Get Seurat-normalized gene expression and metadata from R
-rdata_file = os.path.join("results", "single_cell_RNA", "10_Seurat", "allDataBest_NoDownSampling_noIGH", "allDataBest_NoDownSampling_noIGH.RData")
+rdata_file = os.path.join("results/single_cell_RNA/10_Seurat/allDataBest_NoDownSampling_noIGH/allDataBest_NoDownSampling_noIGH.RData")
 expression, metadata = seurat_rdata_to_pandas(rdata_file, "pbmc")
 
 metadata = metadata.rename(columns={"nGene": "genes_covered", "nUMI": "umis_detected", "cellType": "assigned_cell_type", "sample": "sample_id"})
 metadata["patient_id"] = metadata['sample_id'].str.replace(r"\d", "").str.split("_").apply(lambda x: x[0])
 metadata["timepoint"] = metadata['sample_id'].str.split("_").apply(lambda x: x[-1]).str.replace("d", "").astype(int)
+
+metadata.to_csv(os.path.join("results", "single_cell_RNA", "10_Seurat", "allDataBest_NoDownSampling_noIGH", "allDataBest_NoDownSampling_noIGH.metadata.csv"), index=True)
 
 # Additional computed info
 tsne_position = seurat_tsne_to_pandas(rdata_file, "pbmc")
@@ -299,3 +301,71 @@ for cell_type in combined_diff_enrichment['cell_type'].drop_duplicates():
         )
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
         g.savefig(os.path.join("results", "scrna.diff_pathways.{}.gene_expression.mean_patient_timepoint.sorted_timepoint.clustermap{}.svg".format(cell_type, square)), dpi=200, bbox_inches="tight")
+
+# Let's plot the expression of the individual genes changing the most
+database = "NCI-Nature_2016"
+top_pathways = 3
+
+
+
+
+
+# Let's observe the distributions of cell cycle assignments
+
+# cell cycle phase prediction probabilities from old analysis
+old_data, old_metadata = seurat_rdata_to_pandas("results/single_cell_RNA/10_Seurat/allDataBest_NoDownSampling_noIGH_RmSample_cellCycle/allDataBest_NoDownSampling_noIGH_RmSample_cellCycle.RData")
+cycle_assignment = pd.read_csv(os.path.join("results", "single_cell_RNA", "10_Seurat", "allDataBest_NoDownSampling_noIGH_RmSample_cellCycle", "Cluster.tsv"), sep="\t")
+cycle_assignment.index = old_metadata.index
+metadata = metadata.join(cycle_assignment[['G1', 'S', 'G2M']])
+metadata.to_csv(os.path.join("results", "single_cell_RNA", "10_Seurat", "allDataBest_NoDownSampling_noIGH", "allDataBest_NoDownSampling_noIGH.metadata.csv"), index=True)
+
+
+# let's try also with cells which have high separation between G1 and G2/M
+sel_cells = metadata[(metadata["G2M"] - metadata['G1']).abs() >= 0.75].index
+
+for met, prefix in [(metadata, "all_cells"), (metadata.loc[sel_cells], "filtered_cells")]:
+    # all cells together
+    fig, axis = plt.subplots(1, 2, figsize=(4 * 2, 4 * 1))
+    c = axis[0].scatter(met["G1"], met["G2M"], c=met["S"], cmap="BrBG", alpha=0.2, s=2, rasterized=True)
+    plt.colorbar(c, ax=axis[1], label="S phase probability")
+    axis[0].set_xlabel("G1 phase probability")
+    axis[0].set_ylabel("G2/M phase probability")
+    fig.savefig(os.path.join("results", "scrna.cell_cycle_assignment.{}.all_cells.scatter.svg".format(prefix)), dpi=200, bbox_inches="tight")
+
+    # per cell type, per timepoint
+    times = met['timepoint'].drop_duplicates().sort_values()
+    times = times[times < 180]
+    cell_types = met['assigned_cell_type'].drop_duplicates().sort_values()
+    cell_types = cell_types[cell_types != "NA"]
+
+    fig, axis = plt.subplots(len(times), len(cell_types), figsize=(2 * len(cell_types), 2 * len(times)), sharex=True, sharey=True)
+    for i, timepoint in enumerate(times):
+        for j, cell_type in enumerate(cell_types):
+            sel_met = met[(met['timepoint'] == timepoint) & (met['assigned_cell_type'] == cell_type)]
+            axis[i, j].scatter(sel_met["G1"], sel_met["G2M"], c=sel_met["S"], cmap="BrBG", alpha=0.5, s=2, rasterized=True)
+    for i, ax in enumerate(axis[:, 0]):
+        ax.set_ylabel(times[i])
+    for j, ax in enumerate(axis[-1, :]):
+        ax.set_xlabel(cell_types[j])
+    fig.savefig(os.path.join("results", "scrna.cell_cycle_assignment.{}.per_patient_timepoint.scatter.svg".format(prefix)), dpi=200, bbox_inches="tight")
+
+    # Mean values
+    grouped_cycle = pd.melt(
+        met.groupby(['patient_id', 'assigned_cell_type', 'timepoint'])['G1', 'S', 'G2M'].mean().reset_index(),
+        id_vars=['patient_id', 'assigned_cell_type', 'timepoint'], var_name='phase', value_name='probability')
+    grouped_cycle = grouped_cycle[grouped_cycle['timepoint'] < 180]
+
+    g = sns.factorplot(data=grouped_cycle.reset_index(), x='phase', y='probability', hue='timepoint', col='assigned_cell_type', kind='bar', size=3)
+    g.savefig(os.path.join("results", "scrna.cell_cycle_assignment.{}.mean.joint_patients.bar.svg".format(prefix)), dpi=200, bbox_inches="tight")
+
+    try:
+        g = sns.factorplot(data=grouped_cycle.reset_index(), x='timepoint', y='probability', hue='phase', col='assigned_cell_type')
+        g.savefig(os.path.join("results", "scrna.cell_cycle_assignment.{}.mean.joint_patients.time_line.svg".format(prefix)), dpi=200, bbox_inches="tight")
+    except:
+        pass
+
+    g = sns.factorplot(data=grouped_cycle.reset_index(), x='phase', y='probability', hue='timepoint', col='assigned_cell_type')
+    g.savefig(os.path.join("results", "scrna.cell_cycle_assignment.{}.mean.joint_patients.line.svg".format(prefix)), dpi=200, bbox_inches="tight")
+
+    g = sns.factorplot(data=grouped_cycle.reset_index(), x='phase', y='probability', hue='timepoint', col='assigned_cell_type', row='patient_id')
+    g.savefig(os.path.join("results", "scrna.cell_cycle_assignment.{}.mean.per_patient.line.svg".format(prefix)), dpi=200, bbox_inches="tight")
