@@ -1,13 +1,26 @@
 import os
-import pandas as pd
-import numpy as np
+import random
+import string
+
 import matplotlib
 import matplotlib.pyplot as plt
-import seaborn as sns
+import numpy as np
+import pandas as pd
 import scipy
+import seaborn as sns
+from sklearn.preprocessing import LabelEncoder
 
 sns.set_style("white")
 plt.rcParams['svg.fonttype'] = 'none'
+
+
+# random seed
+SEED = int("".join(
+    LabelEncoder()
+    .fit(list(string.ascii_uppercase))
+    .transform(list("BOCKLAB")).astype(str)))
+random.seed(SEED)
+np.random.seed(SEED)
 
 
 # Set settings
@@ -18,15 +31,91 @@ matplotlib.rcParams["svg.fonttype"] = "none"
 matplotlib.rc('text', usetex=False)
 
 
+def seurat_rdata_to_pandas(rdata_file, object_name="pbmc", preloaded=False):
+    """
+    Load an Rdata file storing an Seurat analysis object and
+    extract the processed expression matrix and its metadata into pandas dataframes.
+    """
+    from rpy2.robjects import numpy2ri, pandas2ri
+    import rpy2.robjects as robjects
+    numpy2ri.activate()
+    pandas2ri.activate()
+
+    _load = robjects.r('load')
+    _load(rdata_file)
+    pbmc = robjects.r[object_name]
+
+    # Data
+    data = pbmc.slots['data']
+    x = robjects.r('as.matrix(pbmc@data)')
+    indexes = data.slots['Dimnames']
+    gene_index = pd.Series(np.asarray(indexes[0]), name='gene_index')
+    cell_index = pd.Series(np.asarray(indexes[1]), name='cell_index')
+
+    # Metadata
+    metadata_names = np.asarray(pbmc.slots['data.info'].names)
+    metadata = [np.asarray(m) for m in pbmc.slots['data.info']]
+
+    return (
+        pd.DataFrame(x, index=gene_index, columns=cell_index),
+        pd.DataFrame(metadata, columns=cell_index, index=metadata_names).T
+    )
+
+
+def seurat_tsne_to_pandas(rdata_file, object_name="pbmc", preloaded=True):
+    """
+    Load an Rdata file storing an Seurat analysis object and
+    extract the processed expression matrix into a pandas dataframe.
+    """
+    from rpy2.robjects import numpy2ri, pandas2ri
+    import rpy2.robjects as robjects
+    numpy2ri.activate()
+    pandas2ri.activate()
+
+    if not preloaded:
+        _load = robjects.r('load')
+        _load(rdata_file)
+    pbmc = robjects.r[object_name]
+
+    # Data
+    data = pbmc.slots['data']
+    cell_index = pd.Series(np.asarray(data.slots['Dimnames'][1]), name='cell_index')
+    return pd.DataFrame(np.asarray(pbmc.slots['tsne.rot']), index=[0, 1], columns=cell_index)
+
+
+def seurat_variable_genes_to_pandas(rdata_file, object_name="pbmc", preloaded=True):
+    """
+    Load an Rdata file storing an Seurat analysis object and
+    extract the processed expression matrix into a pandas dataframe.
+    """
+    from rpy2.robjects import numpy2ri, pandas2ri
+    import rpy2.robjects as robjects
+    numpy2ri.activate()
+    pandas2ri.activate()
+
+    if not preloaded:
+        _load = robjects.r('load')
+        _load(rdata_file)
+    pbmc = robjects.r[object_name]
+
+    return np.asarray(pbmc.slots['var.genes'])
+
+
 # Read enrichments
-diff_enrichment = pd.read_table("/scratch/lab_bock/shared/projects/cll-time_course/results/single_cell_RNA/13_3_Overtime_Together_tobit/All_EnrichR.tsv")
+enrichment_table = os.path.join("results/single_cell_RNA/13_3_Overtime_Together_tobit/All_EnrichR.tsv")
+
+diff_enrichment = pd.read_table(enrichment_table)
 diff_enrichment['cell_type'] = diff_enrichment['grp'].str.split("_").apply(lambda x: x[0])
 diff_enrichment['patient_id'] = diff_enrichment['grp'].str.split("_").apply(lambda x: x[1])
 diff_enrichment['direction'] = diff_enrichment['grp'].str.split("_").apply(lambda x: x[-1])
 
 
 # Combine p-values across patients with Fisher's method
-combined_diff_enrichment = diff_enrichment.groupby(['cell_type', 'direction', "database", "category"])['pval'].apply(lambda x: scipy.stats.combine_pvalues(x, method="fisher")[1]).reset_index()
+combined_diff_enrichment = (
+    diff_enrichment
+    .groupby(['cell_type', 'direction', "database", "category"])
+    ['pval'].apply(lambda x: scipy.stats.combine_pvalues(x, method="fisher")[1])
+    .reset_index())
 
 
 # plot as bars
@@ -59,63 +148,37 @@ for database in combined_diff_enrichment['database'].drop_duplicates():
     fig.savefig(os.path.join("results", "scrna.timepoint_comparison.enrichment.combined_pvalues.{}.bar.svg".format(database)), bbox_inches="tight")
 
 
-# Get Seurat-normalized gene expression from R
-from rpy2.robjects import numpy2ri, pandas2ri
-import rpy2.robjects as robjects
-numpy2ri.activate()
-pandas2ri.activate()
+# Get Seurat-normalized gene expression and metadata from R
+rdata_file = os.path.join("results", "single_cell_RNA", "10_Seurat", "allDataBest_NoDownSampling_noIGH", "allDataBest_NoDownSampling_noIGH.RData")
+expression, metadata = seurat_rdata_to_pandas(rdata_file, "pbmc")
 
-robjects.r('library("Seurat")')
-_load = robjects.r('load')
-_rownames = robjects.r('rownames')
-_colnames = robjects.r('colnames')
+metadata = metadata.rename(columns={"nGene": "genes_covered", "nUMI": "umis_detected", "cellType": "assigned_cell_type", "sample": "sample_id"})
+metadata["patient_id"] = metadata['sample_id'].str.replace(r"\d", "").str.split("_").apply(lambda x: x[0])
+metadata["timepoint"] = metadata['sample_id'].str.split("_").apply(lambda x: x[-1]).str.replace("d", "").astype(int)
 
-_load("/home/arendeiro/cll-time_course/results/single_cell_RNA/10_Seurat/allDataBest_NoDownSampling_noIGH/allDataBest_NoDownSampling_noIGH.RData")
-pbmc = robjects.r['pbmc']
-
-# Get metadata
-sample_id = np.asarray(pbmc.slots['data.info'][-2])
-patient_id = pd.Series(sample_id).str.replace(r"\d", "").str.split("_").apply(lambda x: x[0]).values
-timepoint = pd.Series(sample_id).str.split("_").apply(lambda x: x[-1]).str.replace("d", "").astype(int)
-
-assigned_cell_type = pd.Series(np.asarray(pbmc.slots['data.info'][-1]), name='assigned_cell_type')
-genes_expressed = pd.Series(np.asarray(pbmc.slots['data.info'][0]).astype(int), name='genes_expressed')
-umis_detected = pd.Series(np.asarray(pbmc.slots['data.info'][1]).astype(int), name='umis_detected')
-
-# Get expression matrix (processed)
-data = pbmc.slots['data']
-x = pdata = robjects.r('as.matrix(pbmc@data)')
-indexes = data.slots['Dimnames']
-gene_index = pd.Series(np.asarray(indexes[0]), name='gene_index')
-cell_index = pd.Series(np.asarray(indexes[1]), name='cell_index')
-
-expression = pd.DataFrame(x, index=gene_index, columns=cell_index)
-
-# Computed info
-var_genes = pd.Series(np.asarray(pbmc.slots['var.genes']), name='var_genes')
-tsne_position = pd.DataFrame(np.asarray(pbmc.slots['tsne.rot']), index=[0, 1])
+# Additional computed info
+tsne_position = seurat_tsne_to_pandas(rdata_file, "pbmc")
+var_genes = seurat_variable_genes_to_pandas(rdata_file, "pbmc")
 
 
 # Let's replot the T-SNE to see if all's well
-
-from sklearn.preprocessing import LabelEncoder
 cell_type_enc = LabelEncoder()
-assigned_cell_type_enc = pd.Series(cell_type_enc.fit_transform(assigned_cell_type))
+metadata['assigned_cell_type_enc'] = cell_type_enc.fit_transform(metadata['assigned_cell_type'])
 patient_enc = LabelEncoder()
-patient_id_enc = pd.Series(patient_enc.fit_transform(patient_id))
+metadata['patient_id_enc'] = patient_enc.fit_transform(metadata['patient_id'])
 
 n_factors = 4
 fig, axis = plt.subplots(2, n_factors, figsize=(n_factors * 4, 4 * 2), tight_layout=True)
-cbar = axis[0, 0].scatter(x=tsne_position[0, :], y=tsne_position[1, :], c=np.log10(umis_detected), cmap="inferno", alpha=0.2, s=2, rasterized=True)
+cbar = axis[0, 0].scatter(x=tsne_position.loc[0, :], y=tsne_position.loc[1, :], c=np.log10(metadata['umis_detected'].astype(float)), cmap="inferno", alpha=0.2, s=2, rasterized=True)
 plt.colorbar(cbar, ax=axis[1, 0])
 axis[0, 0].set_title("UMIs")
-cbar = axis[0, 1].scatter(x=tsne_position[0, :], y=tsne_position[1, :], c=assigned_cell_type_enc, cmap="Paired", alpha=0.2, s=2, rasterized=True)
+cbar = axis[0, 1].scatter(x=tsne_position.loc[0, :], y=tsne_position.loc[1, :], c=metadata['assigned_cell_type_enc'], cmap="Paired", alpha=0.2, s=2, rasterized=True)
 plt.colorbar(cbar, ax=axis[1, 1])
 axis[0, 1].set_title("Cell type")
-cbar = axis[0, 2].scatter(x=tsne_position[0, :], y=tsne_position[1, :], c=patient_id_enc, cmap="viridis", alpha=0.2, s=2, rasterized=True)
+cbar = axis[0, 2].scatter(x=tsne_position.loc[0, :], y=tsne_position.loc[1, :], c=metadata['patient_id_enc'], cmap="viridis", alpha=0.2, s=2, rasterized=True)
 plt.colorbar(cbar, ax=axis[1, 2])
 axis[0, 2].set_title("Patient")
-cbar = axis[0, 3].scatter(x=tsne_position[0, :], y=tsne_position[1, :], c=timepoint, cmap="inferno", alpha=0.2, s=2, rasterized=True)
+cbar = axis[0, 3].scatter(x=tsne_position.loc[0, :], y=tsne_position.loc[1, :], c=metadata['timepoint'], cmap="inferno", alpha=0.2, s=2, rasterized=True)
 plt.colorbar(cbar, ax=axis[1, 3])
 axis[0, 3].set_title("Timepoint")
 
@@ -138,9 +201,9 @@ fig, axis = plt.subplots(n_row, n_col, figsize=(n_col * 3, n_row * 3), tight_lay
 for i, marker in enumerate(m):
     axis.flat[i].set_title(markers.loc[markers['GeneSymbol'] == marker, "Marker"].squeeze())
 
-    if marker not in gene_index:
+    if marker not in expression.index:
         continue
-    axis.flat[i].scatter(x=tsne_position[0, :], y=tsne_position[1, :], c=expression.loc[marker, :], cmap="inferno", alpha=0.2, s=2, rasterized=True)
+    axis.flat[i].scatter(x=tsne_position.loc[0, :], y=tsne_position.loc[1, :], c=expression.loc[marker, :], cmap="inferno", alpha=0.2, s=2, rasterized=True)
 
 for ax in fig.axes[-1, :]:
     ax.set_xlabel("t-SNE 1")
@@ -183,17 +246,16 @@ for cell_type in combined_diff_enrichment['cell_type'].drop_duplicates():
     elif cell_type == "NKcells":
         cell_type = "NK"
 
-    cell_mask = assigned_cell_type == cell_type
-    
+    cell_mask = metadata['assigned_cell_type'] == cell_type
 
-    norm = matplotlib.colors.Normalize(vmin=0, vmax=np.log10(umis_detected.loc[cell_mask.values]).max())
-    c1 = plt.get_cmap("inferno")(norm(np.log10(umis_detected.loc[cell_mask.values])))
-    norm = matplotlib.colors.Normalize(vmin=0, vmax=assigned_cell_type_enc.loc[cell_mask.values].max())
-    c2 = plt.get_cmap("Paired")(norm(umis_detected.loc[cell_mask.values]))
-    norm = matplotlib.colors.Normalize(vmin=0, vmax=patient_id_enc.loc[cell_mask.values].max())
-    c3 = plt.get_cmap("viridis")(norm(patient_id_enc.loc[cell_mask.values]))
-    norm = matplotlib.colors.Normalize(vmin=0, vmax=timepoint.loc[cell_mask.values].max())
-    c4 = plt.get_cmap("inferno")(norm(timepoint.loc[cell_mask.values]))
+    norm = matplotlib.colors.Normalize(vmin=0, vmax=np.log10(metadata['umis_detected'].astype(float).loc[cell_mask.values]).max())
+    c1 = plt.get_cmap("inferno")(norm(np.log10(metadata['umis_detected'].astype(float).loc[cell_mask.values])))
+    norm = matplotlib.colors.Normalize(vmin=0, vmax=metadata['assigned_cell_type_enc'].loc[cell_mask.values].max())
+    c2 = plt.get_cmap("Paired")(norm(metadata['umis_detected'].astype(float).loc[cell_mask.values]))
+    norm = matplotlib.colors.Normalize(vmin=0, vmax=metadata['patient_id_enc'].loc[cell_mask.values].max())
+    c3 = plt.get_cmap("viridis")(norm(metadata['patient_id_enc'].loc[cell_mask.values]))
+    norm = matplotlib.colors.Normalize(vmin=0, vmax=metadata['timepoint'].loc[cell_mask.values].max())
+    c4 = plt.get_cmap("inferno")(norm(metadata['timepoint'].loc[cell_mask.values]))
 
     g = sns.clustermap(
         expression.loc[diff_genes, cell_mask.values],
@@ -204,3 +266,36 @@ for cell_type in combined_diff_enrichment['cell_type'].drop_duplicates():
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.savefig(os.path.join("results", "scrna.diff_pathways.{}.gene_expression.clustermap.svg".format(cell_type)), dpi=200, bbox_inches="tight")
 
+    # Group cells by patient, timepoint
+
+    # (maybe worth showing all cell types to see that it is specific/shared)
+
+    mean_expression = expression.loc[diff_genes, cell_mask].T.join(metadata).groupby(['patient_id', 'timepoint']).mean().loc[:, diff_genes].T
+
+    g = sns.clustermap(
+        mean_expression,
+        metric="correlation", z_score=1,
+        xticklabels=True, rasterized=True, figsize=(12, 6),
+        cbar_kws={"label": "Expression (Z-score)"}
+    )
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.savefig(os.path.join("results", "scrna.diff_pathways.{}.gene_expression.mean_patient_timepoint.clustermap.svg".format(cell_type)), dpi=200, bbox_inches="tight")
+
+    for square in [True, False]:
+        g = sns.clustermap(
+            mean_expression.sort_index(1, 'patient_id'), col_cluster=False, square=square,
+            metric="correlation", z_score=0,
+            xticklabels=True, rasterized=True, figsize=(12, 6),
+            cbar_kws={"label": "Expression (Z-score)"}
+        )
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.savefig(os.path.join("results", "scrna.diff_pathways.{}.gene_expression.mean_patient_timepoint.sorted_patient.clustermap{}.svg".format(cell_type, square)), dpi=200, bbox_inches="tight")
+
+        g = sns.clustermap(
+            mean_expression.sort_index(1, 'timepoint'), col_cluster=False, square=square,
+            metric="correlation", z_score=0,
+            xticklabels=True, rasterized=True, figsize=(12, 6),
+            cbar_kws={"label": "Expression (Z-score)"}
+        )
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.savefig(os.path.join("results", "scrna.diff_pathways.{}.gene_expression.mean_patient_timepoint.sorted_timepoint.clustermap{}.svg".format(cell_type, square)), dpi=200, bbox_inches="tight")
