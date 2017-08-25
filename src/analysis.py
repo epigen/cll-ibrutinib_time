@@ -466,6 +466,7 @@ assignments = gather_MOHGP(matrix, matrix_name="sorted", posterior_threshold=0.8
 
 assignments = pd.merge(assignments.reset_index(), fits.reset_index(), on=['index', 'cell_type'], how='left')
 assignments.to_csv(os.path.join("results_deconvolve", output_prefix + ".GP_fits.MOHCP_clusters.csv"), index=False)
+assignments = pd.read_csv(os.path.join("results_deconvolve", output_prefix + ".GP_fits.MOHCP_clusters.csv"))
 
 
 # Plot distribution of clusters per cell type dependent on their dynamic pattern
@@ -475,6 +476,8 @@ cluster_dynamics(assignments)
 # Get enrichments of region clusters
 assignments['comparison_name'] = assignments['cell_type'] + "_" + assignments['cluster'].astype(str)
 
+
+output_prefix = 'gp_fit_job'
 
 differential_enrichment(
     analysis,
@@ -527,6 +530,46 @@ plot_differential_enrichment(
     output_prefix=".".join([output_prefix, matrix_name, "GPclust"]),
     top_n=5)
 
+
+
+# Plot specially for CLL the enrichments
+enrichment_table = pd.read_csv(os.path.join("results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.meme_ame.csv"))
+
+enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("CLL")]
+
+plot_differential_enrichment(
+    enrichment_table,
+    "motif",
+    data_type="ATAC-seq",
+    direction_dependent=False,
+    output_dir="results_deconvolve/GPclust",
+    comp_variable="comparison_name",
+    output_prefix=".".join([output_prefix, matrix_name, "GPclust", "CLL_only"]),
+    top_n=5)
+enrichment_table = pd.read_csv(os.path.join("results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.lola.csv"))
+enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("CLL")]
+
+plot_differential_enrichment(
+    enrichment_table,
+    "lola",
+    data_type="ATAC-seq",
+    direction_dependent=False,
+    output_dir="results_deconvolve/GPclust",
+    comp_variable="comparison_name",
+    output_prefix=".".join([output_prefix, matrix_name, "GPclust", "CLL_only"]),
+    top_n=25)
+enrichment_table = pd.read_csv(os.path.join("results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.enrichr.csv"))
+enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("CLL")]
+
+plot_differential_enrichment(
+    enrichment_table,
+    "enrichr",
+    data_type="ATAC-seq",
+    direction_dependent=False,
+    output_dir="results_deconvolve/GPclust",
+    comp_variable="comparison_name",
+    output_prefix=".".join([output_prefix, matrix_name, "GPclust", "CLL_only"]),
+    top_n=5)
 
 
 
