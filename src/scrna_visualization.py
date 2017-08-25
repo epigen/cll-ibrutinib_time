@@ -101,6 +101,28 @@ def seurat_variable_genes_to_pandas(rdata_file, object_name="pbmc", preloaded=Tr
     return np.asarray(pbmc.slots['var.genes'])
 
 
+def predict_cell_cycle_r(rdata_file, object_name="pbmc", preloaded=True):
+    from rpy2.robjects import numpy2ri, pandas2ri
+    import rpy2.robjects as robjects
+    numpy2ri.activate()
+    pandas2ri.activate()
+
+    robjects.r("""
+    require(scran)
+    require(org.Hs.eg.db)
+
+    ccMarkers <- readRDS(system.file("exdata", "human_cycle_markers.rds", package="scran"))
+    anno <- select(org.Hs.eg.db, keys=rownames({object_name}@data), keytype="SYMBOL", column="ENSEMBL")
+    ensembl <- anno$ENSEMBL[match(rownames({object_name}@data), anno$SYMBOL)]
+    assignments <- cyclone(as.matrix({object_name}@data), ccMarkers, gene.names=ensembl, BPPARAM=MulticoreParam(workers=12), verbose=TRUE)
+
+    write.csv(assignments$scores, "results/single_cell_RNA/10_Seurat/allDataBest_NoDownSampling_noIGH/allDataBest_NoDownSampling_noIGH.cell_cyle_scores.csv")
+    write.csv(assignments$phases, "results/single_cell_RNA/10_Seurat/allDataBest_NoDownSampling_noIGH/allDataBest_NoDownSampling_noIGH.cell_cyle_assignments.csv")
+    write.csv(assignments$normalized.scores, "results/single_cell_RNA/10_Seurat/allDataBest_NoDownSampling_noIGH/allDataBest_NoDownSampling_noIGH.cell_cyle_normscores.csv")
+
+    """.format(object_name=object_name))
+
+
 # Read enrichments
 enrichment_table = os.path.join("results/single_cell_RNA/13_3_Overtime_Together_tobit/All_EnrichR.tsv")
 
@@ -253,7 +275,7 @@ for cell_type in combined_diff_enrichment['cell_type'].drop_duplicates():
     norm = matplotlib.colors.Normalize(vmin=0, vmax=np.log10(metadata['umis_detected'].astype(float).loc[cell_mask.values]).max())
     c1 = plt.get_cmap("inferno")(norm(np.log10(metadata['umis_detected'].astype(float).loc[cell_mask.values])))
     norm = matplotlib.colors.Normalize(vmin=0, vmax=metadata['assigned_cell_type_enc'].loc[cell_mask.values].max())
-    c2 = plt.get_cmap("Paired")(norm(metadata['umis_detected'].astype(float).loc[cell_mask.values]))
+    c2 = plt.get_cmap("Paired")(norm(metadata['patient_id_enc'].astype(float).loc[cell_mask.values]))
     norm = matplotlib.colors.Normalize(vmin=0, vmax=metadata['patient_id_enc'].loc[cell_mask.values].max())
     c3 = plt.get_cmap("viridis")(norm(metadata['patient_id_enc'].loc[cell_mask.values]))
     norm = matplotlib.colors.Normalize(vmin=0, vmax=metadata['timepoint'].loc[cell_mask.values].max())
@@ -369,3 +391,53 @@ for met, prefix in [(metadata, "all_cells"), (metadata.loc[sel_cells], "filtered
 
     g = sns.factorplot(data=grouped_cycle.reset_index(), x='phase', y='probability', hue='timepoint', col='assigned_cell_type', row='patient_id')
     g.savefig(os.path.join("results", "scrna.cell_cycle_assignment.{}.mean.per_patient.line.svg".format(prefix)), dpi=200, bbox_inches="tight")
+
+
+# Let's play with the cells from one patient where we have 3 timepoints
+patient_id = metadata.groupby(['patient_id'])['sample_id'].unique().apply(len).argmax()
+
+sel_cells = metadata.loc[
+    (metadata['patient_id'] == patient_id) &
+    (metadata['assigned_cell_type'] == "CLL")
+].index
+
+
+
+# t-SNE inset only with these cells
+fig, axis = plt.subplots(1, 2, figsize=(2 * 4, 4 * 1), tight_layout=True)
+
+norm = matplotlib.colors.Normalize(vmin=0, vmax=np.log10(metadata['umis_detected'].astype(float).loc[cell_mask.values]).max())
+c1 = plt.get_cmap("inferno")(norm(np.log10(metadata.loc[sel_cells, 'umis_detected'].astype(float))))
+cbar = axis[0].scatter(x=tsne_position.loc[0, sel_cells], y=tsne_position.loc[1, sel_cells], c=c1, alpha=0.5, s=2, rasterized=True)
+# plt.colorbar(cbar, ax=axis[1, 0])
+axis[0].set_title("UMIs")
+
+norm = matplotlib.colors.Normalize(vmin=0, vmax=metadata['timepoint'].max())
+c2 = plt.get_cmap("inferno")(norm(metadata.loc[sel_cells, 'timepoint'].astype(float)))
+cbar = axis[1].scatter(x=tsne_position.loc[0, sel_cells], y=tsne_position.loc[1, sel_cells], c=c2, alpha=0.5, s=2, rasterized=True)
+# plt.colorbar(cbar, ax=axis[1, 1])
+axis[1].set_title("Timepoint")
+
+for ax in axis[:]:
+    ax.set_xlabel("t-SNE 1")
+    ax.set_ylabel("t-SNE 2")
+fig.savefig(os.path.join("results", "scrna.t-sne.patient_{}_only.scatter.svg".format(patient_id)), dpi=300, bbox_inches="tight")
+
+
+
+
+# PCA transform
+
+from sklearn.decomposition import PCA
+pca = PCA()
+
+fit = pca.fit_transform(expression.loc[:, sel_cells].T)
+fit = pca.fit_transform(expression.loc[var_genes, sel_cells].T)
+
+
+plt.plot(range(len(pca.explained_variance_ratio_)), pca.explained_variance_ratio_)
+
+plt.scatter(
+    fit[0], fit[1],
+    alpha=0.2, s=2, c=plt.get_cmap("inferno")(metadata.loc[sel_cells, "timepoint"]), cmap="inferno"
+)
