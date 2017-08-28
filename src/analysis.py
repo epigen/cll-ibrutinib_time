@@ -66,6 +66,80 @@ def subtract_principal_component_by_attribute(df, pc=1, attributes=["CLL"]):
     return X2
 
 
+def bulk_pca_plots(df):
+    """
+    Plots for figure 1C.
+    """
+    from sklearn.decomposition import PCA
+
+    # PCA
+    pca = PCA()
+    X_hat = pca.fit_transform(df.T)
+
+    X_hat = pd.DataFrame(X_hat, index=df.columns)
+
+
+    # Get cell type centroids
+    cell_type_X_hat = X_hat.groupby(level=['cell_type']).mean()
+
+
+    fig, axis = plt.subplots(1, 3, figsize=(4 * 3, 1 * 4), tight_layout=True)
+
+    # Plot cell type centroids in all subplots
+    for ax in axis:
+        for ct in cell_type_X_hat.index:
+            ax.scatter(
+                cell_type_X_hat.loc[ct, 0], cell_type_X_hat.loc[ct, 1], label=ct,
+                edgecolors='black', linewidths=0.4, alpha=1.0)
+    axis[0].legend()
+
+    bulk_X = X_hat.loc[X_hat.index.get_level_values("cell_type") == "Bulk", :]
+
+    # Plot bulk samples in first subplot
+    axis[0].scatter(
+        bulk_X.loc[:, 0], bulk_X.loc[:, 1],
+        linewidths=0.0, alpha=0.5)
+
+    # Label patient's bulk samples in second subplot
+    pat_enc = LabelEncoder().fit(bulk_X.index.get_level_values("patient_id"))
+
+    for i in bulk_X.index:
+        axis[1].scatter(
+            bulk_X.loc[i, 0], bulk_X.loc[i, 1],
+            label=i[1],
+            c=plt.get_cmap("Paired")(pat_enc.transform([i[1]])),
+            linewidths=0.0, alpha=0.5)
+    axis[1].legend()
+
+    # Label time in third subplot
+    time_colors = plt.get_cmap("inferno")(bulk_X.index.get_level_values("timepoint"))
+
+    axis[2].scatter(
+        bulk_X.loc[:, 0], bulk_X.loc[:, 1],
+        c=time_colors,
+        linewidths=0.0, alpha=0.5)
+
+    fig.savefig(os.path.join("results", "fig1c.svg"), bbox_inches="tight")
+
+
+    # Only PBGY bulk
+    pbgy_X = X_hat.loc[(X_hat.index.get_level_values("cell_type") == "Bulk") & (X_hat.index.get_level_values("patient_id") == "PBGY"), :]
+
+    fig, axis = plt.subplots(1, 1, figsize=(4 * 1, 1 * 4), tight_layout=True)
+    for ct in cell_type_X_hat.index:
+        axis.scatter(
+            cell_type_X_hat.loc[ct, 0], cell_type_X_hat.loc[ct, 1], label=ct,
+            edgecolors='black', linewidths=0.4, alpha=1.0)
+    # Label time in third subplot
+    time_colors = plt.get_cmap("inferno")(pbgy_X.index.get_level_values("timepoint"))
+    axis.scatter(
+        pbgy_X.loc[:, 0], pbgy_X.loc[:, 1],
+        c=time_colors,
+        linewidths=0.0, alpha=0.5)
+    fig.savefig(os.path.join("results", "fig1c.pbgy.svg"), bbox_inches="tight")
+
+
+
 def fit_gaussian_processes(matrix, matrix_name="sorted"):
     """
     Estimate temporal variability of regulatory elements by comparing
@@ -442,7 +516,17 @@ analysis.annotate(quant_matrix="to_annot")
 #     analysis.gene_annotation["end"].astype(str))
 
 
-# TIME SERIES ANALYSIS
+# BULK ONLY ANALYSIS (Fig 1)
+analysis.unsupervised(
+    quant_matrix="accessibility",
+    samples=[s for s in analysis.samples if s.cell_type == "Bulk" and s.patient_id != "KI"],
+    attributes_to_plot=["patient_id", "timepoint", "batch"], plot_prefix="bulk_only")
+
+bulk_pca_plots(analysis.accessibility.loc[:, analysis.accessibility.columns.get_level_values("patient_id") != "KI"])
+
+
+
+# TIME SERIES ANALYSIS (Fig 2, 3)
 
 # filter some samples out
 samples_to_exclude = [
@@ -476,6 +560,11 @@ cluster_dynamics(assignments)
 # Get enrichments of region clusters
 assignments['comparison_name'] = assignments['cell_type'] + "_" + assignments['cluster'].astype(str)
 
+
+# In addition, get enrichments for all of changing regions for each cell type
+_a = assignments.copy()
+_a['comparison_name'] = _a['comparison_name'].str.replace("_.*", "")
+assignments = assignments.append(_a)
 
 output_prefix = 'gp_fit_job'
 
