@@ -53,6 +53,14 @@ pipeline_config:
   # Default (null) means use the generic config for the pipeline.
   dropseq.py: /scratch/lab_bock/shared/projects/cll-time_course/metadata/dropseq.yaml
 
+subprojects:
+  cll-chromatin:
+        metadata:
+          sample_annotation: cll-chromatin.csv
+  stanford_atacseq:
+        metadata:
+          sample_annotation: stanford_atacseq.csv
+
 compute:
   # submission_template: the submission form which will be replaced with compute resource parameters
   # Use this to change your cluster manager (SLURM, SGE, LFS, etc)
