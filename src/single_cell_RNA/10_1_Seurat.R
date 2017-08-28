@@ -49,7 +49,7 @@ mito.cutoff <- 0.15
 nGene.cutoff <- 3000
 
 # Loop over samples and do analysis
-sample.x <- "allDataBest_NoDownSampling_noIGH"
+sample.x <- "allDataBest_NoDownSampling_noRP"
 for(sample.x in f){
   outS <- paste0(out, sample.x,"/")
   dir.create(dirout(outS))
@@ -66,6 +66,9 @@ for(sample.x in f){
       if(grepl("\\_noIGH$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
         data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_noIGH$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
       }
+      if(grepl("\\_noRP$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
+        data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_noRP$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
+      }
       if(grepl("\\_tissueGenes$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
         data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_tissueGenes$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
       }
@@ -80,6 +83,14 @@ for(sample.x in f){
         pbmc.data <- pbmc.data[allGenes[!allGenes %in% ighGenes],]
       }
       
+      # Remove IGH genes
+      if(grepl("\\_noRP$", sample.x)){
+        allGenes <- rownames(pbmc.data)
+        rm.genes <- allGenes[grepl("^RP.*?-.*", allGenes)]
+        rm.genes <- c(rm.genes,allGenes[grepl("^IGH", allGenes) & !grepl("^IGHMBP", allGenes)])
+        pbmc.data <- pbmc.data[allGenes[!allGenes %in% rm.genes],]
+      }
+      
       # Make Seurat object
       pbmc <- new("seurat", raw.data = pbmc.data)
       pbmc <- Setup(pbmc, min.cells = 3, min.genes = seurat.min.genes, do.logNormalize = T, total.expr = 1e4, project = sample.x)
@@ -92,6 +103,10 @@ for(sample.x in f){
       if(grepl("^allDataBest", sample.x)){
         pbmc@data.info[["sample"]] <- fread("metadata/Aggregate_best.csv")$library_id[as.numeric(gsub("^[A-Z]+\\-(\\d+)$", "\\1", colnames(pbmc@data)))]
         pbmc@data.info[["sample"]] <- gsub("_10xTK078", "", gsub("LiveBulk_10x_", "", pbmc@data.info[["sample"]]))
+      }
+      
+      if(grepl("\\_noRP$", sample.x)){
+        pbmc <- SubsetData(pbmc, cells.use=row.names(subset(pbmc@data.info, sample != "KI_KI1_d0")))
       }
       
       # Mito genes --------------------------------------------------------------
