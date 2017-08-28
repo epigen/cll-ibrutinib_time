@@ -439,7 +439,107 @@ def cluster_dynamics(assignments):
     axis[1].set_ylabel("% of total")
     sns.despine(fig)
     fig.savefig(os.path.join("results_deconvolve", output_prefix + "." + cell_type + ".MOHCP.cluster_name.counts.barplot.svg"), bbox_inches="tight")
-    
+
+
+def fig2c():
+    comp_variable ='comparison_name'
+    enrichment_table = pd.read_csv(os.path.join("results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.lola.csv"))
+    enrichment_table = enrichment_table[enrichment_table[comp_variable].str.contains("CLL")]
+
+    # get a unique label for each lola region set
+    enrichment_table["label"] = (
+        enrichment_table["description"].astype(str) + ", " +
+        enrichment_table["cellType"].astype(str) + ", " +
+        enrichment_table["tissue"].astype(str) + ", " +
+        enrichment_table["antibody"].astype(str) + ", " +
+        enrichment_table["treatment"].astype(str))
+    enrichment_table["label"] = (
+        enrichment_table["label"]
+        .str.replace("nan", "").str.replace("None", "")
+        .str.replace(", , ", "").str.replace(", $", ""))
+
+    # Replace inf values with 
+    enrichment_table["pValueLog"] = enrichment_table["pValueLog"].replace(
+        np.inf,
+        enrichment_table.loc[enrichment_table["pValueLog"] != np.inf, "pValueLog"].max()
+    )
+    enrichment_table = enrichment_table[~enrichment_table['pValueLog'].isnull()]
+
+    # Normalize enrichments per dataset with Z-score prior to comparing various region sets
+    for comparison_name in enrichment_table['comparison_name'].drop_duplicates():
+        mask = enrichment_table['comparison_name'] == comparison_name
+        enrichment_table.loc[mask, "z_p"] = scipy.stats.zscore(enrichment_table.loc[mask, "pValueLog"])
+
+    # Plot top_n terms of each comparison in barplots
+    top_data = enrichment_table.set_index("label").groupby(comp_variable)["pValueLog"].nlargest(top_n).reset_index()
+
+    n = len(enrichment_table[comp_variable].drop_duplicates())
+    n_side = int(np.ceil(np.sqrt(n)))
+
+    # pivot table
+    lola_pivot = pd.pivot_table(enrichment_table,
+        values="z_p", columns=comp_variable, index="label").fillna(0)
+    lola_pivot = lola_pivot.replace(np.inf, lola_pivot[lola_pivot != np.inf].max().max())
+
+    top = enrichment_table.set_index('label').groupby(comp_variable)['pValueLog'].nlargest(top_n)
+    top_terms = top.index.get_level_values('label').unique()
+
+    # plot clustered heatmap
+    shape = lola_pivot.loc[top_terms, :].shape
+    g = sns.clustermap(
+        lola_pivot.loc[top_terms, :], figsize=(max(6, 0.12 * shape[1]), max(6, 0.12 * shape[0])), square=True,
+        cbar_kws={"label": "-log10(p-value) of enrichment\nof differential regions"}, metric="correlation")
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+    g.fig.savefig(os.path.join("results", "fig2c" + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
+
+
+
+def fig2d():
+    comp_variable ='comparison_name'
+    enrichment_table = pd.read_csv(os.path.join("results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.enrichr.csv"))
+    enrichment_table = enrichment_table[enrichment_table[comp_variable].str.contains("CLL")]
+
+    # enrichment_table["description"] = enrichment_table["description"].str.decode("utf-8")
+    enrichment_table["log_p_value"] = (-np.log10(enrichment_table["p_value"])).replace({np.inf: 300})
+
+    for gene_set_library in enrichment_table["gene_set_library"].unique():
+        print(gene_set_library)
+        if gene_set_library == "Epigenomics_Roadmap_HM_ChIP-seq":
+            continue
+
+        enr = enrichment_table[enrichment_table['gene_set_library'] == gene_set_library]
+
+        # Normalize enrichments per dataset with Z-score prior to comparing various region sets
+        for comparison_name in enr['comparison_name'].drop_duplicates():
+            mask = enr['comparison_name'] == comparison_name
+            enr.loc[mask, "z_log_p_value"] = scipy.stats.zscore(enr.loc[mask, "log_p_value"])
+
+        # Plot top_n terms of each comparison in barplots
+        top_data = (
+            enr[enr["gene_set_library"] == gene_set_library]
+            .set_index("description")
+            .groupby(comp_variable)
+            ["log_p_value"]
+            .nlargest(top_n)
+            .reset_index())
+
+        # pivot table
+        enrichr_pivot = pd.pivot_table(
+            enr[enr["gene_set_library"] == gene_set_library],
+            values="z_log_p_value", columns="description", index=comp_variable).fillna(0)
+
+        top = enr[enr["gene_set_library"] == gene_set_library].set_index('description').groupby(comp_variable)['z_log_p_value'].nlargest(top_n)
+        top_terms = top.index.get_level_values('description').unique()
+
+        # plot clustered heatmap
+        shape = enrichr_pivot[list(set(top_terms))].shape
+        g = sns.clustermap(enrichr_pivot[list(set(top_terms))].T, figsize=(max(6, 0.12 * shape[0]), max(6, 0.12 * shape[1])),
+            cbar_kws={"label": "-log10(p-value) of enrichment\nof differential genes"}, metric="correlation", square=True)
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.fig.savefig(os.path.join("results", "fig2d" + ".enrichr.{}.cluster_specific.svg".format(gene_set_library)), bbox_inches="tight", dpi=300)
+
 
 # Start project and analysis objects
 prj = Project("metadata/project_config.yaml")
@@ -567,6 +667,7 @@ _a['comparison_name'] = _a['comparison_name'].str.replace("_.*", "")
 assignments = assignments.append(_a)
 
 output_prefix = 'gp_fit_job'
+matrix_name = "sorted"
 
 differential_enrichment(
     analysis,
@@ -581,7 +682,7 @@ differential_enrichment(
     as_jobs=True
 )
 
-diff = collect_differential_enrichment(
+collect_differential_enrichment(
     assignments,
     directional=False,
     data_type="ATAC-seq",
@@ -661,6 +762,16 @@ plot_differential_enrichment(
     top_n=5)
 
 
+# Figure 2c
+fig2c()
+
+
+# Figure 2c
+fig2c()
+
+
+# Figure 2d
+fig2d()
 
 
 
