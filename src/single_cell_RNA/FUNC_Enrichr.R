@@ -81,7 +81,7 @@ enrichFullGeneList <- function(up.genes, dn.genes, databases = "KEGG_2016", fdr.
 #' DT::datatable(res)
 #' }
 ##
-enrichGeneList <- function(gene.list, databases = "KEGG_2016", fdr.cutoff = 0.1, genome.size=20000) {
+enrichGeneList.oddsRatio <- function(gene.list, databases = "KEGG_2016", fdr.cutoff = 0.1, genome.size=20000) {
   ######Step 1: Post gene list to EnrichR
   req.body <- list(list=paste(gene.list, collapse="\n"))
   post.req <- httr::POST("http://amp.pharm.mssm.edu/Enrichr/enrich", encode="multipart", body=I(req.body))

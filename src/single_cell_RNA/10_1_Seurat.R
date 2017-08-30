@@ -28,6 +28,7 @@ if (length(args) > 0) {
 
 
 seurat.min.genes <- 200
+seurat.diff.test <- "tobit"
 
 # This tells Seurat whether to use the filtered or raw data matrices
 # cellranger_filtered <- "filtered"
@@ -182,7 +183,7 @@ for(sample.x in f){
       }
     }
     
-    pbmc@data.info[["sample"]] <- NULL
+    #     pbmc@data.info[["sample"]] <- NULL
     source("src/single_cell_RNA/10_2_Seurat_Script_3.R")
     
   }, error = function(e){

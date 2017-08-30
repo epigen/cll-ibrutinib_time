@@ -15,7 +15,7 @@ array=("allDataBest_NoDownSampling_noRP")
 for file in ${array[@]}
 do            
     echo $file
-    sbatch --job-name="Seurat $file" --ntasks=12 --mem=180000 --partition=longq --time=2-15:00:00 \
+    sbatch --job-name="Seurat $file" --ntasks=12 --mem=180000 --partition=longq --time=1-22:00:00 \
         --wrap="Rscript ${CODEBASE}/cll-time_course/src/single_cell_RNA/10_1_Seurat.R filtered ${file}" \
         --output="${PROCESSED}/cll-time_course/results/single_cell_RNA/10_Seurat/${file}.log"
 done

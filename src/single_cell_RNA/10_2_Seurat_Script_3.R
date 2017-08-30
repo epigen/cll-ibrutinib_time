@@ -106,7 +106,7 @@ foreach(cl.x = clusterings) %dopar% {
     names(pbmc@ident) <- pbmc@cell.names # it needs those names apparently
     clusters <- names(table(pbmc@ident))[table(pbmc@ident)>1]
     clusters <- clusters[clusters != "IGNORED"]
-    cl.i <- "0"
+    cl.i <- clusters[1]
     for(cl.i in clusters){
       # message(cl.i)
       if(!file.exists(dirout(out.cl, "Markers_Cluster",cl.i, ".tsv"))){
@@ -272,6 +272,68 @@ for(cl.x in clusterings){
 #     }
   }
 }
+
+
+# ENRICHR -----------------------------------------------------------------
+message("EnrichR on markers")
+source("src/single_cell_RNA/FUNC_Enrichr.R") #devtools::install_github("definitelysean/enrichR")
+cl.x <- "patient"
+cl.x <- clusterings[13]
+for(cl.x in clusterings){
+  if(!is.null(pbmc@data.info[[cl.x]])){
+    x <- gsub("ClusterNames_","", cl.x)
+    #     if(!file.exists(dirout(outS, "Enrichr_",x,".tsv"))){
+    out.cl <- paste0(outS, "Cluster_",x, "/")
+    f <- list.files(dirout(out.cl))
+    f <- f[grepl("_version2.tsv$", f)]
+    genes <- lapply(f, function(fx) fread(dirout(out.cl, fx)))
+    names(genes) <- gsub("Markers_", "", gsub("_version2.tsv","",f))
+    genes <- genes[sapply(genes, ncol) == 5]
+    genes <- lapply(genes, function(fx) fx[V4 > 0.1]$V3)
+    genes <- genes[sapply(genes, length) > 4]
+    if(length(genes) > 2){
+      enrichRes <- data.table()
+      for(grp.x in names(genes)){
+        ret=try(as.data.table(enrichGeneList.oddsRatio(genes[[grp.x]],databases = enrichrDBs)),silent = FALSE)
+        if(!any(grepl("Error",ret)) && nrow(ret) > 0){
+          enrichRes <- rbind(enrichRes, data.table(ret, grp = grp.x))
+        }
+      }
+      
+      enrichRes <- enrichRes[hitLength > 3]
+      write.table(enrichRes[qval < 0.05], file=dirout(outS, "EnrichOR_",x,".tsv"), sep="\t", quote=F, row.names=F)
+      
+      enrichRes$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", enrichRes$category)
+      enrichRes$category <- abbreviate(enrichRes$category, minlength=50)
+      enrichRes[, mLog10Q := pmin(-log10(qval),4)]
+      
+      # order terms by OR
+      enrichRes[,term := paste0(category, "_", dbLength)]
+      if(length(unique(enrichRes$term)) >= 2){
+        distMT <- dist(t(as.matrix(dcast.data.table(enrichRes, grp ~ term, value.var="oddsRatio")[,-"grp",with=F])))
+        distMT[is.na(distMT)] <- 0
+        hclustObj <- hclust(distMT)
+        enrichRes$term <- factor(enrichRes$term, levels=hclustObj$labels[hclustObj$order])
+      }
+      
+      # order groups by similarity (of OR)
+      if(length(unique(enrichRes$grp)) >= 2){
+        distMT <- dist(t(as.matrix(dcast.data.table(enrichRes, term ~ grp, value.var="oddsRatio")[,-"term",with=F])))
+        distMT[is.na(distMT)] <- 0
+        hclustObj <- hclust(distMT)
+        enrichRes$grp <- factor(enrichRes$grp, levels=hclustObj$labels[hclustObj$order])
+      }
+      
+      # plot
+      ggplot(enrichRes[term %in% enrichRes[,.(min(qval)), by="term"][V1 < 0.05]$term], 
+             aes(x=grp, y=term, size=log10(oddsRatio), color=mLog10Q)) + 
+        geom_point() + scale_color_gradient(low="white", high="red") + theme_bw(12) + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("-log10(q) capped at 4")
+      ggsave(dirout(outS, "EnrichOR_",x,".pdf"), width=min(29, 6+ length(unique(enrichRes$grp))*0.3), height=min(29, length(unique(enrichRes$category))*0.3 + 4))
+    }
+  }
+}
+
 
 message("Analysis pipeline completed successfully!")
 
