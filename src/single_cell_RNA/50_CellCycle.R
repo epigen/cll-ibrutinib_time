@@ -20,6 +20,7 @@ data.table(pbmc2@meta.data)
 stopifnot(all(rownames(pbmc2@dr$tsne@cell.embeddings) == rownames(pbmc2@meta.data)))
 
 pDat <- data.table(pbmc2@dr$tsne@cell.embeddings, pbmc2@meta.data)
+write.table(pDat2, file=dirout(out, "Cells.txt"), sep="\t",row.names=F, quote=F)
 
 ggplot(pDat, aes_string(x="tSNE_1",y="tSNE_2", color="Phase")) + geom_point(alpha=0.3) + ggtitle("Cell cycle") +
   scale_color_manual(values=c("red", "green", "blue"))
@@ -40,7 +41,7 @@ ggsave(dirout(out, "ScoreDetails.pdf"))
 
 ggplot(pDat, aes(x=cellType, fill=Phase)) + 
   geom_bar(position="dodge") + 
-  scale_fill_manual(values=c("red", "blue", "yellow")) + 
+  #scale_fill_manual(values=c("red", "blue", "yellow")) + 
   facet_grid(sample ~ .)
 ggsave(dirout(out, "Proportions_Patients.pdf"), height=15, width=10)
 
@@ -48,10 +49,10 @@ pDat2 <- pDat[,.(cnt = .N), by=c("sample", "Phase", "cellType")]
 pDat2[,sampleCellCount  := sum(cnt), by=c("sample", "cellType")]
 pDat2[,prop := cnt/sampleCellCount]
 
-ggplot(pDat2[cnt > 50], aes(x=sample, y=prop, fill=Phase)) + 
+ggplot(pDat2[cnt > 50], aes(x=cellType, y=prop, fill=Phase)) + 
   geom_bar(stat="identity", position="dodge") + 
-  scale_fill_manual(values=c("red", "green", "blue")) + 
-  facet_grid(cellType ~ .)
+  #scale_fill_manual(values=c("red", "green", "blue")) + 
+  facet_grid(sample ~ .)
 ggsave(dirout(out, "Proportions_Patients2.pdf"), height=15, width=10)
 
 # ggplot(pDat2, aes(x=sample, y=cellType, size=sampleCellCount)) + 
@@ -61,7 +62,7 @@ ggsave(dirout(out, "Proportions_Patients2.pdf"), height=15, width=10)
 #   scale_alpha_continuous()
 # ggsave(dirout(out, "Proportions_PatientsPoints.pdf"), height=15, width=10)
 
-ggplot(pDat2, aes(x=sample, y=cellType, size=sampleCellCount, alpha=prop, color=Phase)) + 
+ggplot(pDat2, aes(y=sample, x=cellType, size=sampleCellCount, alpha=prop, color=Phase)) + 
   geom_point() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
   scale_alpha_continuous(range=c(0,1)) + scale_color_manual(values=c("red", "green", "blue"))
 ggsave(dirout(out, "Proportions_PatientsPoints.pdf"), height=10, width=10)
@@ -69,7 +70,7 @@ ggsave(dirout(out, "Proportions_PatientsPoints.pdf"), height=10, width=10)
 
 ggplot(pDat2, aes(x="", y=prop, fill=Phase)) + 
   geom_bar(stat="identity") + coord_polar("y", start=0) +
-  facet_grid(cellType ~ sample)
+  facet_grid(sample ~ cellType)
 ggsave(dirout(out, "Proportions_pie.pdf"), height=15, width=15)
 
 

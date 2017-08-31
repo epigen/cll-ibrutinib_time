@@ -4,13 +4,16 @@ require("gplots")
 require(methods)
 require(pheatmap)
 # require(enrichR) #devtools::install_github("definitelysean/enrichR")
-source("src/single_cell_RNA/FUNC_Enrichr.R") #devtools::install_github("definitelysean/enrichR")
-
 
 project.init2("cll-time_course")
 
+source("src/single_cell_RNA/FUNC_Enrichr.R") #devtools::install_github("definitelysean/enrichR")
+
+
 out <- "13_4_Overtime_noRP/"
 dir.create(dirout(out))
+
+
 
 sample.x <- "allDataBest_NoDownSampling_noRP"
 
@@ -23,7 +26,7 @@ cells <- gsub(paste0(sample.x, "_"), "", cells)
 
 res <- data.table()
 
-cell <- "Bcells"
+cell <- "NKcells"
 for(cell in cells){
   message(cell)  
   datasetName <- paste0(sample.x, "_", cell)
@@ -33,11 +36,13 @@ for(cell in cells){
   
   eff.sizes <- list()
   
+  pat.dir <- pat.dirs[1]
   for(pat.dir in pat.dirs){
     comp.files <- list.files(paste0(pat.dir, "/"))
     comp.files <- comp.files[grepl("Diff_Cluster.+\\.tsv", comp.files)]
     comp.files <- comp.files[!grepl("d280", comp.files)]
     
+    comp.file <- comp.files[1]
     for(comp.file in comp.files){
       nams <- strsplit((gsub("Diff_Cluster", "", gsub("\\.tsv", "", comp.file))), "vs")[[1]]
       pat <- gsub("([A-Z]+)\\d?_.+", "\\1", nams[1])
