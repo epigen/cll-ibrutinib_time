@@ -198,6 +198,9 @@ def gather_gaussian_processes(matrix, matrix_name="sorted"):
     the fit of a Gaussian Process (GP) regression model with a
     variable kernel with and another with a static kernel.
     """
+    chunks = 2000
+    output_dir = "/scratch/users/arendeiro/gp_fit_job"
+    library = "GPy"
 
     # Collect output of parallel jobs
     fits = pd.DataFrame()
@@ -442,56 +445,140 @@ def cluster_dynamics(assignments):
 
 
 def fig2c():
+    import scipy
     comp_variable ='comparison_name'
     enrichment_table = pd.read_csv(os.path.join("results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.lola.csv"))
-    enrichment_table = enrichment_table[enrichment_table[comp_variable].str.contains("CLL")]
 
-    # get a unique label for each lola region set
-    enrichment_table["label"] = (
-        enrichment_table["description"].astype(str) + ", " +
-        enrichment_table["cellType"].astype(str) + ", " +
-        enrichment_table["tissue"].astype(str) + ", " +
-        enrichment_table["antibody"].astype(str) + ", " +
-        enrichment_table["treatment"].astype(str))
-    enrichment_table["label"] = (
-        enrichment_table["label"]
-        .str.replace("nan", "").str.replace("None", "")
-        .str.replace(", , ", "").str.replace(", $", ""))
+    top_n = 20
 
-    # Replace inf values with 
-    enrichment_table["pValueLog"] = enrichment_table["pValueLog"].replace(
-        np.inf,
-        enrichment_table.loc[enrichment_table["pValueLog"] != np.inf, "pValueLog"].max()
-    )
-    enrichment_table = enrichment_table[~enrichment_table['pValueLog'].isnull()]
+    # Each cell type separately, plot enrichments of the different clusters
+    for cell_type in enrichment_table[comp_variable].drop_duplicates().str.replace("_.*", "").unique():
+        enr = enrichment_table[enrichment_table[comp_variable].str.contains(cell_type)]
 
-    # Normalize enrichments per dataset with Z-score prior to comparing various region sets
-    for comparison_name in enrichment_table['comparison_name'].drop_duplicates():
-        mask = enrichment_table['comparison_name'] == comparison_name
-        enrichment_table.loc[mask, "z_p"] = scipy.stats.zscore(enrichment_table.loc[mask, "pValueLog"])
+        # get a unique label for each lola region set
+        enr["label"] = (
+            enr["description"].astype(str) + ", " +
+            enr["cellType"].astype(str) + ", " +
+            enr["tissue"].astype(str) + ", " +
+            enr["antibody"].astype(str) + ", " +
+            enr["treatment"].astype(str))
+        enr["label"] = (
+            enr["label"]
+            .str.replace("nan", "").str.replace("None", "")
+            .str.replace(", , ", "").str.replace(", $", ""))
 
-    # Plot top_n terms of each comparison in barplots
-    top_data = enrichment_table.set_index("label").groupby(comp_variable)["pValueLog"].nlargest(top_n).reset_index()
+        # Replace inf values with 
+        enr["pValueLog"] = enr["pValueLog"].replace(
+            np.inf,
+            enr.loc[enr["pValueLog"] != np.inf, "pValueLog"].max()
+        )
+        enr = enr[~enr['pValueLog'].isnull()]
 
-    n = len(enrichment_table[comp_variable].drop_duplicates())
-    n_side = int(np.ceil(np.sqrt(n)))
+        # Normalize enrichments per dataset with Z-score prior to comparing various region sets
+        for comparison_name in enr['comparison_name'].drop_duplicates():
+            mask = enr['comparison_name'] == comparison_name
+            enr.loc[mask, "z_p"] = scipy.stats.zscore(enr.loc[mask, "pValueLog"])
 
-    # pivot table
-    lola_pivot = pd.pivot_table(enrichment_table,
-        values="z_p", columns=comp_variable, index="label").fillna(0)
-    lola_pivot = lola_pivot.replace(np.inf, lola_pivot[lola_pivot != np.inf].max().max())
+        # Plot top_n terms of each comparison in barplots
+        top_data = enr.set_index("label").groupby(comp_variable)["pValueLog"].nlargest(top_n).reset_index()
 
-    top = enrichment_table.set_index('label').groupby(comp_variable)['pValueLog'].nlargest(top_n)
-    top_terms = top.index.get_level_values('label').unique()
+        n = len(enr[comp_variable].drop_duplicates())
+        n_side = int(np.ceil(np.sqrt(n)))
 
-    # plot clustered heatmap
-    shape = lola_pivot.loc[top_terms, :].shape
-    g = sns.clustermap(
-        lola_pivot.loc[top_terms, :], figsize=(max(6, 0.12 * shape[1]), max(6, 0.12 * shape[0])), square=True,
-        cbar_kws={"label": "-log10(p-value) of enrichment\nof differential regions"}, metric="correlation")
-    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
-    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-    g.fig.savefig(os.path.join("results", "fig2c" + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
+        # pivot table
+        lola_pivot = pd.pivot_table(enr,
+            values="z_p", columns=comp_variable, index="label").fillna(0)
+        lola_pivot = lola_pivot.replace(np.inf, lola_pivot[lola_pivot != np.inf].max().max())
+
+        top = enr.set_index('label').groupby(comp_variable)['pValueLog'].nlargest(top_n)
+        top_terms = top.index.get_level_values('label').unique()
+
+        # plot clustered heatmap
+        shape = lola_pivot.loc[top_terms, :].shape
+        g = sns.clustermap(
+            lola_pivot.loc[top_terms, :], figsize=(max(6, 0.12 * shape[1]), max(6, 0.12 * shape[0])), square=True,
+            cbar_kws={"label": "-log10(p-value) of enrichment\nof differential regions"}, metric="correlation")
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.fig.savefig(os.path.join("results", "fig2c.{}".format(cell_type) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
+
+
+    # All cell types and clusters together
+    top_n = 20
+    all_samples = enrichment_table.index
+    no_mix = enrichment_table[enrichment_table[comp_variable].str.contains("_")].index
+    no_bulk = enrichment_table[(enrichment_table[comp_variable].str.contains("_")) & (~enrichment_table[comp_variable].str.contains("ulk"))].index
+
+    for mask, label in [
+        (all_samples, "all_samples"),
+        (all_samples, "no_mix"),
+        (all_samples, "no_bulk")
+    ]:
+        enr = enrichment_table.copy().loc[mask]
+
+        # get a unique label for each lola region set
+        enr["label"] = (
+            enr["description"].astype(str) + ", " +
+            enr["cellType"].astype(str) + ", " +
+            enr["tissue"].astype(str) + ", " +
+            enr["antibody"].astype(str) + ", " +
+            enr["treatment"].astype(str))
+        enr["label"] = (
+            enr["label"]
+            .str.replace("nan", "").str.replace("None", "")
+            .str.replace(", , ", "").str.replace(", $", ""))
+
+        # Replace inf values with 
+        enr["pValueLog"] = enr["pValueLog"].replace(
+            np.inf,
+            enr.loc[enr["pValueLog"] != np.inf, "pValueLog"].max()
+        )
+        enr = enr[~enr['pValueLog'].isnull()]
+
+        # Normalize enrichments per dataset with Z-score prior to comparing various region sets
+        for comparison_name in enr['comparison_name'].drop_duplicates():
+            mask = enr['comparison_name'] == comparison_name
+            enr.loc[mask, "z_p"] = scipy.stats.zscore(enr.loc[mask, "pValueLog"])
+
+        # Plot top_n terms of each comparison in barplots
+        top_data = enr.set_index("label").groupby(comp_variable)["pValueLog"].nlargest(top_n).reset_index()
+
+        n = len(enr[comp_variable].drop_duplicates())
+        n_side = int(np.ceil(np.sqrt(n)))
+
+        # pivot table
+        lola_pivot = pd.pivot_table(enr,
+            values="z_p", columns=comp_variable, index="label").fillna(0)
+        lola_pivot = lola_pivot.replace(np.inf, lola_pivot[lola_pivot != np.inf].max().max())
+
+        top = enr.set_index('label').groupby(comp_variable)['pValueLog'].nlargest(top_n)
+        top_terms = top.index.get_level_values('label').unique()
+
+        # plot clustered heatmap
+        shape = lola_pivot.loc[top_terms, :].shape
+        g = sns.clustermap(
+            lola_pivot.loc[top_terms, :], figsize=(max(6, 0.12 * shape[1]), max(6, 0.12 * shape[0])), square=True,
+            cbar_kws={"label": "-log10(p-value) of enrichment\nof differential regions"}, metric="correlation")
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.fig.savefig(os.path.join("results", "fig2c.{}".format(label) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
+
+        # plot sorted heatmap
+        g = sns.clustermap(
+            lola_pivot.loc[top_terms, :], figsize=(max(6, 0.12 * shape[1]), max(6, 0.12 * shape[0])), square=True,
+            cbar_kws={"label": "-log10(p-value) of enrichment\nof differential regions"}, metric="correlation", col_cluster=False)
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.fig.savefig(os.path.join("results", "fig2c.{}.sorted".format(label) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
+
+
+        # plot correlation
+        g = sns.clustermap(
+            lola_pivot.loc[top_terms, :].corr(), figsize=(max(6, 0.12 * shape[1]), max(6, 0.12 * shape[1])), square=True,
+            cbar_kws={"label": "-log10(p-value) of enrichment\nof differential regions"})
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.fig.savefig(os.path.join("results", "fig2c.{}.corr".format(label) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
 
 
 
@@ -539,6 +626,214 @@ def fig2d():
         g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
         g.fig.savefig(os.path.join("results", "fig2d" + ".enrichr.{}.cluster_specific.svg".format(gene_set_library)), bbox_inches="tight", dpi=300)
+
+
+
+    comp_variable ='comparison_name'
+    enrichment_table = pd.read_csv(os.path.join("results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.enrichr.csv"))
+    enrichment_table = enrichment_table[(enrichment_table[comp_variable].str.contains("_")) & (~enrichment_table[comp_variable].str.contains("ulk"))]
+
+    # enrichment_table["description"] = enrichment_table["description"].str.decode("utf-8")
+    enrichment_table["log_p_value"] = (-np.log10(enrichment_table["p_value"])).replace({np.inf: 300})
+
+    for gene_set_library in enrichment_table["gene_set_library"].unique():
+        print(gene_set_library)
+        if gene_set_library == "Epigenomics_Roadmap_HM_ChIP-seq":
+            continue
+
+        enr = enrichment_table[enrichment_table['gene_set_library'] == gene_set_library]
+
+        # Normalize enrichments per dataset with Z-score prior to comparing various region sets
+        for comparison_name in enr['comparison_name'].drop_duplicates():
+            mask = enr['comparison_name'] == comparison_name
+            enr.loc[mask, "z_log_p_value"] = scipy.stats.zscore(enr.loc[mask, "log_p_value"])
+
+        # Plot top_n terms of each comparison in barplots
+        top_data = (
+            enr[enr["gene_set_library"] == gene_set_library]
+            .set_index("description")
+            .groupby(comp_variable)
+            ["log_p_value"]
+            .nlargest(top_n)
+            .reset_index())
+
+        # pivot table
+        enrichr_pivot = pd.pivot_table(
+            enr[enr["gene_set_library"] == gene_set_library],
+            values="z_log_p_value", columns="description", index=comp_variable).fillna(0)
+
+        top = enr[enr["gene_set_library"] == gene_set_library].set_index('description').groupby(comp_variable)['z_log_p_value'].nlargest(top_n)
+        top_terms = top.index.get_level_values('description').unique()
+
+        # plot clustered heatmap
+        shape = enrichr_pivot[list(set(top_terms))].shape
+        g = sns.clustermap(enrichr_pivot[list(set(top_terms))].T, figsize=(max(6, 0.12 * shape[0]), max(6, 0.12 * shape[1])),
+            cbar_kws={"label": "-log10(p-value) of enrichment\nof differential genes"}, metric="correlation", square=True)
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.fig.savefig(os.path.join("results", "fig2d.all_cell_types_clusters" + ".enrichr.{}.cluster_specific.svg".format(gene_set_library)), bbox_inches="tight", dpi=300)
+
+        # plot sorted heatmap
+        g = sns.clustermap(enrichr_pivot[list(set(top_terms))].T, figsize=(max(6, 0.12 * shape[0]), max(6, 0.12 * shape[1])),
+            cbar_kws={"label": "-log10(p-value) of enrichment\nof differential genes"}, metric="correlation", square=True, col_cluster=False)
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.fig.savefig(os.path.join("results", "fig2d.all_cell_types_clusters" + ".sorted.enrichr.{}.cluster_specific.svg".format(gene_set_library)), bbox_inches="tight", dpi=300)
+
+
+def fig2e():
+    cll = analysis.accessibility.loc[:, 
+        (analysis.accessibility.columns.get_level_values("patient_id") != "KI") &
+        (analysis.accessibility.columns.get_level_values("cell_type") == "CLL")]
+
+    bcell = analysis.accessibility.loc[:, 
+        (analysis.accessibility.columns.get_level_values("patient_id") != "KI") &
+        (analysis.accessibility.columns.get_level_values("cell_type") == "Bcell")]
+
+    # fc = np.log2(bcell.mean(axis=1) / cll.mean(axis=1)).sort_values()
+    # sns.distplot(fc)
+
+    m_cll = cll.mean(axis=1)
+    m_cll.name = "CLL"
+    m_bcell = bcell.mean(axis=1)
+    m_bcell.name = "Bcell"
+    cll.columns = cll.columns.get_level_values("sample_name")
+    cll = cll.join(m_cll)
+    cll = cll.join(m_bcell)
+
+    c = cll.corr()
+    c_m = pd.melt(c.reset_index(), id_vars=['index'])
+    res = pd.DataFrame()
+    for sample in c_m['index']:
+        if sample in ['CLL', "Bcell"]: continue
+
+        a1 = c_m.loc[(c_m['index'] == sample) & (c_m['variable'] == "Bcell"), "value"].squeeze()
+        a2 = c_m.loc[(c_m['index'] == sample) & (c_m['variable'] == "CLL"), "value"].squeeze()
+
+        res = res.append(pd.Series([a1, a2] + sample.split("_")[1:-1], index=['bcell', 'cll', 'patient_id', 'timepoint']), ignore_index=True)
+
+    res = res.drop_duplicates()
+
+    res['timepoint'] = res['timepoint'].str.replace("d", "").astype(int)
+    res['ratio'] = res['bcell'] / res['cll']
+
+    g = sns.factorplot(data=res, x='timepoint', y='ratio', col="patient_id")
+
+
+    diff = res.groupby(['patient_id']).apply(lambda x: x.loc[x['timepoint'].argmax(), 'ratio'].squeeze() / x.loc[x['timepoint'] == 0, 'ratio'].squeeze())
+    g = sns.barplot(data=diff.reset_index(), x='patient_id', y=0)
+    
+
+    g = sns.clustermap(cll.loc[fc.abs().sort_values().tail(2000).index, :], yticklabels=False, metric="correlation")
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+
+    # from scipy.optimize import linprog
+
+    # res = np.empty((0, 2))
+    # for i in tqdm(cll.index):
+    #     b = bcell.loc[i, :].mean()
+    #     c = cll.loc[i, :].mean()
+    #     c = [b, c]
+    #     A = [[1, 1]]
+    #     b = [1]
+    #     x0_bounds = (0, None)
+    #     x1_bounds = (0, None)
+
+    #     res = np.vstack([res, linprog(c, A_ub=A, b_ub=b, bounds=(x0_bounds, x1_bounds)).x])
+
+
+
+def fig3a():
+    df = analysis.accessibility.loc[:, 
+        (analysis.accessibility.columns.get_level_values("patient_id") != "KI")]
+
+
+
+
+def transcription_factor_accessibility():
+    from glob import glob
+    import pybedtools
+
+    all_res = pd.DataFrame()
+    for factor_name in ["NFKB", "PU1", "ATF2", "BATF", "NFIC", "IRF4", "RUNX3", "BCL11A", "POL2", "GATA1", "NANOG", "POU5F", "CTCF"]:
+        print(factor_name)
+        # get consensus NFKB regions from LOLA database
+        transcription_factor_regions_sets = glob("/home/arendeiro/resources/regions/LOLACore/hg19/encode_tfbs/regions/*{}*".format(factor_name.capitalize()))[:5]
+        bt = pybedtools.BedTool(transcription_factor_regions_sets[0]).sort()
+        for fn in transcription_factor_regions_sets[1:]:
+            bt = bt.cat(pybedtools.BedTool(fn).sort().merge())
+        bt = bt.merge()
+
+        # get regions overlapping with NFKB sites
+        transcription_factor_r = analysis.sites.intersect(bt, wa=True).to_dataframe(names=['chrom', 'start', 'end'])
+        transcription_factor_r.index = transcription_factor_r['chrom'] + ":" + transcription_factor_r['start'].astype(str) + "-" + transcription_factor_r['end'].astype(str)
+        transcription_factor_a = analysis.accessibility.loc[transcription_factor_r.index].dropna()
+
+        # group regions by quantile of accessibility across all experiments
+        lower = 0.0
+        upper = 1.0
+        n_groups = 10
+        r = np.arange(lower, upper + (upper / n_groups), upper / n_groups)
+        mean = transcription_factor_a.mean(axis=1)
+
+        res = pd.DataFrame()
+        for l_quantile, u_quantile in zip(r, r[1:]):
+            i = mean[(mean.quantile(l_quantile) > mean) & (mean < mean.quantile(u_quantile))].index
+
+            m = transcription_factor_a.loc[i, :].mean()
+            m.index = m.index.get_level_values("sample_name")
+            m['upper_quantile'] = u_quantile
+            res = res.append(m, ignore_index=True)
+        res = res.set_index('upper_quantile')
+        i = pd.DataFrame(map(pd.Series, res.columns.str.split("_")))
+        i[2] = i[2].str.replace('d', '').astype(int)
+        res.columns = pd.MultiIndex.from_arrays(i[[3, 2, 1]].values.T, names=['cell_type', 'timepoint', 'patient_id'])
+
+        res = res.sort_index(axis=1, level=['cell_type', 'timepoint'], sort_remaining=False)
+
+        d = res.dropna().T.groupby(level=['cell_type', 'timepoint']).mean().mean(1).reset_index()
+        d["transcription_factor"] = factor_name
+        all_res = all_res.append(d, ignore_index=True)
+
+
+        g = sns.clustermap(res.dropna().T, col_cluster=False, z_score=1, rasterized=True, figsize=(res.shape[0] * 0.12, res.shape[1] * 0.12), row_cluster=False)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.savefig(os.path.join("results", "fig2X.{}_binding.per_quantile.sorted.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+
+        res_mean = res.dropna().T.groupby(level=['cell_type', 'timepoint']).mean()
+        g = sns.clustermap(res_mean.dropna(), col_cluster=False, z_score=1, rasterized=False, square=True, row_cluster=False)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.savefig(os.path.join("results", "fig2X.{}_binding.per_quantile.mean_patients.sorted.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+
+        # d = pd.melt(res.dropna().T.groupby(level=['cell_type', 'timepoint']).mean().reset_index(), id_vars=['cell_type', 'timepoint'], var_name="quantile", value_name='accessibility')
+        # g = sns.factorplot(data=d, x="timepoint", y="accessibility", hue="quantile", col="cell_type")
+        # g.savefig(os.path.join("results", "fig2X.{}_binding.per_quantile.mean_patients_quantiles.col.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+
+        d = res.dropna().T.groupby(level=['cell_type', 'timepoint']).mean().mean(1).reset_index()
+        # g = sns.factorplot(data=d, x="timepoint", y=0, col="cell_type")
+        # g.savefig(os.path.join("results", "fig2X.{}_binding.per_quantile.mean_patients_all_sites.col.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+        g = sns.factorplot(data=d, x="timepoint", y=0, hue="cell_type")
+        g.savefig(os.path.join("results", "fig2X.{}_binding.per_quantile.mean_patients_all_sites.hue.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+
+        d = res.dropna().T.groupby(level=['cell_type', 'timepoint']).mean().mean(1).reset_index()
+        d["transcription_factor"] = factor_name
+        all_res = all_res.append(d, ignore_index=True)
+
+    all_res = all_res.rename(columns={0: "accessibility"})
+    g = sns.factorplot(data=all_res, x="timepoint", y="accessibility", hue="cell_type", col="transcription_factor", col_wrap=3)
+    g.savefig(os.path.join("results", "fig2X.all_factor_binding.mean_patients.cell_type_hue.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+
+    d = all_res[all_res['cell_type'] == "CLL"]
+    g = sns.factorplot(data=d, x="timepoint", y="accessibility", hue="transcription_factor")
+    g.savefig(os.path.join("results", "fig2X.all_factor_binding.mean_patients.CLL_only.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+
+
+    d_h = d.groupby('transcription_factor')['accessibility'].apply(scipy.stats.zscore).apply(pd.Series)
+    d_h.columns = d['timepoint'].unique()
+
+    g = sns.clustermap(d_h, col_cluster=False, row_cluster=True, vmin=-5, vmax=5, square=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.savefig(os.path.join("results", "fig2X.all_factor_binding.mean_patients.CLL_only.clustermap.svg".format(factor_name)), dpi=300, bbox_inches="tight")
 
 
 # Start project and analysis objects
