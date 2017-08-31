@@ -136,9 +136,11 @@ enrichGeneList.oddsRatio <- function(gene.list, databases = "KEGG_2016", fdr.cut
   }
   
   query.results[,listLength := length(gene.list)]
-  query.results[,hitLength := length(strsplit(genes, ",")[[1]])]
   
-  query.results[,oddsRatio := (hitLength/(listLength-hitLength))/((dbLength-hitLength)/(genome.size-dbLength-listLength+hitLength))]
+  if(nrow(query.results) > 0){
+    query.results$hitLength <- sapply(strsplit(query.results$genes,","), length)
+    query.results[,oddsRatio := (hitLength/(listLength-hitLength))/((dbLength-hitLength)/(genome.size-dbLength-listLength+hitLength))]
+  }
   
   return(query.results)
 }
