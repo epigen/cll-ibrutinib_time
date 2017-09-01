@@ -20,7 +20,7 @@ data.table(pbmc2@meta.data)
 stopifnot(all(rownames(pbmc2@dr$tsne@cell.embeddings) == rownames(pbmc2@meta.data)))
 
 pDat <- data.table(pbmc2@dr$tsne@cell.embeddings, pbmc2@meta.data)
-write.table(pDat2, file=dirout(out, "Cells.txt"), sep="\t",row.names=F, quote=F)
+write.table(pDat, file=dirout(out, "Cells.txt"), sep="\t",row.names=F, quote=F)
 
 ggplot(pDat, aes_string(x="tSNE_1",y="tSNE_2", color="Phase")) + geom_point(alpha=0.3) + ggtitle("Cell cycle") +
   scale_color_manual(values=c("red", "green", "blue"))
@@ -77,6 +77,36 @@ ggsave(dirout(out, "Proportions_pie.pdf"), height=15, width=15)
 write.table(pDat2, file=dirout(out, "Numbers.txt"), sep="\t",row.names=F, quote=F)
 
 
+pDat2 <- fread(dirout(out, "Numbers.txt"))
+
+pDat2[,patient := substr(pDat2$sample, 0,2)]
+
+pDatPT <- pDat2[sample == "PT_d0"]
+pDatPT[,patient := "PT2"]
+pDat3 <- rbind(pDat2, pDatPT)
+pDat3[sample == "PT_d280", patient := "PT2"]
+pDat3 <- pDat3[patient != "KI"]
+
+pDat3[grepl("_d?0d?$", sample), timepoint := "early"]
+pDat3[is.na(timepoint), timepoint := "late"]
+table(pDat3$sample, pDat3$timepoint)
+table(pDat3$patient, pDat3$timepoint)
+
+pDat4 <- dcast.data.table(pDat3[,c("patient", "Phase", "cellType","timepoint", "prop"), with=F], patient + Phase + cellType ~ timepoint, value.var="prop")
+pDat4[is.na(early), early := 0]
+pDat4[is.na(late), late := 0]
+
+pDat4[,sumEarly := sum(early), by=c("patient", "Phase", "cellType")]
+pDat4[,sumLate := sum(late), by=c("patient","Phase", "cellType")]
+
+pDat4[sumLate == 0, early := 0]
+pDat4[sumEarly == 0, late := 0]
+
+
+pDat4[,diff := late - early]
+
+ggplot(pDat4, aes(x=cellType, y=diff, fill=Phase)) + geom_bar(stat="identity",position = "dodge") + facet_grid(patient~.)
+ggsave(dirout(out, "ProportionChanges.pdf"), height=15, width=15)
 
 
 # The Other way -----------------------------------------------------------

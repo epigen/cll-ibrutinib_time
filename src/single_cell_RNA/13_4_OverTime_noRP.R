@@ -194,7 +194,7 @@ for(cell in c("All", unique(res$cellType))){
     hitSets <- split(res2$gene, factor(res2$group))
     
     for(grp.x in names(hitSets)){
-      ret=try(as.data.table(enrichGeneList.oddsRatio(hitSets[[grp.x]],databases = enrichrDBs)),silent = FALSE)
+      ret=try(as.data.table(enrichGeneList.oddsRatio(hitSets[[grp.x]],databases = enrichrDBs,fdr.cutoff=NULL)),silent = FALSE)
       if(!any(grepl("Error",ret)) && nrow(ret) > 0){
         enrichRes <- rbind(enrichRes, data.table(ret, grp = grp.x))
       }
