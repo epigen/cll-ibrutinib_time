@@ -837,15 +837,20 @@ def transcription_factor_accessibility():
     g.savefig(os.path.join("results", "fig2X.all_factor_binding.mean_patients.CLL_only.clustermap.svg".format(factor_name)), dpi=300, bbox_inches="tight")
 
 
-
 def gene_level_accessibility(analysis):
     """
     Get gene-level measurements of chromatin accessibility.
     """
     assert hasattr(analysis, "gene_annotation")
     acc = analysis.accessibility.copy()
-    acc.index = analysis.accessibility.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
-    return = acc.groupby(level=['gene_name']).mean()
+
+    g = analysis.gene_annotation['gene_name'].str.split(",").apply(pd.Series).stack()
+    g.index = g.index.droplevel(1)
+    g.name = "gene_name"
+    acc2 = analysis.accessibility.join(g).drop("gene_name", axis=1)
+    acc2.index = analysis.accessibility.join(g).reset_index().set_index(['index', 'gene_name']).index
+    acc2.columns = analysis.accessibility.columns
+    return acc2.groupby(level=['gene_name']).mean()
 
 
 def cytokine_receptor_repertoire():
@@ -931,16 +936,12 @@ def cytokine_receptor_repertoire():
     g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.region_level.timepoint_mean.clustermap.svg"), dpi=300, bbox_inches="tight")
 
     # Differential regulatory elements with changing ligand or receptor
-
-    # read in changing regions
     output_dir = "/scratch/users/arendeiro/gp_fit_job"
     output_prefix = "gp_fit_job"
     library = "GPy"
     matrix_name="sorted"
     alpha = 0.01
-
     fits = pd.read_csv(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "all_fits.csv"])), index_col=0)
-
     # Get variable regions for all cell types
     variable = fits[(fits['p_value'] < alpha)].index.drop_duplicates()
 
@@ -1074,7 +1075,7 @@ def cytokine_interplay():
         ~ligand_receptor['Pair.Evidence'].str.contains("EXCLUDED"),
         ['Pair.Name', 'Ligand.ApprovedSymbol', 'Receptor.ApprovedSymbol']]
     ligand_receptor.columns = ['pair', 'ligand', 'receptor']
-    ligand_receptor_genes = ligand_receptor['ligand'].unique().tolist() + lr['receptor'].unique().tolist()
+    ligand_receptor_genes = ligand_receptor['ligand'].unique().tolist() + ligand_receptor['receptor'].unique().tolist()
 
     # create receptor->ligand mapping
     receptor_ligand_dict = ligand_receptor[['receptor', 'ligand']].set_index('receptor').to_dict()['ligand']
@@ -1085,14 +1086,31 @@ def cytokine_interplay():
     ligand_receptor_expr = np.log2(1 + ligand_receptor_expr.drop("F5.PrimaryCells.Expression_Max", axis=1).dropna())
     ligand_receptor_expr = ligand_receptor_expr.loc[~(ligand_receptor_expr == 0).all(axis=1), :]
 
-    # Get gene-level accessibility averaged per cell type per timepoint
+    # Get differential regulatory elements with changing ligand or receptor
+    output_dir = "/scratch/users/arendeiro/gp_fit_job"
+    output_prefix = "gp_fit_job"
+    library = "GPy"
+    matrix_name="sorted"
+    alpha = 0.01
+    fits = pd.read_csv(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "all_fits.csv"])), index_col=0)
+    # Get variable regions for all cell types
+    variable = fits[(fits['p_value'] < alpha)].index.drop_duplicates()
+
+    # Get variable genes from those regions
     acc = analysis.accessibility.copy()
+    g = analysis.gene_annotation['gene_name'].str.split(",").apply(pd.Series).stack()
+    g.index = g.index.droplevel(1)
+    g.name = "gene_name"
+    variable_genes = list(set(g.loc[g.index.isin(variable)]))
+
+    # Get gene-level accessibility averaged per cell type per timepoint
+    acc = analysis.accessibility.loc[variable]
     acc.index = analysis.accessibility.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
 
-    acc_mean = acc.T.groupby(['cell_type', 'timepoint']).mean().T
-    acc_mean_gene = acc_mean.groupby(level=['gene_name']).mean()
+    acc_mean_gene = gene_level_accessibility(analysis)
+    acc_mean_gene = acc_mean_gene.T.groupby(['cell_type', 'timepoint']).mean().T
 
-    expression_threshold = 0.1
+    expression_threshold = 0.5
     fig, axis = plt.subplots(2, 2, figsize=(4 * 2, 6 * 2))
     # Get all ligands whose receptor is expressed in CD8 or CD4 cells
     for i, cell_type in enumerate(["CD8+ T cells", "CD4+ T cells"]):
@@ -1102,6 +1120,8 @@ def cytokine_interplay():
         expressed_receptors = expressed[
             expressed.index.get_level_values("ApprovedSymbol")
             .isin(ligand_receptor['receptor'].drop_duplicates())].index.get_level_values("ApprovedSymbol")
+
+        expressed_receptors = expressed_receptors[expressed_receptors.isin(variable_genes)]
         ligands = [receptor_ligand_dict[r] for r in expressed_receptors]
 
         # Get accessibility of ligands in CLL
@@ -1109,14 +1129,17 @@ def cytokine_interplay():
             ligands,
             (acc_mean_gene.columns.get_level_values("cell_type") == "CLL") &
             (acc_mean_gene.columns.get_level_values("timepoint") <= 150)
-        ].apply(scipy.stats.zscore, axis=1).fillna(0)
+        ]
 
         # Get accessibility of receptors in other cell type
         other_receptor_acc = acc_mean_gene.loc[
             expressed_receptors,
             (acc_mean_gene.columns.get_level_values("cell_type") == cell_type_acc) &
             (acc_mean_gene.columns.get_level_values("timepoint") <= 150)
-        ].apply(scipy.stats.zscore, axis=1).fillna(0)
+        ]
+
+        other_receptor_acc = other_receptor_acc.loc[~cll_ligand_acc.isnull().all(1).values].apply(scipy.stats.zscore, axis=1)
+        cll_ligand_acc = cll_ligand_acc.dropna().apply(scipy.stats.zscore, axis=1)
 
         # Cluster ligands in CLL
         dist_mat = scipy.cluster.hierarchy.distance.squareform(scipy.cluster.hierarchy.distance.pdist(cll_ligand_acc, metric="correlation"))
