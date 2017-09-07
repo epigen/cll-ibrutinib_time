@@ -763,6 +763,7 @@ def transcription_factor_accessibility():
         for fn in transcription_factor_regions_sets[1:]:
             bt = bt.cat(pybedtools.BedTool(fn).sort().merge())
         bt = bt.merge()
+        bt.saveas(os.path.join("data", "external", "TF_binding_sites" + factor_name + ".bed"))
 
         # get regions overlapping with NFKB sites
         transcription_factor_r = analysis.sites.intersect(bt, wa=True).to_dataframe(names=['chrom', 'start', 'end'])
@@ -834,6 +835,318 @@ def transcription_factor_accessibility():
     g = sns.clustermap(d_h, col_cluster=False, row_cluster=True, vmin=-5, vmax=5, square=True)
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.savefig(os.path.join("results", "fig2X.all_factor_binding.mean_patients.CLL_only.clustermap.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+
+
+
+def gene_level_accessibility(analysis):
+    """
+    Get gene-level measurements of chromatin accessibility.
+    """
+    assert hasattr(analysis, "gene_annotation")
+    acc = analysis.accessibility.copy()
+    acc.index = analysis.accessibility.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
+    return = acc.groupby(level=['gene_name']).mean()
+
+
+def cytokine_receptor_repertoire():
+    """
+    """
+    assert hasattr(analysis, "gene_annotation")
+
+    # Get cell adhesion molecules (CAMs)
+    from bioservices.kegg import KEGG
+    import requests
+
+    # Get HGNC id to gene symbol mapping
+    url_query = "".join([
+        """http://grch37.ensembl.org/biomart/martservice?query=""",
+        """<?xml version="1.0" encoding="UTF-8"?>""",
+        """<!DOCTYPE Query>""",
+        """<Query  virtualSchemaName = "default" formatter = "CSV" header = "0" uniqueRows = "0" count = "" datasetConfigVersion = "0.6" >""",
+        """<Dataset name = "hsapiens_gene_ensembl" interface = "default" >""",
+		"""<Attribute name = "ensembl_gene_id" />""",
+		"""<Attribute name = "external_gene_name" />""",
+		"""<Attribute name = "hgnc_id" />""",
+		"""<Attribute name = "hgnc_symbol" />""",
+        """</Dataset>""",
+        """</Query>"""])
+    req = requests.get(url_query, stream=True)
+    mapping = pd.DataFrame(
+        (x.strip().split(",") for x in list(req.iter_lines())),
+        columns=["ensembl_gene_id", "gene_name", "hgnc_id", "hgnc_symbol"]).replace("", np.nan)
+
+    # Get HGNC ids from genes in CAM pathway
+    k = KEGG()
+    k.organism = "hsa"
+    k.get("hsa04514 ")
+    genes = list()
+    for kegg_gene in k.parse(k.get("hsa04514"))['GENE']:
+        g = k.parse(k.get("hsa:" + kegg_gene))['DBLINKS']
+        if 'HGNC' in g:
+            genes.append(g['HGNC'])
+
+    cam_genes = mapping.loc[mapping['hgnc_id'].isin(genes), 'hgnc_symbol'].tolist()
+
+    # Bring gene annotation as part of the accessibility index
+    acc = analysis.accessibility.copy()
+    acc.index = analysis.accessibility.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
+
+    # Get all reg. elements which are associated to each gene
+    full_acc = acc.loc[
+        acc.index.get_level_values("gene_name").isin(lr_genes),
+        (acc.columns.get_level_values("patient_id") != "KI") &
+        (acc.columns.get_level_values("timepoint") <= 150) &
+        (acc.columns.get_level_values("cell_type") != "Bulk")]
+    red_acc = full_acc.groupby(level="gene_name").mean()
+
+    full_acc_time = full_acc.T.groupby(level=["cell_type", "timepoint"]).mean().T
+    red_acc_time = red_acc.T.groupby(level=["cell_type", "timepoint"]).mean().T
+
+    w, h = red_acc.shape[0] * 0.01, red_acc.shape[1] * 0.12
+    g = sns.clustermap(
+        red_acc.T, col_cluster=True, row_cluster=True, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.gene_level.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    w, h = full_acc.shape[0] * 0.01, full_acc.shape[1] * 0.12
+    g = sns.clustermap(
+        full_acc.T, col_cluster=True, row_cluster=True, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=False, row_linkage=g.dendrogram_row.linkage, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.region_level.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    w, h = red_acc_time.shape[0] * 0.01, red_acc_time.shape[1] * 0.12
+    g = sns.clustermap(
+        red_acc_time.T, col_cluster=True, row_cluster=False, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.gene_level.timepoint_mean.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    w, h = full_acc_time.shape[0] * 0.001, max(6, full_acc_time.shape[1] * 0.12)
+    g = sns.clustermap(
+        full_acc_time.T, col_cluster=True, row_cluster=False, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.region_level.timepoint_mean.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    # Differential regulatory elements with changing ligand or receptor
+
+    # read in changing regions
+    output_dir = "/scratch/users/arendeiro/gp_fit_job"
+    output_prefix = "gp_fit_job"
+    library = "GPy"
+    matrix_name="sorted"
+    alpha = 0.01
+
+    fits = pd.read_csv(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "all_fits.csv"])), index_col=0)
+
+    # Get variable regions for all cell types
+    variable = fits[(fits['p_value'] < alpha)].index.drop_duplicates()
+
+    full_acc_sig = full_acc.loc[full_acc.index.get_level_values("index").isin(variable.tolist())]
+    red_acc_sig = full_acc_sig.groupby(level="gene_name").mean()
+    full_acc_time_sig = full_acc_sig.T.groupby(level=["cell_type", "timepoint"]).mean().T
+    red_acc_time_sig = red_acc_sig.T.groupby(level=["cell_type", "timepoint"]).mean().T
+
+    w, h = red_acc_sig.shape[0] * 0.01, red_acc_sig.shape[1] * 0.12
+    g = sns.clustermap(
+        red_acc_sig.T, col_cluster=True, row_cluster=True, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.gene_level.sig_only.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    w, h = full_acc_sig.shape[0] * 0.01, full_acc_sig.shape[1] * 0.12
+    g = sns.clustermap(
+        full_acc_sig.T, col_cluster=True, row_cluster=True, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=False, row_linkage=g.dendrogram_row.linkage, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.region_level.sig_only.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    w, h = red_acc_time_sig.shape[0] * 0.01, red_acc_time_sig.shape[1] * 0.12
+    g = sns.clustermap(
+        red_acc_time_sig.T, col_cluster=True, row_cluster=False, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.gene_level.sig_only.timepoint_mean.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    w, h = full_acc_time_sig.shape[0] * 0.01, max(6, full_acc_time_sig.shape[1] * 0.12)
+    g = sns.clustermap(
+        full_acc_time_sig.T, col_cluster=True, row_cluster=False, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.region_level.sig_only.timepoint_mean.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+
+    # Get variable regions for each cell type
+    for cell_type in acc.columns.levels[3]:
+        if cell_type == "Bulk":
+            continue
+        variable = fits[(fits['p_value'] < alpha) & (fits['cell_type'] == cell_type)].index.drop_duplicates()
+
+        full_acc_sig = full_acc.loc[
+            full_acc.index.get_level_values("index").isin(variable.tolist()),
+            full_acc.columns.get_level_values("cell_type") == cell_type]
+        red_acc_sig = full_acc_sig.groupby(level="gene_name").mean()
+        full_acc_time_sig = full_acc_sig.T.groupby(level=["cell_type", "timepoint"]).mean().T
+        red_acc_time_sig = red_acc_sig.T.groupby(level=["cell_type", "timepoint"]).mean().T
+
+        w, h = red_acc_sig.shape[0] * 0.12, red_acc_sig.shape[1] * 0.12
+        g = sns.clustermap(
+            red_acc_sig.T, col_cluster=True, row_cluster=True, z_score=1,
+            figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
+        g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.{}.gene_level.sig_only.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+        w, h = full_acc_sig.shape[0] * 0.05, full_acc_sig.shape[1] * 0.12
+        g = sns.clustermap(
+            full_acc_sig.T, col_cluster=True, row_cluster=True, z_score=1,
+            figsize=(w, h), robust=True, xticklabels=False, row_linkage=g.dendrogram_row.linkage, rasterized=True)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+        g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.{}.region_level.sig_only.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+        w, h = red_acc_time_sig.shape[0] * 0.12, red_acc_time_sig.shape[1] * 0.12
+        g = sns.clustermap(
+            red_acc_time_sig.T, col_cluster=True, row_cluster=False, z_score=1,
+            figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
+        g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.{}.gene_level.sig_only.timepoint_mean.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+        w, h = full_acc_time_sig.shape[0] * 0.05, max(6, full_acc_time_sig.shape[1] * 0.12)
+        g = sns.clustermap(
+            full_acc_time_sig.T, col_cluster=True, row_cluster=False, z_score=1,
+            figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+        g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.{}.region_level.sig_only.timepoint_mean.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+        # Only genes belonging to CAM pathway
+        if cell_type == "CLL":
+            red_acc_time_sig_specific = red_acc_time_sig.loc[
+                (red_acc_time_sig.index.isin(cam_genes)) |
+                (red_acc_time_sig.index.str.startswith("VEG"))]
+            w, h = red_acc_time_sig_specific.shape[0] * 0.12, red_acc_time_sig_specific.shape[1] * 0.12
+            g = sns.clustermap(
+                red_acc_time_sig_specific.T, col_cluster=True, row_cluster=False, z_score=1,
+                figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+            g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
+            g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.{}.gene_level.sig_only.cam_pathway.timepoint_mean.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+            red_acc_time_sig_specific = red_acc_time_sig.loc[
+                (red_acc_time_sig.index.str.startswith("TGF")) |
+                (red_acc_time_sig.index.str.startswith("WNT")) |
+                (red_acc_time_sig.index.str.startswith("NOTCH")) |
+                (red_acc_time_sig.index.str.startswith("NOTCH")) |
+                (red_acc_time_sig.index.str.startswith("TNF")) |
+                (red_acc_time_sig.index.str.startswith("TLR"))]
+            w, h = red_acc_time_sig_specific.shape[0] * 0.12, red_acc_time_sig_specific.shape[1] * 0.12
+            g = sns.clustermap(
+                red_acc_time_sig_specific.T, col_cluster=True, row_cluster=False, z_score=1,
+                figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+            g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
+            g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.{}.gene_level.sig_only.pathways.timepoint_mean.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+            red_acc_time_sig_specific = red_acc_time_sig.loc[
+                (red_acc_time_sig.index.str.startswith("SLC")) |
+                (red_acc_time_sig.index.str.startswith("CD")) |
+                (red_acc_time_sig.index.str.startswith("IL")) |
+                (red_acc_time_sig.index.str.startswith("CXC")) |
+                (red_acc_time_sig.index.str.startswith("CC")) |
+                (red_acc_time_sig.index.str.startswith("CCL"))]
+            w, h = red_acc_time_sig_specific.shape[0] * 0.12, red_acc_time_sig_specific.shape[1] * 0.12
+            g = sns.clustermap(
+                red_acc_time_sig_specific.T, col_cluster=True, row_cluster=False, z_score=1,
+                figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+            g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
+            g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.{}.gene_level.sig_only.cytokine-receptors.timepoint_mean.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+
+def cytokine_interplay():
+    import scipy
+
+    # Get ligand-receptor info 
+    ligand_receptor = pd.read_excel("https://images.nature.com/original/nature-assets/ncomms/2015/150722/ncomms8866/extref/ncomms8866-s3.xlsx", 1)
+    ligand_receptor = ligand_receptor.loc[
+        ~ligand_receptor['Pair.Evidence'].str.contains("EXCLUDED"),
+        ['Pair.Name', 'Ligand.ApprovedSymbol', 'Receptor.ApprovedSymbol']]
+    ligand_receptor.columns = ['pair', 'ligand', 'receptor']
+    ligand_receptor_genes = ligand_receptor['ligand'].unique().tolist() + lr['receptor'].unique().tolist()
+
+    # create receptor->ligand mapping
+    receptor_ligand_dict = ligand_receptor[['receptor', 'ligand']].set_index('receptor').to_dict()['ligand']
+    ligand_receptor_dict = ligand_receptor[['receptor', 'ligand']].set_index('ligand').to_dict()['receptor']
+
+    # expression
+    ligand_receptor_expr = pd.read_excel("https://images.nature.com/original/nature-assets/ncomms/2015/150722/ncomms8866/extref/ncomms8866-s5.xlsx", 1, index_col=[0, 1, 2])
+    ligand_receptor_expr = np.log2(1 + ligand_receptor_expr.drop("F5.PrimaryCells.Expression_Max", axis=1).dropna())
+    ligand_receptor_expr = ligand_receptor_expr.loc[~(ligand_receptor_expr == 0).all(axis=1), :]
+
+    # Get gene-level accessibility averaged per cell type per timepoint
+    acc = analysis.accessibility.copy()
+    acc.index = analysis.accessibility.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
+
+    acc_mean = acc.T.groupby(['cell_type', 'timepoint']).mean().T
+    acc_mean_gene = acc_mean.groupby(level=['gene_name']).mean()
+
+    expression_threshold = 0.1
+    fig, axis = plt.subplots(2, 2, figsize=(4 * 2, 6 * 2))
+    # Get all ligands whose receptor is expressed in CD8 or CD4 cells
+    for i, cell_type in enumerate(["CD8+ T cells", "CD4+ T cells"]):
+        cell_type_acc = cell_type.split("+")[0]
+
+        expressed = ligand_receptor_expr.loc[ligand_receptor_expr[cell_type] > expression_threshold, cell_type]
+        expressed_receptors = expressed[
+            expressed.index.get_level_values("ApprovedSymbol")
+            .isin(ligand_receptor['receptor'].drop_duplicates())].index.get_level_values("ApprovedSymbol")
+        ligands = [receptor_ligand_dict[r] for r in expressed_receptors]
+
+        # Get accessibility of ligands in CLL
+        cll_ligand_acc = acc_mean_gene.loc[
+            ligands,
+            (acc_mean_gene.columns.get_level_values("cell_type") == "CLL") &
+            (acc_mean_gene.columns.get_level_values("timepoint") <= 150)
+        ].apply(scipy.stats.zscore, axis=1).fillna(0)
+
+        # Get accessibility of receptors in other cell type
+        other_receptor_acc = acc_mean_gene.loc[
+            expressed_receptors,
+            (acc_mean_gene.columns.get_level_values("cell_type") == cell_type_acc) &
+            (acc_mean_gene.columns.get_level_values("timepoint") <= 150)
+        ].apply(scipy.stats.zscore, axis=1).fillna(0)
+
+        # Cluster ligands in CLL
+        dist_mat = scipy.cluster.hierarchy.distance.squareform(scipy.cluster.hierarchy.distance.pdist(cll_ligand_acc, metric="correlation"))
+        linkage = scipy.cluster.hierarchy.complete(np.triu(dist_mat))
+        leave_order = scipy.cluster.hierarchy.dendrogram(linkage, no_plot=True)['leaves']
+        cll_ligand_acc = cll_ligand_acc.iloc[leave_order]
+        other_receptor_acc = other_receptor_acc.iloc[leave_order]
+
+        # Plot the accessibility of ligands of the expressed receptors in CLL
+        sns.heatmap(
+            cll_ligand_acc,
+            robust=True, ax=axis[i, 0])
+        axis[i, 0].set_xlabel("Time", ha="center", va="center")
+        axis[i, 0].set_xticklabels(axis[i, 0].get_xticklabels(), rotation=90, ha="right", fontsize="x-small")
+        axis[i, 0].set_ylabel("CLL", ha="center", va="center")
+        axis[i, 0].set_yticklabels(axis[i, 0].get_yticklabels(), rotation=0, ha="right", fontsize="xx-small")
+
+        sns.heatmap(
+            other_receptor_acc,
+            robust=True, ax=axis[i, 1])
+        axis[i, 1].set_xlabel("Time", ha="center", va="center")
+        axis[i, 1].set_xticklabels(axis[i, 1].get_xticklabels(), rotation=90, ha="right", fontsize="x-small")
+        axis[i, 1].set_ylabel(cell_type, ha="center", va="center")
+        axis[i, 1].set_yticklabels(axis[i, 1].get_yticklabels(), rotation=0, ha="right", fontsize="xx-small")
+
+    axis[0, 0].set_title("Ligands")
+    axis[0, 1].set_title("Receptors")
+
+
+
 
 
 # Start project and analysis objects
