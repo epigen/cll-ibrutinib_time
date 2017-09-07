@@ -10,7 +10,7 @@ array=("PT_d0" "PT_d120" "PT_d280" "VZS_d0" \
   "allDataBest_NoDownSampling_noRP"
 )
 
-array=("allDataBest_NoDownSampling_noRP")
+array=("PT_d0")
 
 for file in ${array[@]}
 do            

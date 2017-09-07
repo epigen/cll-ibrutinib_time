@@ -146,7 +146,7 @@ pDat2 <- rbind(pDat2, pDat2.pt)
 # keep only d0 vs d120
 pDat2 <- pDat2[timepoint %in% c("d0", "d120")]
 pDat2 <- pDat2[cellType %in% c("CD8", "CD4", "Mono", "CLL")]# & grepl("PT", sample)]
-
+pDat2[,sample_cell := paste(patient, timepoint, cellType, sep="_")]
 out.details <- paste0(out, "Details/")
 dir.create(dirout(out.details))
 
@@ -155,12 +155,12 @@ geneset <- "HALLMARK_MYC_TARGETS_V1"
 for(geneset in names(genesets)){
   
   # Plot all values as boxplots
-  ggplot(
+  p <- ggplot(
     pDat2,
     aes_string(x="cellType", y=geneset, group="sample_cell", fill="patient", alpha="timepoint")) + 
-    geom_boxplot(outlier.shape=NA) + coord_flip() + 
     scale_color_manual(values=c("grey", "black")) + scale_alpha_manual(values=c(0.35,1))
-  ggsave(dirout(out.details, geneset, "_AllData.pdf"), width=7, height=7)
+  ggsave(dirout(out.details, geneset, "_AllData.pdf"), width=7, height=7, plot=p + geom_boxplot(outlier.shape=NA) + coord_flip())
+  ggsave(dirout(out.details, geneset, "_AllData2.pdf"), width=7, height=7, plot=p + geom_violin() + coord_flip())
   
   # Only t0 as boxplot
   ggplot(

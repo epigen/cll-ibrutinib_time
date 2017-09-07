@@ -165,7 +165,7 @@ if(is.null(pbmc@data.info[["patient"]])){
 
 # analysis of clusters
 # seurat.diff.test <- "bimod"
-# source("src/single_cell_RNA/10_2_Seurat_Script_3.R", echo=TRUE)
+source("src/single_cell_RNA/10_2_Seurat_Script_3.R", echo=TRUE)
 
 # specific over time / t zero analysis
 # source("src/single_cell_RNA/92_OverTime.R", echo=TRUE)

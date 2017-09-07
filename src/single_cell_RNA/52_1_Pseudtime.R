@@ -12,7 +12,8 @@ dir.create(dirout(out))
 
 genes <- c("ITGA4", #CD49D
            "CD200",
-           "CD44"
+           "CD44",
+           "ACTB"
            )
 
 g <- genes[1]
@@ -29,6 +30,3 @@ for(g in genes){
   ggplot(pDat, aes(x=sample, y=expr)) + geom_violin()  + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle(g)
   ggsave(dirout(out, "Gene_violin_", g, ".pdf"))
 }
-
-
-

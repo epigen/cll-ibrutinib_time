@@ -55,6 +55,44 @@ umip <- ggplot(data.table(pbmc@tsne.rot, UMIs=pbmc@data.info$nUMI), aes(x=tSNE_1
 ggsave(dirout(outS, "UMI.pdf"),plot=umip)
 
 
+# PLOT PC information ---------------------------------------------------------------
+source("src/single_cell_RNA/FUNC_Enrichr.R")
+
+message("Plotting PC Info")
+pc.sig <- list()
+for(pc in paste0("PC",1:10)){
+  pc.sig[[pc]] <- pbmc@var.genes[rank(-abs(pbmc@pca.x[[pc]])) <= 30]
+}
+
+# Overlaps
+pdf(dirout(outS, "PC_Overlaps.pdf"))
+gplots::venn(pc.sig[paste0("PC", 1:5)])
+dev.off()
+
+ii <- gplots::venn(pc.sig[paste0("PC", 1:5)], intersections=TRUE,show.plot=F)
+ii2 <- attr(ii, "intersections")
+file.remove(dirout(outS, "PC_Intersections.txt"))
+lapply(names(ii2), function(inam){
+  write(inam, file = dirout(outS, "PC_Intersections.txt"), append=T)
+  write(paste(ii2[[inam]], collapse=" "), file = dirout(outS, "PC_Intersections.txt"), append=T)
+  write("   ", file = dirout(outS, "PC_Intersections.txt"), append=T)
+})
+
+# EnrichR
+enrichRes <- data.table()
+enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location")
+for(grp.x in names(pc.sig)){
+  ret=try(as.data.table(enrichGeneList.oddsRatio(pc.sig[[grp.x]],databases = enrichrDBs)),silent = FALSE)
+  if(!any(grepl("Error",ret)) && nrow(ret) > 0){
+    enrichRes <- rbind(enrichRes, data.table(ret, grp = grp.x))
+  }
+}
+write.table(enrichRes[qval < 0.05], file=dirout(outS, "PC_Enrichments.tsv"), sep="\t", quote=F, row.names=F)
+enrichr.plot(enrichRes)
+ggsave(dirout(outS, "PC_Enrichments.pdf"), height=min(29, length(unique(enrichRes[qval < 0.05]$category))*0.3 + 4), width=10)
+
+
+
 # # AGGREGATED DATA ANALYSIS ------------------------------------------------
 # # Plot samples
 # message("Plotting samples per dataset")

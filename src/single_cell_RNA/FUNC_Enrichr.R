@@ -147,3 +147,40 @@ enrichGeneList.oddsRatio <- function(gene.list, databases = "KEGG_2016", fdr.cut
 
 
 
+
+# PLOT ENRICHR ------------------------------------------------------------
+enrichr.plot <- function(enrichRes, qval.cap = 4, qval.cutoff = 0.05){
+  enrichRes$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", enrichRes$category)
+  enrichRes$category <- abbreviate(enrichRes$category, minlength=50) # substr(enrichRes$category2, 0, 50)
+  if(!is.na(qval.cap)) enrichRes[, mLog10Q := pmin(-log10(qval),qval.cap)]
+  
+  # order terms by similarity (of OR)
+  enrichRes[,term := paste0(category, "_", dbLength)]
+  if(length(unique(enrichRes$term)) >= 2){
+    try({
+      orMT <- t(as.matrix(dcast.data.table(enrichRes, grp ~ term, value.var="oddsRatio")[,-"grp",with=F]))
+      orMT[is.na(orMT)] <- 1
+      hclustObj <- hclust(dist(orMT))
+      enrichRes$term <- factor(enrichRes$term, levels=hclustObj$labels[hclustObj$order])
+    },silent=T)
+  }
+  
+  # order groups by similarity (of OR)
+  if(length(unique(enrichRes$grp)) >= 2){
+    try({
+      orMT <- t(as.matrix(dcast.data.table(enrichRes, term ~ grp, value.var="oddsRatio")[,-"term",with=F]))
+      orMT[is.na(orMT)] <- 1
+      hclustObj <- hclust(dist(orMT))
+      enrichRes$grp <- factor(enrichRes$grp, levels=hclustObj$labels[hclustObj$order])
+    }, silent=T)
+  }
+  
+  # plot
+  p <- ggplot(enrichRes[term %in% enrichRes[,.(min(qval)), by="term"][V1 < qval.cutoff]$term], 
+         aes(x=grp, y=term, size=log10(oddsRatio), color=mLog10Q)) + 
+    geom_point() + scale_color_gradient(low="white", high="red") + theme_bw(12) + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  if(!is.na(qval.cap)) p <- p + ggtitle(paste0("-log10(q) capped at ", qval.cap))
+  
+  return(p)
+}

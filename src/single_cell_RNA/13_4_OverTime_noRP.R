@@ -110,9 +110,10 @@ ggsave(dirout(out, "Comparison_to_old.pdf"))
 
 
 # ANALYSIS OVER ALL CELLS -------------------------------------------------
-cell <- "All"
+cell <- "CD8"
 for(cell in c("All", unique(res$cellType))){
   print(cell)
+  filter <- ""
   for(filter in c("")){
     res2 <- res.sig
     
@@ -120,37 +121,37 @@ for(cell in c("All", unique(res$cellType))){
       res2 <- res.sig[cellType == cell]
     }
 
-    gene.cnt <- res2[,.N, by="gene"]
-    gene.cnt <- gene.cnt[order(N, decreasing=TRUE)][!grepl("RP", gene)]
-    genes <- gene.cnt[1:min(100, nrow(gene.cnt))]$gene
-    res3 <- res2[gene %in% genes]
-    
-    # Heatmap over all changes
-    pDT <- dcast.data.table(res2, gene ~ cellPat, value.var="logFC")
-    pMT <- as.matrix(pDT[, -"gene", with=F])
-    rownames(pMT) <- pDT$gene
-    distx <- dist(pMT[genes,])
-    distx[is.na(distx)] <- max(distx,na.rm=T)
-    res3$gene <- factor(res3$gene, levels=rownames(pMT[genes,])[hclust(distx)$order])
-    
-    # Dot plot for top significant genes in all samples
-    ggplot(
-      res3, 
-      aes(y=gene, x=cellPat, color=logFC, size=logqval)) +
-      theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
-      geom_point() + scale_color_gradient2(low="blue", mid="white", high="red")
-    ggsave(dirout(out, cell, "_Genes_Dot",filter,".pdf"), height=length(genes)*0.2+3, width=7)
-    
-    # Heatmap over all changes
-    pDT <- dcast.data.table(res2, gene ~ cellPat, value.var="logFC")
-    pMT <- as.matrix(pDT[, -"gene", with=F])
-    pCor <- cor(pMT, use="pairwise.complete.obs", method="spearman")
-    annot <- data.frame(do.call(rbind, strsplit(colnames(pMT), "_")),row.names=colnames(pMT))
-    try({
-      pdf(dirout(out, cell, "_CorrHeatmap",filter,".pdf"), onefile=F, height=7, width=8)
-      pheatmap(pCor,annotation_row=annot)
-      dev.off()
-    }, silent=T)
+#     gene.cnt <- res2[,.N, by="gene"]
+#     gene.cnt <- gene.cnt[order(N, decreasing=TRUE)][!grepl("RP", gene)]
+#     genes <- gene.cnt[1:min(100, nrow(gene.cnt))]$gene
+#     res3 <- res2[gene %in% genes]
+#     
+#     # Heatmap over all changes
+#     pDT <- dcast.data.table(res2, gene ~ cellPat, value.var="logFC")
+#     pMT <- as.matrix(pDT[, -"gene", with=F])
+#     rownames(pMT) <- pDT$gene
+#     distx <- dist(pMT[genes,])
+#     distx[is.na(distx)] <- max(distx,na.rm=T)
+#     res3$gene <- factor(res3$gene, levels=rownames(pMT[genes,])[hclust(distx)$order])
+#     
+#     # Dot plot for top significant genes in all samples
+#     ggplot(
+#       res3, 
+#       aes(y=gene, x=cellPat, color=logFC, size=logqval)) +
+#       theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+#       geom_point() + scale_color_gradient2(low="blue", mid="white", high="red")
+#     ggsave(dirout(out, cell, "_Genes_Dot",filter,".pdf"), height=length(genes)*0.2+3, width=7)
+#     
+#     # Heatmap over all changes
+#     pDT <- dcast.data.table(res2, gene ~ cellPat, value.var="logFC")
+#     pMT <- as.matrix(pDT[, -"gene", with=F])
+#     pCor <- cor(pMT, use="pairwise.complete.obs", method="spearman")
+#     annot <- data.frame(do.call(rbind, strsplit(colnames(pMT), "_")),row.names=colnames(pMT))
+#     try({
+#       pdf(dirout(out, cell, "_CorrHeatmap",filter,".pdf"), onefile=F, height=7, width=8)
+#       pheatmap(pCor,annotation_row=annot)
+#       dev.off()
+#     }, silent=T)
 
     
     
@@ -232,7 +233,7 @@ for(cell in c("All", unique(res$cellType))){
       # plot
       ggplot(enrichRes[term %in% enrichRes[,.(min(qval)), by="term"][V1 < 0.05]$term], 
              aes(x=grp, y=term, size=log10(oddsRatio), color=mLog10Q)) + 
-        geom_point() + scale_color_gradient(low="white", high="red") + theme_bw(12) + 
+        geom_point() + scale_color_gradient(low="grey", high="red") + theme_bw(12) + 
         theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("-log10(q) capped at 4")
       ggsave(dirout(out, cell,  "_EnrichOR_", filter,".pdf"), width=min(29, 6+ length(unique(enrichRes$grp))*0.3), height=min(29, length(unique(enrichRes$category))*0.3 + 4))
   

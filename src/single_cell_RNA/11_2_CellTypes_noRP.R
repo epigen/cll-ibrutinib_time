@@ -19,10 +19,10 @@ if(seurat.diff.test == "tobit"){
 dir.create(dirout(out))
 
 
-cell = "CD8"
+cell = "NKcells"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 1) {
-  stop("Need two arguments: 1 - filter to use")
+  stop("Need arguments: 1 - celltype")
 } else {
   cell <- args[1]
 }
@@ -144,6 +144,19 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   }
 }
 
+str(pbmc@pca.rot)
+str(pbmc@data.info)
+pcDat <- data.table(pbmc@pca.rot, sample=pbmc@data.info$sample)
+pcDat2 <- melt(pcDat,id.vars="sample")[variable %in% paste0("PC", 1:10)]
+ggplot(pcDat2, aes(x=sample, y=value)) + geom_violin() + facet_grid(variable ~ .) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+ggsave(dirout(out, "PC_Distr_",cell,".pdf"), height=29, width=29)
+  
+for(pc in unique(pcDat2$variable)){
+  ggplot(pcDat2[variable == pc], aes(x=sample, y=value)) + geom_violin() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  ggsave(dirout(out, "PC_Distr_",cell,"_", pc,".pdf"), height=15, width=15)
+}
 # Signature Gene Analysis ---------------------------------------------------------
 # geneSetFiles <- list(
 #   hallmark = "/data/groups/lab_bock/shared/resources/gene_sets/MSigDB/6.0/Human/h.all.v6.0.symbols.gmt",
