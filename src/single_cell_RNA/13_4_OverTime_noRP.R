@@ -244,3 +244,30 @@ for(cell in c("All", unique(res$cellType))){
 
 
 
+atac.signaling.genes <- fread(dirout("cll-time_course.ligand-receptor_repertoire.CLL.gene_level.sig_only.timepoint_mean.clustermap.csv"))$V1
+ramilowski.rec_lig <- fread("~/resources_nfortelny/PairsLigRec_Ramilowski_NatComm_2015.txt")
+signaling.genes <- unique(c(atac.signaling.genes, ramilowski.rec_lig$Ligand.ApprovedSymbol, ramilowski.rec_lig$Receptor.ApprovedSymbol)) 
+
+res.reclig <- res[gene %in% signaling.genes]
+res.reclig[, significant := any(qvalue < 0.05) | abs(logFC) > 0.3, by= "gene"]
+res.reclig[, significant2 := any(qvalue < 0.05) | abs(logFC) > 1, by= "gene"]
+
+
+# order groups by similarity (of OR)
+if(length(unique(res.reclig$gene)) >= 2){
+  try({
+    orMT <- t(as.matrix(dcast.data.table(res.reclig, cellPat ~ gene, value.var="logFC")[,-"cellPat",with=F]))
+    orMT[is.na(orMT)] <- 1
+    hclustObj <- hclust(dist(orMT))
+    res.reclig$gene <- factor(res.reclig$gene, levels=hclustObj$labels[hclustObj$order])
+  }, silent=T)
+}
+
+
+ggplot(res.reclig[significant == TRUE], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
+ggsave(dirout(out, "Receptor_Ligand.pdf"), height=29, width=15)
+
+ggplot(res.reclig[significant2 == TRUE], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
+ggsave(dirout(out, "Receptor_Ligand_Strict.pdf"), height=25, width=15)

@@ -59,11 +59,11 @@ if(file.exists("metadata/CellMarkers.csv")){
 }
 
 # PLOT UMIS ---------------------------------------------------------------
-message("Plotting UMIs")
-umip <- ggplot(data.table(pbmc@dr$tsne@cell.embeddings, UMIs=pbmc@meta.data$nUMI), aes(x=tSNE_1,y=tSNE_2, color=log10(UMIs))) + 
-  scale_color_gradient(low="blue", high="red") +
-  geom_point() + ggtitle(paste(sample.x, "\n",nrow(pbmc@data), "genes\n", ncol(pbmc@data), "cells")) + theme_bw(24)
-ggsave(dirout(outS, "UMI.pdf"),plot=umip)
+# message("Plotting UMIs")
+# umip <- ggplot(data.table(pbmc@dr$tsne@cell.embeddings, UMIs=pbmc@meta.data$nUMI), aes(x=tSNE_1,y=tSNE_2, color=log10(UMIs))) + 
+#   scale_color_gradient(low="blue", high="red") +
+#   geom_point() + ggtitle(paste(sample.x, "\n",nrow(pbmc@data), "genes\n", ncol(pbmc@data), "cells")) + theme_bw(24)
+# ggsave(dirout(outS, "UMI.pdf"),plot=umip)
 
 
 # PLOT CLUSTERS
@@ -78,7 +78,7 @@ for(cl.x in clusterings){
   ggplot(pDat[get(cl.x) != "IGNORED"], aes_string(x=cl.x)) + geom_bar() + coord_flip()
   ggsave(dirout(outS, "Cluster_counts_", cl.x, ".pdf"))  
   
-  ggplot(pDat, aes_string(x="tSNE_1",y="tSNE_2", color=cl.x)) + geom_point(alpha=0.5) + ggtitle(sample.x) +
+  ggplot(pDat, aes_string(x="tSNE_1",y="tSNE_2", color=cl.x)) + geom_point(alpha=0.5) + # ggtitle(sample.x) +
     geom_label(data=labelCoordinates, aes_string(x="tSNE_1", y="tSNE_2", label=cl.x), color="black", alpha=0.5)
   ggsave(dirout(outS, "Cluster_tSNE_", cl.x, ".pdf"))
 }
@@ -207,9 +207,11 @@ for(cl.x in clusterings){
       }
       # Plot for all clusters heatmap
       cllDiffSummary <- allClDiff[,.(minDiff = min(diff2),N=.N), by=c("up", "gene")][N == length(clusters)-1][,rank := rank(-minDiff), by="up"]
-      pdf(dirout(outS, "Cluster_HM_",x, ".pdf"), width=10, height=min(29, nrow(cllDiffSummary[rank < 20])/10))
-      DoHeatmap(pbmc, genes.use=cllDiffSummary[rank < 20][order(up)]$gene,order.by.ident=TRUE,slim.col.label=TRUE,remove.key=TRUE)
-      dev.off()
+      try({
+        pdf(dirout(outS, "Cluster_HM_",x, ".pdf"), width=10, height=min(29, nrow(cllDiffSummary[rank < 20])/10))
+        DoHeatmap(pbmc, genes.use=cllDiffSummary[rank < 20][order(up)]$gene,order.by.ident=TRUE,slim.col.label=TRUE,remove.key=TRUE)
+        dev.off()
+      }, silent=TRUE)
     }
   }
 }
