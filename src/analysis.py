@@ -858,6 +858,14 @@ def cytokine_receptor_repertoire():
     """
     assert hasattr(analysis, "gene_annotation")
 
+    # Get ligand-receptor info 
+    lr = pd.read_excel("https://images.nature.com/original/nature-assets/ncomms/2015/150722/ncomms8866/extref/ncomms8866-s3.xlsx", 1)
+    lr = lr.loc[
+        ~lr['Pair.Evidence'].str.contains("EXCLUDED"),
+        ['Pair.Name', 'Ligand.ApprovedSymbol', 'Receptor.ApprovedSymbol']]
+    lr.columns = ['pair', 'ligand', 'receptor']
+    lr_genes = lr['ligand'].unique().tolist() + lr['receptor'].unique().tolist()
+
     # Get cell adhesion molecules (CAMs)
     from bioservices.kegg import KEGG
     import requests
@@ -1021,6 +1029,8 @@ def cytokine_receptor_repertoire():
             figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
         g.savefig(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.{}.region_level.sig_only.timepoint_mean.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+        red_acc_time_sig.to_csv(os.path.join("results", analysis.name + ".ligand-receptor_repertoire.{}.gene_level.sig_only.timepoint_mean.clustermap.csv".format(cell_type)), index=True)
 
         # Only genes belonging to CAM pathway
         if cell_type == "CLL":

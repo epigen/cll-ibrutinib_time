@@ -31,10 +31,15 @@ matplotlib.rcParams["svg.fonttype"] = "none"
 matplotlib.rc('text', usetex=False)
 
 
-def seurat_rdata_to_pandas(rdata_file, object_name="pbmc", preloaded=False):
+def seurat_rdata_to_pandas(rdata_file, object_name="pbmc", preloaded=False, data_type="normalized"):
     """
     Load an Rdata file storing an Seurat analysis object and
     extract the processed expression matrix and its metadata into pandas dataframes.
+
+    `rdata_file`: path to RData
+    `object_name`: name of Seurat object
+    `preloaded`: Attempt to 
+    `data_type`: one of "raw" or "normalized".
     """
     from rpy2.robjects import numpy2ri, pandas2ri
     import rpy2.robjects as robjects
@@ -42,23 +47,31 @@ def seurat_rdata_to_pandas(rdata_file, object_name="pbmc", preloaded=False):
     pandas2ri.activate()
 
     _load = robjects.r('load')
-    _load(rdata_file)
+    if not preloaded:
+        _load(rdata_file)
     pbmc = robjects.r[object_name]
 
     # Data
-    data = pbmc.slots['data']
-    x = robjects.r('as.matrix(pbmc@data)')
-    indexes = data.slots['Dimnames']
-    gene_index = pd.Series(np.asarray(indexes[0]), name='gene_index')
-    cell_index = pd.Series(np.asarray(indexes[1]), name='cell_index')
+    if data_type == "raw":
+        _data_type = "raw.data"
+    elif data_type == "normalized":
+        _data_type = "data"
+    data = pbmc.slots[_data_type]
+    x = robjects.r('as.matrix({}@{})'.format(object_name, _data_type))
+    gene_index = pd.Series(robjects.r('rownames({}@{})'.format(object_name, _data_type)), name='gene_index')
+    cell_index = pd.Series(robjects.r('colnames({}@{})'.format(object_name, _data_type)), name='cell_index')
 
     # Metadata
-    metadata_names = np.asarray(pbmc.slots['data.info'].names)
-    metadata = [np.asarray(m) for m in pbmc.slots['data.info']]
+    if data_type == "raw":
+        metadata = None
+    elif data_type == "normalized":
+        metadata = pd.DataFrame(
+            [np.asarray(m) for m in pbmc.slots['data.info']],
+            columns=cell_index, index=np.asarray(pbmc.slots['data.info'].names)).T
 
     return (
         pd.DataFrame(x, index=gene_index, columns=cell_index),
-        pd.DataFrame(metadata, columns=cell_index, index=metadata_names).T
+        metadata
     )
 
 
@@ -441,3 +454,137 @@ plt.scatter(
     fit[0], fit[1],
     alpha=0.2, s=2, c=plt.get_cmap("inferno")(metadata.loc[sel_cells, "timepoint"]), cmap="inferno"
 )
+
+
+###
+# Let's try a different normalization
+rdata_file = "results/single_cell_RNA/10_Seurat/allDataBest_NoDownSampling_noIGH/allDataBest_NoDownSampling_noIGH.RData"
+
+# load up raw gene expression
+expression, _ = seurat_rdata_to_pandas(rdata_file, object_name="pbmc", preloaded=False, data_type="raw")
+
+# Get cell's metadata
+norm_e, metadata = seurat_rdata_to_pandas(rdata_file, object_name="pbmc", preloaded=True, data_type="normalized")
+# Filter out cells not present in the Seurat normalized data
+expression = expression.loc[:, metadata.index]
+
+# Filter out genes
+# not expressed
+expression = expression.loc[~(expression.sum(axis=1) == 0)]
+
+# ribossomal/mitochondrial genes
+expression = expression.loc[
+    (~expression.index.str.startswith("RP-")) &
+    (~expression.index.str.contains("^RP\d+-")) &
+    (~expression.index.str.contains("^RPS")) &
+    (~expression.index.str.contains("^RPL")) &
+    (~expression.index.str.startswith("MT-")), :]
+
+# filter lowly expressed genes
+# (not covered in at least x% cells)
+perc_cells = 5.0
+expression = expression.loc[(expression != 0).sum(axis=1) > (expression.shape[1] / perc_cells), :]
+
+# normalize to TPM
+expression_norm = (expression / expression.sum()) * 1e3
+expression_norm = np.log2(1 + expression_norm)
+
+
+# Plot example genes from distribution of expression
+n = 9
+w = h = int(np.sqrt(n))
+fig, axis = plt.subplots(h, w + 1, figsize=((w + 1) * 4, h * 4))
+axis = axis.flatten()
+axis[0].set_xlabel("Mean expression (log(TPM))")
+axis[0].set_ylabel("Cell count")
+sns.distplot(expression_norm.mean(axis=0), kde=False, ax=axis[0])
+axis[1].set_xlabel("Mean expression (log(TPM))")
+axis[1].set_ylabel("Gene count")
+sns.distplot(expression_norm.mean(axis=1), kde=False, ax=axis[1])
+axis[2].set_xlabel("Mean expression (log(TPM))")
+axis[2].set_ylabel("Coeffient of deviation (STD/MEAN)")
+axis[2].scatter(x=expression_norm.mean(axis=1), y=(expression_norm.std(axis=1) / expression_norm.mean(axis=1)), alpha=0.1, s=5, rasterized=True)
+
+# pick genes from top 5% expression, middle 50%
+gene_mean = expression_norm.mean(axis=1).sort_values()
+m = int(gene_mean.shape[0] / 2.)
+example_genes = (
+    gene_mean.head(3).index.tolist() +
+    gene_mean.iloc[[m, m + 1, m + 2]].index.tolist() + 
+    gene_mean.tail(3).index.tolist())
+
+for i, gene in enumerate(example_genes):
+    axis[3 + i].set_title(gene)
+    sns.distplot(expression_norm.loc[gene], kde=False, ax=axis[3 + i])
+    axis[3 + i].set_xlabel("Expression (log(TPM))")
+    axis[3 + i].set_ylabel("Cell count")
+sns.despine(fig)
+fig.savefig(os.path.join("results", "cll-time_course.single_cell.all_samples.no_bad_genes.tpm_norm.dist_and_example_genes.svg"), dpi=300, bbox_inches="tight")
+
+
+# Label matrix with metadata (Multiindex columns)
+metadata = metadata.loc[expression_norm.columns]
+
+meta = metadata[["nGene", "nUMI", "sample", "cellType"]]
+meta.columns = ["n_genes", "n_umis", "sample", "cell_type"]
+meta['patient_id'] = meta['sample'].str.split("_").apply(lambda x: x[0])
+meta['patient_id'] = meta['patient_id'].str.replace("\d+", "")
+meta['timepoint'] = meta['sample'].str.split("_").apply(lambda x: int(x[-1].replace("d", "")))
+
+
+expression_norm.columns = pd.MultiIndex.from_arrays(meta.T.values, names=meta.columns)
+
+# See expression of Cytokines/Receptors with time
+cytokine_genes = pd.read_csv(os.path.join("results", "cll-time_course.ligand-receptor_repertoire.CLL.gene_level.sig_only.timepoint_mean.clustermap.csv"), index_col=0)
+
+g = sns.clustermap(expression_norm.loc[cytokine_genes.index].dropna().T.groupby(level=['cell_type', 'timepoint']).mean(), row_cluster=False)#, z_score=1)
+g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+
+
+
+g = sns.clustermap(
+    expression_norm.loc[
+        (expression_norm.index.str.contains("^CD\d+")) |
+        (expression_norm.index.str.contains("^IL\d+"))].T.groupby(level=['cell_type', 'timepoint']).mean(),
+    row_cluster=False)
+g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+
+e = expression_norm.T.groupby(level=['cell_type', 'timepoint']).mean()
+e = e.loc[e.index.get_level_values("cell_type") == "CLL"]
+
+e = e.loc[:, e.sum() != 0]
+g = sns.clustermap(
+    e.T.loc[
+        (e.columns.str.contains("^TNF")) |
+        (e.columns.str.contains("^WNT")) |
+        (e.columns.str.contains("^TGF")), :],
+    col_cluster=False, metric="correlation", z_score=0)
+g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+
+
+
+sns.violinplot(data=expression_norm.loc[["CD44"], expression_norm.columns.get_level_values("cell_type") == 'CLL'].T.reset_index(), x='timepoint', y ='CD44')
+sns.swarmplot(data=expression_norm.loc[["CD44"], expression_norm.columns.get_level_values("cell_type") == 'CLL'].T.reset_index(), x='timepoint', y ='CD44')
+
+
+# Differential expression
+
+results = least_squares_fit(
+    quant_matrix=expression_norm.loc[:,
+        (expression_norm.columns.get_level_values("cell_type") == "CD8") &
+        (expression_norm.columns.get_level_values("timepoint") <= 120)].T,
+    design_matrix=meta[
+        (meta["cell_type"] == "CD8") &
+        (meta["timepoint"] <= 120)
+    ],
+    test_model="~ patient_id + timepoint", null_model="~ 1", standardize_data=True, multiple_correction_method="fdr_bh")
+
+results.loc[:, 'timepoint'].sort_values().head(100).index.to_series().to_clipboard(index=False)
+results.loc[:, 'timepoint'].sort_values().tail(100).index.to_series().to_clipboard(index=False)
+
+results.loc[:, 'timepoint'].sort_values().tail(250).index.to_series().to_clipboard(index=False)
+results.loc[:, 'timepoint'].sort_values().tail(500).index.to_series().to_clipboard(index=False)
+
