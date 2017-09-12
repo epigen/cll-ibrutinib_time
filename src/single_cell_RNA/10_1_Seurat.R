@@ -28,7 +28,7 @@ if (length(args) > 0) {
 
 
 seurat.min.genes <- 200
-seurat.diff.test <- "tobit"
+seurat.diff.test <- "negbinom"
 
 # This tells Seurat whether to use the filtered or raw data matrices
 # cellranger_filtered <- "filtered"
@@ -50,9 +50,9 @@ mito.cutoff <- 0.15
 nGene.cutoff <- 3000
 
 # Loop over samples and do analysis
-sample.x <- "allDataBest_NoDownSampling_noRP"
+sample.x <- f[1]
 for(sample.x in f){
-  outS <- paste0(out, sample.x,"/")
+  outS <- paste0(out, sample.x, "_", seurat.diff.test, "/")
   dir.create(dirout(outS))
   message(sample.x)
   tryCatch({
@@ -67,8 +67,14 @@ for(sample.x in f){
       if(grepl("\\_noIGH$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
         data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_noIGH$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
       }
+      if(grepl("\\_noIGHLK$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
+        data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_noIGHLK$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
+      }
       if(grepl("\\_noRP$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
         data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_noRP$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
+      }
+      if(grepl("\\_noRPstrict$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
+        data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_noRPstrict$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
       }
       if(grepl("\\_tissueGenes$", sample.x)){ # in this case the same data is loaded by IGH genes are removed
         data.path <- paste0(getOption("PROCESSED.PROJECT"), "results/cellranger_count/", gsub("\\_tissueGenes$", "", sample.x),"/outs/",cellranger_filtered,"_gene_bc_matrices_mex/GRCh38/")
@@ -84,11 +90,24 @@ for(sample.x in f){
         pbmc.data <- pbmc.data[allGenes[!allGenes %in% ighGenes],]
       }
       
-      # Remove IGH genes
+      if(grepl("\\_noIGHLK$", sample.x)){
+        allGenes <- rownames(pbmc.data)
+        ighGenes <- allGenes[(grepl("^IGH", allGenes) & !grepl("^IGHMBP", allGenes)) | grepl("^IGL", allGenes) | grepl("^IGK", allGenes)]
+        pbmc.data <- pbmc.data[allGenes[!allGenes %in% ighGenes],]
+      }
+      
+      # Remove IGH and RP*-* genes
       if(grepl("\\_noRP$", sample.x)){
         allGenes <- rownames(pbmc.data)
         rm.genes <- allGenes[grepl("^RP.*?-.*", allGenes)]
         rm.genes <- c(rm.genes,allGenes[grepl("^IGH", allGenes) & !grepl("^IGHMBP", allGenes)])
+        pbmc.data <- pbmc.data[allGenes[!allGenes %in% rm.genes],]
+      }
+      
+      # Remove RP*-* genes
+      if(grepl("\\_noRPstrict$", sample.x)){
+        allGenes <- rownames(pbmc.data)
+        rm.genes <- allGenes[grepl("^RP.*?-.*", allGenes) | grepl("^RP[LS]\\d+[AX]?$", allGenes) | grepl("^MT-", allGenes)]
         pbmc.data <- pbmc.data[allGenes[!allGenes %in% rm.genes],]
       }
       
@@ -182,6 +201,8 @@ for(sample.x in f){
         save(pbmc, file=dirout(outS, sample.x,".RData"))
       }
     }
+    
+    max.nr.of.cores <- 1
     
     #     pbmc@data.info[["sample"]] <- NULL
     source("src/single_cell_RNA/10_2_Seurat_Script_3.R")

@@ -8,7 +8,8 @@ enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chr
 if(!exists("extra.genes.to.plot")) extra.genes.to.plot <- c()
 if(!exists("seurat.diff.test")) seurat.diff.test <- "tobit"
 if(!exists("max.nr.of.cores")) max.nr.of.cores <- 3
-     
+if(!exists("seurat.min.pct")) seurat.min.pct <- 0.25
+
 
 print(dim(pbmc@data))
 
@@ -106,7 +107,7 @@ foreach(cl.x = clusterings) %dopar% {
       # message(cl.i)
       if(!file.exists(dirout(out.cl, "Markers_Cluster",cl.i, ".tsv"))){
         try({
-          cluster.markers <- FindMarkers(pbmc,  ident.1 = cl.i, ident.2 = clusters[clusters != cl.i],test.use=seurat.diff.test, min.pct = 0.25)    
+          cluster.markers <- FindMarkers(pbmc,  ident.1 = cl.i, ident.2 = clusters[clusters != cl.i],test.use=seurat.diff.test, min.pct = seurat.min.pct)    
           pdf(dirout(out.cl,"Markers_Cluster",cl.i,".pdf"), height=15, width=15)
           FeaturePlot(pbmc, row.names(cluster.markers)[1:min(nrow(cluster.markers),9)],cols.use = c("grey","blue"))
           dev.off()
@@ -139,7 +140,7 @@ foreach(cl.x = clusterings) %dopar% {
         cl2 <- clusters[i2]
         if(!file.exists(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")) & !file.exists(dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv"))){
           try({
-            cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, test.use=seurat.diff.test, min.pct = 0.25)
+            cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, test.use=seurat.diff.test, min.pct = seurat.min.pct)
             mm <- row.names(cluster.markers)
             mm <- mm[mm %in% row.names(pbmc@data)]
             if(length(mm) > 0){
@@ -225,7 +226,7 @@ message("EnrichR on markers")
 # library(enrichR) #devtools::install_github("definitelysean/enrichR")
 source("src/single_cell_RNA/FUNC_Enrichr.R")
 cl.x <- "patient"
-cl.x <- "sample"
+cl.x <- "StateEndpoints"
 for(cl.x in clusterings){
   if(!is.null(pbmc@meta.data[[cl.x]])){
     x <- gsub("ClusterNames_","", cl.x)
@@ -241,7 +242,7 @@ for(cl.x in clusterings){
       genes <- genes[sapply(genes, length) > 4]
       if(length(genes) > 2){
         for(grp.x in names(genes)){
-          ret=try(as.data.table(enrichGeneList(genes[[grp.x]],databases = enrichrDBs)),silent = FALSE)
+          ret=try(as.data.table(enrichGeneList.oddsRatio(genes[[grp.x]],databases = enrichrDBs)),silent = FALSE)
           if(!any(grepl("Error",ret)) && nrow(ret) > 0){
             enrichRes <- rbind(enrichRes, data.table(ret, grp = grp.x))
           }
@@ -252,11 +253,11 @@ for(cl.x in clusterings){
         write.table(enrichRes[qval < 0.05], file=dirout(outS, "Enrichr_",x,".tsv"), sep="\t", quote=F, row.names=F)
         
         enrichRes$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", enrichRes$category)
-        enrichRes$category <- substr(enrichRes$category, 0, 50)
+        enrichRes$category <- abbreviate(enrichRes$category, minlength=50)
         
         enrichRes[, mLog10Q := pmin(-log10(qval),4)]
         enrichRes <- enrichRes[order(oddsRatio)]
-        enrichRes$category <- factor(enrichRes$category, levels=enrichRes$category)
+        enrichRes$category <- factor(enrichRes$category, levels=unique(enrichRes$category))
         
         ggplot(enrichRes[category %in% enrichRes[,.(min(qval)), by="category"][V1 < 0.05]$category], 
                aes(x=grp, y=category, color=log10(oddsRatio), size=n)) + 

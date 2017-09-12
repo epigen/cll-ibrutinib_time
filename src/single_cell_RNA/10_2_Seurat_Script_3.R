@@ -5,15 +5,22 @@ require(ggplot2)
 require(doMC)
 require(pryr)
 
+
+if(!exists("enrichrDBs")) enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location")
+if(!exists("extra.genes.to.plot")) extra.genes.to.plot <- c()
+if(!exists("seurat.diff.test")) seurat.diff.test <- "negbinom"
+if(!exists("max.nr.of.cores")) max.nr.of.cores <- 3
+if(!exists("seurat.min.pct")) seurat.min.pct <- 0.25
+
+
 # manage memory and number of tasks used
 mem_u <- as.numeric(mem_used())/10**6
 cores_u = max(1, min(12, floor(180000/mem_u)-1))
 if(is.na(mem_u)) cores_u <- 3
-cores_u <- min(cores_u, 3)
+cores_u <- min(cores_u, max.nr.of.cores)
 message("Memory used: ", mem_u, " cores: ",cores_u)
 registerDoMC(cores=cores_u)
 
-enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location")
 
 # use colnames from pbmc@data.info as clusterings
 # only those with >= 2 groups with > 1 cell
@@ -38,13 +45,13 @@ if(file.exists("metadata/CellMarkers.csv")){
       ggsave(dirout(outMarkers, markers[i]$GeneSymbol,".pdf"), height=7, width=7)
     }
   }
-  # for(geneSyn in c("Hba-a1", "Hba-a2")){
-  #   marDat <- data.table(pbmc@tsne.rot, Expression=FetchData(object=pbmc,vars.all=geneSyn, use.imputed=FALSE)[,1])
-  #   ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=Expression)) + geom_point() +
-  #     scale_color_gradientn(colors=c("grey", "blue")) + theme(legend.position = 'none') +
-  #     ggtitle(paste0(geneSyn))
-  #   ggsave(dirout(outMarkers, geneSyn,".pdf"), height=7, width=7)
-  # }
+#   for(geneSyn in extra.genes.to.plot){
+#     marDat <- data.table(pbmc@tsne.rot, Expression=FetchData(object=pbmc,vars.all=geneSyn, use.imputed=FALSE)[,1])
+#     ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=Expression)) + geom_point() +
+#       scale_color_gradientn(colors=c("grey", "blue")) + theme(legend.position = 'none') +
+#       ggtitle(paste0(geneSyn))
+#     ggsave(dirout(outMarkers, geneSyn,".pdf"), height=7, width=7)
+#   }
 }
 
 # PLOT UMIS ---------------------------------------------------------------
@@ -149,7 +156,7 @@ foreach(cl.x = clusterings) %dopar% {
       # message(cl.i)
       if(!file.exists(dirout(out.cl, "Markers_Cluster",cl.i, ".tsv"))){
         try({
-          cluster.markers <- FindMarkers(pbmc,  ident.1 = cl.i, ident.2 = clusters[clusters != cl.i],test.use=seurat.diff.test, min.pct = 0.25)    
+          cluster.markers <- FindMarkers(pbmc,  ident.1 = cl.i, ident.2 = clusters[clusters != cl.i],test.use=seurat.diff.test, min.pct = seurat.min.pct)    
           pdf(dirout(out.cl,"Markers_Cluster",cl.i,".pdf"), height=15, width=15)
           FeaturePlot(pbmc, row.names(cluster.markers)[1:min(nrow(cluster.markers),9)],cols.use = c("grey","blue"))
           dev.off()
@@ -182,7 +189,7 @@ foreach(cl.x = clusterings) %dopar% {
         cl2 <- clusters[i2]
         if(!file.exists(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")) & !file.exists(dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv"))){
           try({
-            cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, test.use=seurat.diff.test, min.pct = 0.25)
+            cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, test.use=seurat.diff.test, min.pct = seurat.min.pct)
             mm <- row.names(cluster.markers)
             mm <- mm[mm %in% row.names(pbmc@data)]
             if(length(mm) > 0){
