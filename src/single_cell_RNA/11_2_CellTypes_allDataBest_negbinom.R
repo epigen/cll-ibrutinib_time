@@ -7,7 +7,7 @@ require(methods)
 project.init2("cll-time_course")
 
 seurat.diff.test <- "negbinom"
-clustering.precision <- seq(0.5, 2.5, 0.2)
+clustering.precision <- c() #seq(0.5, 2.5, 0.2)
 cells <- c("Monos", "NurseLikeCells", "Bcells", "NKcells", "Tcells1", "CD4", "CD8")
 sample.x <- "allDataBest_NoDownSampling"
 

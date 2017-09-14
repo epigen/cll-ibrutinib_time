@@ -27,7 +27,7 @@ registerDoMC(cores=cores_u)
 clusterings <- colnames(pbmc@data.info)[apply(pbmc@data.info, 2, function(x) sum(table(x[x!="IGNORED"])>1)>1)]
 clusterings <- clusterings[!grepl("res", clusterings) & !clusterings %in% c("nUMI", "nGene", "orig.ident", "percent.mito")]
 # reorder to do the kmeans at the end
-clusterings <- c(clusterings[!grepl("ClusterNames", clusterings)], clusterings[grepl("ClusterNames", clusterings)])
+(clusterings <- c(clusterings[!grepl("ClusterNames", clusterings)], clusterings[grepl("ClusterNames", clusterings)]))
 
 
 # PLOT MARKERS 2
@@ -230,34 +230,41 @@ for(cl.x in clusterings){
           cl2 <- clusters[i2]
           f1 <- dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")
           f2 <- dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv")
-          clusterDiff <- if(file.exists(f1)) fread(f1) else fread(f2)
-          namesDiff <- if(file.exists(f1)) c(cl1, cl2) else c(cl2,cl1)
-          if(ncol(clusterDiff) == 5){
-            colnames(clusterDiff) <- c("gene", "pval", "diff", "pct1", "pct2")
-            clusterDiff[diff > 0, c("up", "down") := as.list(namesDiff)]
-            clusterDiff[diff < 0, c("up", "down") := as.list(rev(namesDiff))]
-            allClDiff <- rbind(allClDiff, clusterDiff)
+          if(file.exists(f1) | file.exists(f2)){        
+            clusterDiff <- if(file.exists(f1)) fread(f1) else fread(f2)
+            namesDiff <- if(file.exists(f1)) c(cl1, cl2) else c(cl2,cl1)
+            if(ncol(clusterDiff) == 5){
+              colnames(clusterDiff) <- c("gene", "pval", "diff", "pct1", "pct2")
+              clusterDiff[diff > 0, c("up", "down") := as.list(namesDiff)]
+              clusterDiff[diff < 0, c("up", "down") := as.list(rev(namesDiff))]
+              allClDiff <- rbind(allClDiff, clusterDiff)
+            }
           }
         }
       }
       i <- 1
-      allClDiff[,diff2 := abs(pct1-pct2)]
-      # plot for each cluster and write table
-      for(i in 1:length(clusters)){
-        clx <- clusters[i]
-        clMarkers2 <- allClDiff[,.(minDiff = min(diff2),N=.N), by=c("up", "gene")][N == length(clusters)-1][up == clx][order(minDiff, decreasing=TRUE)]
-        if(nrow(clMarkers2) > 0){
-          pdf(dirout(out.cl,"Markers_Cluster",clx,"_version2.pdf"), height=15, width=15)
-          FeaturePlot(object=pbmc,features.plot=clMarkers2[1:min(nrow(clMarkers2),9)]$gene,cols.use = c("grey","blue"))
-          dev.off()
-          write.table(clMarkers2, dirout(out.cl, "Markers_Cluster",clx, "_version2.tsv"), sep="\t", quote=F, row.names=TRUE)
+      if(nrow(allClDiff) > 0){
+        allClDiff[,diff2 := abs(pct1-pct2)]
+        # plot for each cluster and write table
+        for(i in 1:length(clusters)){
+          clx <- clusters[i]
+          clMarkers2 <- allClDiff[,.(minDiff = min(diff2),N=.N), by=c("up", "gene")][N == length(clusters)-1][up == clx][order(minDiff, decreasing=TRUE)]
+          if(nrow(clMarkers2) > 0){
+            pdf(dirout(out.cl,"Markers_Cluster",clx,"_version2.pdf"), height=15, width=15)
+            FeaturePlot(object=pbmc,features.plot=clMarkers2[1:min(nrow(clMarkers2),9)]$gene,cols.use = c("grey","blue"))
+            dev.off()
+            write.table(clMarkers2, dirout(out.cl, "Markers_Cluster",clx, "_version2.tsv"), sep="\t", quote=F, row.names=TRUE)
+          }
         }
+        cllDiffSummary <- allClDiff[,.(minDiff = min(diff2),N=.N), by=c("up", "gene")][N == length(clusters)-1][,rank := rank(-minDiff), by="up"]
+        
+        try({
+          pdf(dirout(outS, "Cluster_HM_",x, ".pdf"), width=10, height=min(29, nrow(cllDiffSummary[rank < 20])/10))
+          DoHeatmap(pbmc, genes.use=cllDiffSummary[rank < 20][order(up)]$gene,order.by.ident=TRUE,slim.col.label=TRUE,remove.key=TRUE)
+          dev.off()
+        },silent=TRUE)
       }
       # Plot for all clusters heatmap
-      cllDiffSummary <- allClDiff[,.(minDiff = min(diff2),N=.N), by=c("up", "gene")][N == length(clusters)-1][,rank := rank(-minDiff), by="up"]
-      pdf(dirout(outS, "Cluster_HM_",x, ".pdf"), width=10, height=min(29, nrow(cllDiffSummary[rank < 20])/10))
-      DoHeatmap(pbmc, genes.use=cllDiffSummary[rank < 20][order(up)]$gene,order.by.ident=TRUE,slim.col.label=TRUE,remove.key=TRUE)
-      dev.off()
     }
   }
 }
@@ -319,7 +326,7 @@ for(cl.x in clusterings){
 }
 
 
-# ENRICHR -----------------------------------------------------------------
+# NEW ENRICHR -----------------------------------------------------------------
 message("EnrichR on markers")
 source("src/single_cell_RNA/FUNC_Enrichr.R") #devtools::install_github("definitelysean/enrichR")
 cl.x <- "patient"

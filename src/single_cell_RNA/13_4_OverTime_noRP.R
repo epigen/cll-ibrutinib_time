@@ -10,14 +10,39 @@ project.init2("cll-time_course")
 source("src/single_cell_RNA/FUNC_Enrichr.R") #devtools::install_github("definitelysean/enrichR")
 
 
-out <- "13_4_Overtime_noRP/"
+
+list.files(dirout())
+
+(args = commandArgs(trailingOnly=TRUE))
+
+sample.x <- ""
+inDir <- ""
+if(length(args) < 1){
+  sample.x <- "allDataBest_NoDownSampling_noRP"
+  inDir <- "11_CellTypes_noRP_tobit/"
+  args <- "noRP"
+} else {
+  if(args[1] == "noRPstrict"){
+    sample.x <- "allDataBest_NoDownSampling_noRPstrict"
+    inDir <- "11_CellTypes_noRPstrict_negbinom/"
+  }
+  if(args[1] == "noIGHLK"){
+    sample.x <- "allDataBest_NoDownSampling_noIGHLK"
+    inDir <- "11_CellTypes_noIGHKL_negbinom/"
+  }
+  if(args[1] == "allDataBest"){
+    sample.x <- "allDataBest_NoDownSampling"
+    inDir <- "11_CellTypes_negbinom_negbinom/"
+  }
+}
+if(sample.x == "" | inDir == "") stop("No valid dataset")
+
+list.files(dirout(inDir))
+
+(out <- paste0("13_4_Overtime_",args[1],"/"))
 dir.create(dirout(out))
 
 
-
-sample.x <- "allDataBest_NoDownSampling_noRP"
-
-inDir <- "11_CellTypes_noRP_tobit/"
 
 cells <- list.files(dirout(inDir))
 cells <- cells[grepl(paste0(sample.x, "_"), cells)]
