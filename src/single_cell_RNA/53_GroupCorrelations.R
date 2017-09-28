@@ -35,6 +35,10 @@ if(!file.exists(dirout(out, "Correlations.RData"))){
 
 corrs2 <- corrs[cellType %in% c("CD4","CD8","CLL","Mono")]
 
+ggplot(corrs[cellType == "CLL"], aes(x=sample, y=cor)) + geom_violin()
+ggsave(dirout(out, "CLL_Correlations_Violin.pdf"), height=29, width =15)
+
+
 ggplot(corrs2, aes(x=cellType, y=cor)) + geom_boxplot(outlier.shape=NA) + facet_grid(sample ~ .)
 ggsave(dirout(out, "AllCorrelations.pdf"), height=29, width =15)
 

@@ -8,17 +8,18 @@ array=("PT_d0" "PT_d120" "PT_d280" "VZS_d0" \
   "allDataBest_noIGH" "allDataBest_NoDownSampling_noIGH" \
   "allDataBest_NoDownSampling_tissueGenes" \
   "allDataBest_NoDownSampling_noRP" \
-  "allDataBest_NoDownSampling_noIGHLK" "allDataBest_NoDownSampling_noRPstrict"
+  "allDataBest_NoDownSampling_noIGHLK" "allDataBest_NoDownSampling_noRPstrict" \
+  "inclDay30_noIGHLK"
 )
 
-array=("allDataBest_NoDownSampling_noIGHLK")
+array=("inclDay30_noIGHLK")
 
 for file in ${array[@]}
 do            
     echo $file
-    sbatch --job-name="Seurat $file" --ntasks=1 --mem=200000 --partition=longq --time=4-00:00:00 \
-        --wrap="Rscript ${CODEBASE}/cll-time_course/src/single_cell_RNA/10_1_Seurat.R filtered ${file}" \
-        --output="${PROCESSED}/cll-time_course/results/single_cell_RNA/10_Seurat/${file}.log"
+    sbatch --job-name="Seurat $file" --ntasks=1 --mem=100000 --partition=develop --time=05:00:00 \
+        --wrap="Rscript ${CODEBASE}/cll-time_course/src/single_cell_RNA/10_1_Seurat.R raw ${file}" \
+        --output="${PROCESSED}/cll-time_course/results/single_cell_RNA/10_Seurat/${file}2.log"
 done
 
 

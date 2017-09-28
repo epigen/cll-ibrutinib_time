@@ -64,3 +64,21 @@ do
         --wrap="cellranger count --id=$file --transcriptome=/home/nfortelny/resources_nfortelny/10X_Genomics/refdata-cellranger-GRCh38-1.2.0/ --fastqs=${inPath}/${file} --cells=5000 --localcores=9 --nopreflight" \
             --output="$file.log"
 done
+
+
+###
+### Day 30 samples
+###
+inPath=/data/groups/lab_bsf/sequences/BSF_0361_HLG7VBBXX_l7_l8_10x/fastq_path/HLG7VBBXX/
+outPath=/home/nfortelny/projects_shared/cll-time_course/results/cellranger_count/
+mkdir $outPath
+cd $outPath
+# HUMAN SAMPLES
+array=("LiveBulk_FE_30d_10xTK118s" "LiveBulk_PBGY_30d_10xTK118s" "LiveBulk_PT_30d_10xTK118s" "LiveBulk_VZS_30d_10xTK118s")
+for file in ${array[@]}
+do            
+    echo $file
+    sbatch --job-name="10X $file" --ntasks=12 --mem=180000 --partition=longq --time=3-00:00:00 \
+      --wrap="cellranger count --id=$file --transcriptome=/home/nfortelny/resources_nfortelny/10X_Genomics/refdata-cellranger-GRCh38-1.2.0/ --fastqs=${inPath}/${file} --cells=10000 --localcores=12 --nopreflight" \
+          --output="$PROCESSED/10x_datasets/logs/${file}.log"    
+done

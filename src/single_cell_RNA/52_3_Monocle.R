@@ -75,6 +75,12 @@ table(gsub(".+\\-(\\d+)", "\\1", pData(mcle)$barcode), pData(mcle)$sample)
 
 
 
+str(pData(mcle))
+
+dim(mcle)
+mcle@dim_reduce_type
+str(reducedDimK(mcle))
+
 # ANNOTATE SEURAT OBJECT --------------------------------------------------
 
 stopifnot(all(rownames(pbmc@meta.data) == pData(mcle)$barcode))
@@ -265,6 +271,32 @@ ggplot(pDat, aes(x=name2, y=rn, color=avg_diff, size=pmin(4, -log10(qval)))) +
   geom_point() + scale_color_gradient2(low="blue", mid="white", high="red") +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ggsave(dirout(out, "StateBySample_Genes.pdf"), height=15, width=7)
+
+
+
+pData(mcle)$patient <- substr(pData(mcle)$sample, 0,2)
+
+# Plot for each gene
+outGenes <- paste0(out, "GeneDetails/")
+dir.create(dirout(outGenes))
+gene.x <- "BLK"
+for(gene.x in unique(pDat$rn)){
+  gene.x2 <- gsub("\\-", "_", gene.x)
+  pData(mcle)[,gene.x2] <- pbmc@data[gene.x, rownames(pData(mcle))]
+  if(!file.exists(dirout(outGenes, gene.x2, "_onTrajectory.pdf"))){
+    # violin plots
+    ggplot(subset(pData(mcle),State %in% c(1,6,7)), aes_string(x="State", y=gene.x2)) + geom_violin() + facet_grid(patient ~ .) + ggtitle(gene.x2)
+    ggsave(dirout(outGenes, gene.x2, "_patient_violin.pdf"), height=25, width=15)
+    
+    ggplot(subset(pData(mcle),State %in% c(1,6,7)), aes_string(x="State", y=gene.x2)) + geom_violin() + facet_grid(sample ~ .) + ggtitle(gene.x2)
+    ggsave(dirout(outGenes, gene.x2, "_sample_violin.pdf"), height=25, width=15)
+    
+    # state plot
+    plot_cell_trajectory(mcle, color_by = gene.x2) + facet_grid(patient ~ .) + geom_point(aes_string(color=gene.x2),alpha=0.5) +
+      scale_color_gradient(low="grey", high="blue")
+    ggsave(dirout(outGenes, gene.x2, "_onTrajectory.pdf"),height=15, width=20)
+  }
+}
 
 
 # Get enrichments for intersections

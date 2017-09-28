@@ -297,3 +297,43 @@ ggsave(dirout(out, "Receptor_Ligand.pdf"), height=29, width=15)
 ggplot(res.reclig[significant2 == TRUE], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
 ggsave(dirout(out, "Receptor_Ligand_Strict.pdf"), height=25, width=15)
+
+
+
+
+# ACTUALLY LOOK AT INTERACTIONS -------------------------------------------
+
+table(ramilowski.rec_lig$Pair.Evidence)
+table(is.na(ramilowski.rec_lig$Pair.Evidence))
+
+rlDT <- data.table()
+for(pat in unique(res$patient)){
+  resPat <- res[patient == pat][qvalue < 0.05]
+  for(ct1 in unique(resPat$cellType)){
+    for(ct2 in unique(resPat$cellType)){
+      # rec in ct1
+      resCT1 <- resPat[cellType == ct1]
+      recDat <- resCT1[match(ramilowski.rec_lig[Pair.Evidence == "literature supported"]$Receptor.ApprovedSymbol, resCT1$gene)]
+      colnames(recDat) <- paste0("rec_",colnames(recDat))
+      # lig in ct2
+      resCT2 <- resPat[cellType == ct2]
+      ligDat <- resCT2[match(ramilowski.rec_lig[Pair.Evidence == "literature supported"]$Ligand.ApprovedSymbol, resCT2$gene)]
+      colnames(ligDat) <- paste0("lig_",colnames(ligDat))
+      
+      rlDat <- cbind(recDat, ligDat)[!is.na(rec_gene) & !is.na(lig_gene)]
+      rlDT <- rbind(rlDT, rlDat)
+    }
+  }
+}
+
+(rlDT2 <- rlDT[, c("rec_patient", "rec_cellType", "rec_gene", "rec_logFC", "lig_cellType", "lig_gene", "lig_logFC"), with=F])
+rlDT2[sign(rec_logFC) != sign(lig_logFC)]
+rlDT3 <- rlDT2[sign(rec_logFC) == sign(lig_logFC)]
+ramilowski.rec_lig[Receptor.ApprovedSymbol == "KLRC1" & Ligand.ApprovedSymbol == "HLA-E"]
+rlDT3[order(lig_gene)]
+rlDT3[!grepl("HLA", lig_gene)]
+rlDT3[grepl("HLA", lig_gene)]
+
+write.table(rlDT3[order(lig_gene)], dirout(out, "Ligand_Interactions.tsv"), sep="\t", quote=F, row.names=F)
+
+message("Completed successfully")

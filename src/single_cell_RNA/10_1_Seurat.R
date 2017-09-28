@@ -17,7 +17,8 @@ f <- c("PT_d0", "PT_d120", "PT_d280", "VZS_d0",
        )
 
 args = commandArgs(trailingOnly=TRUE)
-cellranger_filtered <- "filtered"
+cellranger_filtered <- "raw"
+f <- 'inclDay30_noIGHLK'
 if (length(args) > 0) {
   cellranger_filtered <- args[1]
   if (length(args) > 1) {
@@ -125,6 +126,11 @@ for(sample.x in f){
         pbmc@data.info[["sample"]] <- gsub("_10xTK078", "", gsub("LiveBulk_10x_", "", pbmc@data.info[["sample"]]))
       }
       
+      if(grepl("^inclDay30", sample.x)){
+        pbmc@data.info[["sample"]] <- fread("metadata/Aggregate_inclDay30.csv")$library_id[as.numeric(gsub("^[A-Z]+\\-(\\d+)$", "\\1", colnames(pbmc@data)))]
+        pbmc@data.info[["sample"]] <- gsub("_10xTK078", "", gsub("LiveBulk_10x_", "", pbmc@data.info[["sample"]]))
+      }
+      
       if(grepl("\\_noRP$", sample.x)){
         pbmc <- SubsetData(pbmc, cells.use=row.names(subset(pbmc@data.info, sample != "KI_KI1_d0")))
       }
@@ -204,8 +210,41 @@ for(sample.x in f){
     
     max.nr.of.cores <- 1
     
-    #     pbmc@data.info[["sample"]] <- NULL
-    source("src/single_cell_RNA/10_2_Seurat_Script_3.R")
+    # PLOT MARKERS 2
+    message("Plotting Known marker genes")
+    if(file.exists("metadata/CellMarkers.csv")){
+      markers <- fread("metadata/CellMarkers.csv")[Marker != ""]
+      outMarkers <- paste0(outS, "Markers/")
+      dir.create(dirout(outMarkers))
+      for(i in 1:nrow(markers)){
+        if(markers[i]$GeneSymbol %in% rownames(pbmc@data)){
+          marDat <- data.table(pbmc@tsne.rot, Expression=FetchData(object=pbmc,vars.all=markers[i]$GeneSymbol, use.imputed=FALSE)[,1])
+          ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=Expression)) + geom_point() + 
+            scale_color_gradientn(colors=c("grey", "blue")) + theme(legend.position = 'none') +
+            ggtitle(paste0(markers[i]$GeneSymbol, "/", markers[i]$Marker, "\n", markers[i]$CellType))
+          ggsave(dirout(outMarkers, markers[i]$GeneSymbol,".pdf"), height=7, width=7)
+        }
+      }
+    }
+    
+    message("Plotting Clusters")
+    pDat <- data.table(pbmc@tsne.rot)
+    cl.x <- "patient_PT"
+    for(cl.x in clusterings){
+      x <- gsub("ClusterNames_","", cl.x)
+      pDat[[cl.x]] <-pbmc@data.info[[cl.x]]
+      labelCoordinates <- pDat[,.(tSNE_1=median(tSNE_1), tSNE_2=median(tSNE_2)),by=cl.x]
+  
+      ggplot(pDat[get(cl.x) != "IGNORED"], aes_string(x=cl.x)) + geom_bar() + coord_flip()
+      ggsave(dirout(outS, "Cluster_counts_", x, ".pdf"))  
+  
+      ggplot(pDat, aes_string(x="tSNE_1",y="tSNE_2", color=cl.x)) + geom_point() + ggtitle(sample.x) +
+        geom_label(data=labelCoordinates, aes_string(x="tSNE_1", y="tSNE_2", label=cl.x), color="black", alpha=0.5)
+      ggsave(dirout(outS, "Cluster_tSNE_", x, ".pdf"))
+    }
+    
+    # #     pbmc@data.info[["sample"]] <- NULL
+    # source("src/single_cell_RNA/10_2_Seurat_Script_3.R")
     
   }, error = function(e){
     print(e)
