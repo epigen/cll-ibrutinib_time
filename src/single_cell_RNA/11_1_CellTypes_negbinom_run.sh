@@ -1,8 +1,20 @@
 module unload R/3.2.3
 module load R/3.3.2
 
-cells=("Monos" "NurseLikeCells" "Bcells" "NKcells" "Tcells1" "CD4" "CD8")
+cells=("CLL" "NurseLikeCell" "CD8" "CD4" "NK" "Mono")
+cells=("CD8" "CLL")
 
+for cell in ${cells[@]}
+do
+  echo $cell
+  sbatch --job-name="Seurat noIGHKL $cell" --cpus-per-task=5 --mem=180000 --partition=longq --time=7-00:00:00 \
+      --wrap="Rscript ${CODEBASE}/cll-time_course/src/single_cell_RNA/11_2_2_CellTypes_inclDay30_3.R $cell" \
+      --output=${PROCESSED}/cll-time_course/results/single_cell_RNA/11_CellTypes_inclDay30/${cell}.log
+done
+
+
+
+## OLD RUNS:
 for cell in ${cells[@]}
 do
   echo $cell

@@ -16,6 +16,10 @@ do
       --output="$CODEBASE/cll-time_course/src/single_cell_RNA/13_4_OverTime_${file}.log"
 done
 
+sbatch --job-name="cll-time_course 13_4_OverTime_inclDay30" --ntasks=1 --mem=50000 --partition=shortq --time=08:00:00 \
+    --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/13_4_OverTime_inclDay30.R" \
+    --output="$CODEBASE/cll-time_course/src/single_cell_RNA/13_4_OverTime_inclDay30.log"
+
 # MAGIC
 sbatch --job-name="15_Magic.R" --ntasks=32 --mem=180000 --partition=longq \
     --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/15_Magic.R" \
@@ -58,6 +62,11 @@ sbatch --job-name="30_6_Signatures_RowNormalized_Sampled.R" --ntasks=12 --mem=18
 sbatch --job-name="30_7_Signatures_RowNormalized_Sampled_exclGenes.R" --ntasks=12 --mem=180000 --partition=longq \
     --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/30_7_Signatures_RowNormalized_Sampled_exclGenes.R" \
     --output="$CODEBASE/cll-time_course/src/single_cell_RNA/30_7_Signatures_RowNormalized_Sampled_exclGenes_2.log"
+
+sbatch --job-name="30_9_Signatures_inclDay30.R" --ntasks=12 --mem=180000 --partition=longq \
+    --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/30_9_Signatures_inclDay30.R" \
+    --output="$CODEBASE/cll-time_course/src/single_cell_RNA/30_9_Signatures_inclDay30.log"
+
 
 # Signatures for CNVS
 sbatch --job-name="41_CNV_Signatures.R" --ntasks=12 --mem=180000 --partition=longq \

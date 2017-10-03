@@ -178,6 +178,8 @@ for(sample.x in f){
       # pbmc <- JackStraw(pbmc, num.replicate = 100, do.print = FALSE)
       # JackStrawPlot(pbmc, PCs = 1:12)
       
+      save(pbmc, file=dirout(outS, sample.x,".RData"))
+      
       # t_SNE
       pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = TRUE,check_duplicates = FALSE)
       # ifelse(grepl("\\_tissueGenes$", sample.x), FALSE, TRUE))
@@ -185,7 +187,7 @@ for(sample.x in f){
       # plot clusters
       # write clusters
       # Clustering
-      for(x in c(seq(0.5,0.9,0.1), 0.95)){
+      for(x in seq(0.7,0.9,0.2)){
         pbmc <- FindClusters(pbmc, pc.use = 1:10, resolution = x, print.output = 0, save.SNN = T)
         pbmc <- StashIdent(pbmc, save.name = paste0("ClusterNames_", x))
       }
@@ -208,43 +210,10 @@ for(sample.x in f){
       }
     }
     
-    max.nr.of.cores <- 1
-    
-    # PLOT MARKERS 2
-    message("Plotting Known marker genes")
-    if(file.exists("metadata/CellMarkers.csv")){
-      markers <- fread("metadata/CellMarkers.csv")[Marker != ""]
-      outMarkers <- paste0(outS, "Markers/")
-      dir.create(dirout(outMarkers))
-      for(i in 1:nrow(markers)){
-        if(markers[i]$GeneSymbol %in% rownames(pbmc@data)){
-          marDat <- data.table(pbmc@tsne.rot, Expression=FetchData(object=pbmc,vars.all=markers[i]$GeneSymbol, use.imputed=FALSE)[,1])
-          ggplot(marDat, aes(x=tSNE_1, y=tSNE_2, color=Expression)) + geom_point() + 
-            scale_color_gradientn(colors=c("grey", "blue")) + theme(legend.position = 'none') +
-            ggtitle(paste0(markers[i]$GeneSymbol, "/", markers[i]$Marker, "\n", markers[i]$CellType))
-          ggsave(dirout(outMarkers, markers[i]$GeneSymbol,".pdf"), height=7, width=7)
-        }
-      }
-    }
-    
-    message("Plotting Clusters")
-    pDat <- data.table(pbmc@tsne.rot)
-    cl.x <- "patient_PT"
-    for(cl.x in clusterings){
-      x <- gsub("ClusterNames_","", cl.x)
-      pDat[[cl.x]] <-pbmc@data.info[[cl.x]]
-      labelCoordinates <- pDat[,.(tSNE_1=median(tSNE_1), tSNE_2=median(tSNE_2)),by=cl.x]
-  
-      ggplot(pDat[get(cl.x) != "IGNORED"], aes_string(x=cl.x)) + geom_bar() + coord_flip()
-      ggsave(dirout(outS, "Cluster_counts_", x, ".pdf"))  
-  
-      ggplot(pDat, aes_string(x="tSNE_1",y="tSNE_2", color=cl.x)) + geom_point() + ggtitle(sample.x) +
-        geom_label(data=labelCoordinates, aes_string(x="tSNE_1", y="tSNE_2", label=cl.x), color="black", alpha=0.5)
-      ggsave(dirout(outS, "Cluster_tSNE_", x, ".pdf"))
-    }
+    max.nr.of.cores <- 3
     
     # #     pbmc@data.info[["sample"]] <- NULL
-    # source("src/single_cell_RNA/10_2_Seurat_Script_3.R")
+    source("src/single_cell_RNA/10_2_Seurat_Script_3.R")
     
   }, error = function(e){
     print(e)

@@ -5,7 +5,7 @@ require(methods)
 project.init2("cll-time_course")
 
 
-out <- "52_3_Monocle3/"
+out <- "52_3_Monocle_inclDay30/"
 dir.create(dirout(out))
 
 
@@ -17,7 +17,8 @@ dir.create(dirout(out))
 # if(!file.exists(dirout(out, "Bcells_Monocle.RData"))){
 require(monocle)
 
-(load(file=dirout("11_CellTypes_tobit/allDataBest_NoDownSampling_noIGH_Bcells/Bcells.RData")))
+# (load(file=dirout("11_CellTypes_tobit/allDataBest_NoDownSampling_noIGH_Bcells/Bcells.RData")))
+(load(dirout("11_CellTypes_inclDay30/CLL/CLL.RData")))
 pbmc <- UpdateSeuratObject(pbmc)
 # pbmc.full <- pbmc
 # 
@@ -54,7 +55,8 @@ if(!file.exists(dirout(out, "MonocleDat.RData"))){
   load(dirout(out, "MonocleDat.RData"))
 }
 
-
+str(pData(mcle))
+pData(mcle)$sample <- gsub("d30", "d030", gsub("d0", "d000", pData(mcle)$sample))
 
 # PLOT RESULTS ------------------------------------------------------------
 
@@ -72,7 +74,6 @@ ggsave(dirout(out, "Sample_grid.pdf"), width=7, height=29)
 
 str(pData(mcle))
 table(gsub(".+\\-(\\d+)", "\\1", pData(mcle)$barcode), pData(mcle)$sample)
-
 
 
 str(pData(mcle))
@@ -119,68 +120,68 @@ ggsave(dirout(out, "State_Tsne_alpha.pdf"), plot=p + geom_point(alpha=0.5), heig
 # }
 
 # MONOCLE WAY
-diff_test_res <- NA
-if(!file.exists(dirout(out, "Monocle_State_DiffGenes.tsv"))){
-  cds_subset <- mcle[,subset(pData(mcle), State %in% c("1", "6", "7"))$barcode]
-  diff_test_res <- differentialGeneTest(cds_subset,
-                                        fullModelFormulaStr = "~State + sample",
-                                        reducedModelFormulaStr = "~sample",
-                                        cores=12)
-
-  diff_test_res[,c("gene_short_name", "pval", "qval", "num_cells_expressed")]
-  # plot_genes_jitter(cds_subset,
-  #                   grouping = "State", color_by = "sample2", plot_trend = TRUE) +
-  #   facet_wrap( ~ feature_label, scales= "free_y")
-  write.table(diff_test_res[,c("gene_short_name", "pval", "qval", "num_cells_expressed")], file=dirout(out, "Monocle_State_DiffGenes.tsv"), sep="\t", quote=F, row.names=F)
-} else {
-  diff_test_res <- fread(dirout(out, "Monocle_State_DiffGenes.tsv"))
-}
-
-str(genes1 <- unique(diff_test_res[qval < 0.05]$gene_short_name))
-gene.lists <- list(
-  All = genes1,
-  noRP = genes1[!grepl("^RP.*?-.*", genes1) & !grepl("^RP[LS]\\d+[AX]?$", genes1) & !grepl("^MT-", genes1)]
-  )
-for(gnam in names(gene.lists)){
-  str(genes <- gene.lists[[gnam]])
-  dat <- pbmc@data
-  sampleAnnot <- subset(pbmc@meta.data, State %in% c(1,6,7), select=c(State, sample))
-  n <- 100
-  cells <- rownames(sampleAnnot)[do.call(c, lapply(split(1:nrow(sampleAnnot), factor(with(sampleAnnot, paste0(sample, State)))), function(x) sample(x, min(length(x), n))))]
-  str(genes <- genes[genes %in% rownames(dat)])
-  dat <- dat[genes, cells]
-  dat <- dat[apply(dat, 1, max) != 0,,drop=F]
-  dat <- dat - apply(dat, 1, min)
-  dat <- dat / apply(dat,1, max)
-  dat <- dat[, order(with(sampleAnnot[cells,],paste0(sample, State))), drop=F]
-  
-  pdf(dirout(out, "State_Markers_Monocle_",gnam,".pdf"), height=min(29, nrow(dat) * 0.3 + 3), width=min(ncol(dat)*0.03+3,29), onefile=FALSE)
-  pheatmap::pheatmap(dat, cluster_rows=T, cluster_cols=F, annotation_col=sampleAnnot,show_colnames=FALSE)
-  dev.off()
-}
+# diff_test_res <- NA
+# if(!file.exists(dirout(out, "Monocle_State_DiffGenes.tsv"))){
+#   cds_subset <- mcle[,subset(pData(mcle), State %in% c("1", "6", "7"))$barcode]
+#   diff_test_res <- differentialGeneTest(cds_subset,
+#                                         fullModelFormulaStr = "~State + sample",
+#                                         reducedModelFormulaStr = "~sample",
+#                                         cores=12)
+# 
+#   diff_test_res[,c("gene_short_name", "pval", "qval", "num_cells_expressed")]
+#   # plot_genes_jitter(cds_subset,
+#   #                   grouping = "State", color_by = "sample2", plot_trend = TRUE) +
+#   #   facet_wrap( ~ feature_label, scales= "free_y")
+#   write.table(diff_test_res[,c("gene_short_name", "pval", "qval", "num_cells_expressed")], file=dirout(out, "Monocle_State_DiffGenes.tsv"), sep="\t", quote=F, row.names=F)
+# } else {
+#   diff_test_res <- fread(dirout(out, "Monocle_State_DiffGenes.tsv"))
+# }
+# 
+# str(genes1 <- unique(diff_test_res[qval < 0.05]$gene_short_name))
+# gene.lists <- list(
+#   All = genes1,
+#   noRP = genes1[!grepl("^RP.*?-.*", genes1) & !grepl("^RP[LS]\\d+[AX]?$", genes1) & !grepl("^MT-", genes1)]
+#   )
+# for(gnam in names(gene.lists)){
+#   str(genes <- gene.lists[[gnam]])
+#   dat <- pbmc@data
+#   sampleAnnot <- subset(pbmc@meta.data, State %in% c(1,6,7), select=c(State, sample))
+#   n <- 100
+#   cells <- rownames(sampleAnnot)[do.call(c, lapply(split(1:nrow(sampleAnnot), factor(with(sampleAnnot, paste0(sample, State)))), function(x) sample(x, min(length(x), n))))]
+#   str(genes <- genes[genes %in% rownames(dat)])
+#   dat <- dat[genes, cells]
+#   dat <- dat[apply(dat, 1, max) != 0,,drop=F]
+#   dat <- dat - apply(dat, 1, min)
+#   dat <- dat / apply(dat,1, max)
+#   dat <- dat[, order(with(sampleAnnot[cells,],paste0(sample, State))), drop=F]
+#   
+#   pdf(dirout(out, "State_Markers_Monocle_",gnam,".pdf"), height=min(29, nrow(dat) * 0.3 + 3), width=min(ncol(dat)*0.03+3,29), onefile=FALSE)
+#   pheatmap::pheatmap(dat, cluster_rows=T, cluster_cols=F, annotation_col=sampleAnnot,show_colnames=FALSE)
+#   dev.off()
+# }
 
 
 
 # ANNOTATE SEURAT OBJECT FURTHER AND DO ANALYSES
 
-state.x <- as.character(pbmc@meta.data$State)
-state.x[state.x %in% c("3", "4")] <- "IGNORED"
-pbmc@meta.data$StateNoIntermediate <- state.x
-state.x[state.x %in% c("2", "5")] <- "IGNORED"
-pbmc@meta.data$StateEndpoints <- state.x
+# state.x <- as.character(pbmc@meta.data$State)
+# state.x[state.x %in% c("3", "4")] <- "IGNORED"
+# pbmc@meta.data$StateNoIntermediate <- state.x
+# state.x[state.x %in% c("2", "5")] <- "IGNORED"
+# pbmc@meta.data$StateEndpoints <- state.x
 
 (save(pbmc, file=dirout(out, "Bcells_Monocle.RData")))
 # } else {
 #   load(dirout(out, "Bcells_Monocle.RData"))
 # }
 
-outS <- paste0(out, "Bcells_minpct0.1/")
-dir.create(dirout(outS))
-
-pbmc@meta.data <- subset(pbmc@meta.data, select=c(StateEndpoints, State))
-
-seurat.min.pct <- 0.1
-source("src/single_cell_RNA/95_Seurat2.R")
+# outS <- paste0(out, "Bcells_minpct0.1/")
+# dir.create(dirout(outS))
+# 
+# pbmc@meta.data <- subset(pbmc@meta.data, select=c(StateEndpoints, State))
+# 
+# seurat.min.pct <- 0.1
+# source("src/single_cell_RNA/95_Seurat2.R")
 
 
 
@@ -189,30 +190,30 @@ source("src/single_cell_RNA/95_Seurat2.R")
 # DIFFERENCES BETWEEN STATES / FOR EACH PATIENT SEPARATELY (SEURAT WAY)----------------
 
 pbmc@meta.data$patient <- substr(pbmc@meta.data$sample, 0, 2)
-data.table(pbmc@meta.data)[State %in% c(1,6,7),.N, by=c("State", "patient")][order(patient)]
+data.table(pbmc@meta.data)[,.N, by=c("State", "patient")][order(patient)]
 
 pbmc@ident <- factor(paste0(pbmc@meta.data$patient, "_", pbmc@meta.data$State))
 names(pbmc@ident) <- pbmc@cell.names
 
-cellCounts <- data.table(pbmc@meta.data)[State %in% c(1,6,7),.N, by=c("State", "patient")][order(patient)]
+cellCounts <- data.table(pbmc@meta.data)[,.N, by=c("State", "patient")][order(patient)]
 cellCounts <- cellCounts[patient != "KI" & N > 10]
 
 if(!file.exists(dirout(out, "StateBySample_DiffGenes.RData"))){
-diffGenes <- list()
-for(pat in unique(cellCounts$patient)){
-    if(nrow(cellCounts[patient == pat]) > 1){
-      states <- cellCounts[patient == pat]$State
-      message(pat,": ", states)
-      for(i1 in 1:(length(states)-1)){
-        for(i2 in (i1 + 1):length(states)){
-          diffGenes[[paste0(pat, "_", states[i1],"vs",states[i2])]] <- FindMarkers(
-            pbmc,  
-            ident.1 = paste0(pat, "_", states[i1]), 
-            ident.2 = paste0(pat, "_", states[i2]),
-            test.use="negbinom") # This is done with min.pct = 0.1 (default)
+  diffGenes <- list()
+  for(pat in unique(cellCounts$patient)){
+      if(nrow(cellCounts[patient == pat]) > 1){
+        states <- cellCounts[patient == pat]$State
+        message(pat,": ", states)
+        for(i1 in 1:(length(states)-1)){
+          for(i2 in (i1 + 1):length(states)){
+            diffGenes[[paste0(pat, "_", states[i1],"vs",states[i2])]] <- FindMarkers(
+              pbmc,  
+              ident.1 = paste0(pat, "_", states[i1]), 
+              ident.2 = paste0(pat, "_", states[i2]),
+              test.use="negbinom") # This is done with min.pct = 0.1 (default)
+          }
         }
       }
-    }
   }
   
   save(diffGenes, file=dirout(out, "StateBySample_DiffGenes.RData"))
@@ -233,12 +234,12 @@ for(lnam in names(diffGenes)){
 sapply(diffGenes2, length)
 
 
-gplots::venn(diffGenes2[grepl("7vs1", names(diffGenes2))])
-gplots::venn(diffGenes2[grepl("1vs7", names(diffGenes2))])
-gplots::venn(diffGenes2[grepl("6vs7", names(diffGenes2))])
-gplots::venn(diffGenes2[grepl("7vs6", names(diffGenes2))])
-gplots::venn(diffGenes2[grepl("6vs1", names(diffGenes2))])
-gplots::venn(diffGenes2[grepl("1vs6", names(diffGenes2))])
+# gplots::venn(diffGenes2[grepl("7vs1", names(diffGenes2))])
+# gplots::venn(diffGenes2[grepl("1vs7", names(diffGenes2))])
+# gplots::venn(diffGenes2[grepl("6vs7", names(diffGenes2))])
+# gplots::venn(diffGenes2[grepl("7vs6", names(diffGenes2))])
+# gplots::venn(diffGenes2[grepl("6vs1", names(diffGenes2))])
+# gplots::venn(diffGenes2[grepl("1vs6", names(diffGenes2))])
 
 source("src/single_cell_RNA/FUNC_Enrichr.R")
 
@@ -285,10 +286,10 @@ for(gene.x in unique(pDat$rn)){
   pData(mcle)[,gene.x2] <- pbmc@data[gene.x, rownames(pData(mcle))]
   if(!file.exists(dirout(outGenes, gene.x2, "_onTrajectory.pdf"))){
     # violin plots
-    ggplot(subset(pData(mcle),State %in% c(1,6,7)), aes_string(x="State", y=gene.x2)) + geom_violin() + facet_grid(patient ~ .) + ggtitle(gene.x2)
+    ggplot(pData(mcle), aes_string(x="State", y=gene.x2)) + geom_violin() + facet_grid(patient ~ .) + ggtitle(gene.x2)
     ggsave(dirout(outGenes, gene.x2, "_patient_violin.pdf"), height=25, width=15)
     
-    ggplot(subset(pData(mcle),State %in% c(1,6,7)), aes_string(x="State", y=gene.x2)) + geom_violin() + facet_grid(sample ~ .) + ggtitle(gene.x2)
+    ggplot(pData(mcle)), aes_string(x="State", y=gene.x2)) + geom_violin() + facet_grid(sample ~ .) + ggtitle(gene.x2)
     ggsave(dirout(outGenes, gene.x2, "_sample_violin.pdf"), height=25, width=15)
     
     # state plot
@@ -338,37 +339,3 @@ write.table(enrichRes[qval < 0.05], file=dirout(out, "StateBySample_Enrichr_Sepa
 
 enrichr.plot(enrichRes=enrichRes)
 ggsave(dirout(out, "StateBySample_Enrichr_Separate.pdf"), height=25, width=10)
-
-
-
-
-
-
-
-# BRANCH POINT ANALYSIS PER PATIENT (MONOCLE WAY) -------------------------------------
-# mcle.meta.data <- data.table(pData(mcle))
-# mcle.meta.data[,patient := substr(sample, 0,2)]
-# cellCounts <- mcle.meta.data[State %in% c(1,6,7),.N, by=c("State", "patient")][order(patient)]
-# (cellCounts <- cellCounts[patient != "KI" & N > 10])
-# 
-# if(!file.exists(dirout(out, "StateBySample_DiffGenes.RData"))){
-#   diffGenes <- list()
-#   for(pat in unique(cellCounts$patient)){
-#     if(nrow(cellCounts[patient == pat]) > 1){
-#       states <- cellCounts[patient == pat]$State
-#       message(pat,": ", states)
-#       bp <- 1
-#       for(bp in 1:3){
-#         mcle.x <- mcle[,mcle.meta.data[patient == pat]$barcode]
-#         BEAM_res <- BEAM(mcle.x, branch_point = bp, cores = 1)
-#         BEAM_res <- BEAM_res[order(BEAM_res$qval),]
-#         BEAM_res <- BEAM_res[,c("gene_short_name", "pval", "qval")]
-#         }
-#       }
-#     }
-#   }
-#   
-#   save(diffGenes, file=dirout(out, "StateBySample_DiffGenes.RData"))
-# } else{
-#   load(dirout(out, "StateBySample_DiffGenes.RData"))
-# }

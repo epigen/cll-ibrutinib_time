@@ -13,76 +13,49 @@ source("src/single_cell_RNA/FUNC_Enrichr.R") #devtools::install_github("definite
 
 list.files(dirout())
 
-(args = commandArgs(trailingOnly=TRUE))
-
-sample.x <- ""
-inDir <- ""
-if(length(args) < 1){
-  sample.x <- "allDataBest_NoDownSampling_noRP"
-  inDir <- "11_CellTypes_noRP_tobit/"
-  args <- "noRP"
-} else {
-  if(args[1] == "noRPstrict"){
-    sample.x <- "allDataBest_NoDownSampling_noRPstrict"
-    inDir <- "11_CellTypes_noRPstrict_negbinom/"
-  }
-  if(args[1] == "noIGHLK"){
-    sample.x <- "allDataBest_NoDownSampling_noIGHLK"
-    inDir <- "11_CellTypes_noIGHKL_negbinom/"
-  }
-  if(args[1] == "allDataBest"){
-    sample.x <- "allDataBest_NoDownSampling"
-    inDir <- "11_CellTypes_negbinom_negbinom/"
-  }
-  if(args[1] == "inclDay30"){
-    sample.x <- ""
-    inDir <- "11_CellTypes_inclDay30/"
-  }
-}
-if(sample.x == "" | inDir == "") stop("No valid dataset")
+sample.x = "inclDay30"
+inDir <- "11_CellTypes_inclDay30/"
 
 list.files(dirout(inDir))
 
-(out <- paste0("13_4_Overtime_",args[1],"/"))
+(out <- paste0("13_4_Overtime_",sample.x,"/"))
 dir.create(dirout(out))
 
 
 
 (cells <- list.files(dirout(inDir)))
-(cells <- cells[grepl(paste0(sample.x), cells)])
 (cells <- cells[!grepl(".log",cells) & !grepl("PC_Distr",cells)])
-(cells <- gsub(paste0(sample.x, "_"), "", cells))
 
 res <- data.table()
 
 cell <- "NK"
 for(cell in cells){
   message(cell)  
-  datasetName <- paste0(sample.x, ifelse(sample.x != "", "_", ""), cell)
   
-  pat.dirs <- list.dirs(dirout(inDir, datasetName))
+  pat.dirs <- list.dirs(dirout(inDir, cell))
   (pat.dirs <- pat.dirs[grepl("_pat_", pat.dirs)])
   
   eff.sizes <- list()
   
   (pat.dir <- pat.dirs[3])
+  print(pat.dirs)
   for(pat.dir in pat.dirs){
     comp.files <- list.files(paste0(pat.dir, "/"))
     comp.files <- comp.files[grepl("Diff_Cluster.+\\.tsv", comp.files)]
-    comp.files <- comp.files[!grepl("d280", comp.files)]
+    (comp.files <- comp.files[grepl("d0", comp.files)])
     
     comp.file <- comp.files[1]
     for(comp.file in comp.files){
-      nams <- strsplit((gsub("Diff_Cluster", "", gsub("\\.tsv", "", comp.file))), "vs")[[1]]
-      pat <- gsub("([A-Z]+)\\d?_.+", "\\1", nams[1])
-      direction <- ifelse(grepl("d0", gsub("(\\d+)d", "d\\1", nams)[1]), "early_vs_late", "late_vs_early")
+      (nams <- strsplit((gsub("Diff_Cluster", "", gsub("\\.tsv", "", comp.file))), "vs")[[1]])
+      (pat <- gsub("([A-Z]+)\\d?_.+", "\\1", nams[1]))
+      (direction <- ifelse(grepl("d0", gsub("(\\d+)d", "d\\1", nams)[1]), "early_vs_late", "late_vs_early"))
       
       
       hits <- fread(paste0(pat.dir, "/",comp.file))[order(V3)]
       colnames(hits) <- c("gene", "pvalue", "logFC", "pct1", "pct2")
       hits[,pct.diff := pct1 - pct2]
       hits$cellType <- cell
-      hits$patient <- pat
+      hits$patient <- ifelse(direction == "early_vs_late", nams[2], nams[1])
       
       if(direction == "early_vs_late"){
         hits[,logFC := -logFC]
@@ -111,29 +84,29 @@ res.sig <- res[qvalue < 0.05 & abs(logFC) > 0.3]
 
 
 # COMPARE TO PREVIOUS -----------------------------------------------------
-res.old <- fread(dirout("13_3_Overtime_Together_tobit/SigGenes_overTime.tsv"))
-res.old <- res.old[qvalue < 0.05 & abs(logFC) > 0.3]
-pat <- "FE"
-cellT <- "CD4"
-res.old.comp <- data.table()
-for(pat in unique(res.sig$patient)){
-  for(cellT in unique(res.sig[patient == pat]$cellType)){
-    s1 <- res.old[patient == pat & cellType == cellT]$gene
-    s2 <- res.sig[patient == pat & cellType == cellT]$gene
-    res.old.comp <- rbind(res.old.comp, data.table(
-      patient = pat,
-      cellType = cellT,
-      x = paste0(cellT, "_", pat),
-      old = sum(!s1 %in% s2),
-      new = sum(!s2 %in% s1),
-      both = sum(s1 %in% s2)
-        ))
-  }
-}
-ggplot(melt(res.old.comp, id.vars=c("patient", "cellType", "x")), 
-       aes(x=x, y=value, fill=variable)) + geom_bar(stat="identity", position="stack")+ 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
-ggsave(dirout(out, "Comparison_to_old.pdf"))
+# res.old <- fread(dirout("13_3_Overtime_Together_tobit/SigGenes_overTime.tsv"))
+# res.old <- res.old[qvalue < 0.05 & abs(logFC) > 0.3]
+# pat <- "FE"
+# cellT <- "CD4"
+# res.old.comp <- data.table()
+# for(pat in unique(res.sig$patient)){
+#   for(cellT in unique(res.sig[patient == pat]$cellType)){
+#     s1 <- res.old[patient == pat & cellType == cellT]$gene
+#     s2 <- res.sig[patient == pat & cellType == cellT]$gene
+#     res.old.comp <- rbind(res.old.comp, data.table(
+#       patient = pat,
+#       cellType = cellT,
+#       x = paste0(cellT, "_", pat),
+#       old = sum(!s1 %in% s2),
+#       new = sum(!s2 %in% s1),
+#       both = sum(s1 %in% s2)
+#         ))
+#   }
+# }
+# ggplot(melt(res.old.comp, id.vars=c("patient", "cellType", "x")), 
+#        aes(x=x, y=value, fill=variable)) + geom_bar(stat="identity", position="stack")+ 
+#   theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# ggsave(dirout(out, "Comparison_to_old.pdf"))
 
 
 
@@ -150,37 +123,37 @@ for(cell in c("All", unique(res$cellType))){
       res2 <- res.sig[cellType == cell]
     }
 
-#     gene.cnt <- res2[,.N, by="gene"]
-#     gene.cnt <- gene.cnt[order(N, decreasing=TRUE)][!grepl("RP", gene)]
-#     genes <- gene.cnt[1:min(100, nrow(gene.cnt))]$gene
-#     res3 <- res2[gene %in% genes]
-#     
-#     # Heatmap over all changes
-#     pDT <- dcast.data.table(res2, gene ~ cellPat, value.var="logFC")
-#     pMT <- as.matrix(pDT[, -"gene", with=F])
-#     rownames(pMT) <- pDT$gene
-#     distx <- dist(pMT[genes,])
-#     distx[is.na(distx)] <- max(distx,na.rm=T)
-#     res3$gene <- factor(res3$gene, levels=rownames(pMT[genes,])[hclust(distx)$order])
-#     
-#     # Dot plot for top significant genes in all samples
-#     ggplot(
-#       res3, 
-#       aes(y=gene, x=cellPat, color=logFC, size=logqval)) +
-#       theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
-#       geom_point() + scale_color_gradient2(low="blue", mid="white", high="red")
-#     ggsave(dirout(out, cell, "_Genes_Dot",filter,".pdf"), height=length(genes)*0.2+3, width=7)
-#     
-#     # Heatmap over all changes
-#     pDT <- dcast.data.table(res2, gene ~ cellPat, value.var="logFC")
-#     pMT <- as.matrix(pDT[, -"gene", with=F])
-#     pCor <- cor(pMT, use="pairwise.complete.obs", method="spearman")
-#     annot <- data.frame(do.call(rbind, strsplit(colnames(pMT), "_")),row.names=colnames(pMT))
-#     try({
-#       pdf(dirout(out, cell, "_CorrHeatmap",filter,".pdf"), onefile=F, height=7, width=8)
-#       pheatmap(pCor,annotation_row=annot)
-#       dev.off()
-#     }, silent=T)
+    gene.cnt <- res2[,.N, by="gene"]
+    gene.cnt <- gene.cnt[order(N, decreasing=TRUE)][!grepl("RP", gene)]
+    genes <- gene.cnt[1:min(100, nrow(gene.cnt))]$gene
+    res3 <- res2[gene %in% genes]
+    
+    # Heatmap over all changes
+    pDT <- dcast.data.table(res2, gene ~ cellPat, value.var="logFC")
+    pMT <- as.matrix(pDT[, -"gene", with=F])
+    rownames(pMT) <- pDT$gene
+    distx <- dist(pMT[genes,])
+    distx[is.na(distx)] <- max(distx,na.rm=T)
+    res3$gene <- factor(res3$gene, levels=rownames(pMT[genes,])[hclust(distx)$order])
+    
+    # Dot plot for top significant genes in all samples
+    ggplot(
+      res3, 
+      aes(y=gene, x=cellPat, color=logFC, size=logqval)) +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+      geom_point() + scale_color_gradient2(low="blue", mid="white", high="red")
+    ggsave(dirout(out, cell, "_Genes_Dot",filter,".pdf"), height=length(genes)*0.2+3, width=7)
+    
+    # Heatmap over all changes
+    pDT <- dcast.data.table(res2, gene ~ cellPat, value.var="logFC")
+    pMT <- as.matrix(pDT[, -"gene", with=F])
+    pCor <- cor(pMT, use="pairwise.complete.obs", method="spearman")
+    annot <- data.frame(do.call(rbind, strsplit(colnames(pMT), "_")),row.names=colnames(pMT))
+    try({
+      pdf(dirout(out, cell, "_CorrHeatmap",filter,".pdf"), onefile=F, height=7, width=8)
+      pheatmap(pCor,annotation_row=annot)
+      dev.off()
+    }, silent=T)
 
     
     
@@ -260,7 +233,10 @@ for(cell in c("All", unique(res$cellType))){
       }
       
       # plot
-      ggplot(enrichRes[term %in% enrichRes[,.(min(qval)), by="term"][V1 < 0.05]$term], 
+      sigTerms <- enrichRes[,.(min(qval)), by="term"][V1 < 0.05]$term
+      freqTerms <- enrichRes[,.N, by="term"][N >=2]$term
+      
+      ggplot(enrichRes[term %in% sigTerms  & term %in% freqTerms], 
              aes(x=grp, y=term, size=log10(oddsRatio), color=mLog10Q)) + 
         geom_point() + scale_color_gradient(low="grey", high="red") + theme_bw(12) + 
         theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("-log10(q) capped at 4")
@@ -276,12 +252,13 @@ for(cell in c("All", unique(res$cellType))){
 atac.signaling.genes <- fread(dirout("cll-time_course.ligand-receptor_repertoire.CLL.gene_level.sig_only.timepoint_mean.clustermap.csv"))$V1
 ramilowski.rec_lig <- fread("~/resources_nfortelny/PairsLigRec_Ramilowski_NatComm_2015.txt")
 signaling.genes <- unique(c(atac.signaling.genes, ramilowski.rec_lig$Ligand.ApprovedSymbol, ramilowski.rec_lig$Receptor.ApprovedSymbol)) 
-signaling.genes <- unique(c(signaling.genes, unique(res[grepl("^CC[LR]\\d+$", gene) | grepl("^CXC[RL]\\d+$", gene) | grepl("^CD\\d+\\w?$", gene)]$gene)))
+signaling.genes <- unique(c(signaling.genes, unique(res[grepl("NFK",gene) | grepl("^CC[LR]\\d+$", gene) | grepl("^CXC[RL]\\d+$", gene) | grepl("^CD\\d+\\w?$", gene)]$gene)))
 
 res.reclig <- res[gene %in% signaling.genes]
-res.reclig[, significant := any(qvalue < 0.05) | abs(logFC) > 0.3, by= "gene"]
+res.reclig[, significant := any(qvalue < 0.05) | abs(logFC) > 0.5, by= "gene"]
 res.reclig[, significant2 := any(qvalue < 0.05) | abs(logFC) > 1, by= "gene"]
 
+res.reclig[,cellPat := gsub("d30", "d030", cellPat)]
 
 # order groups by similarity (of OR)
 if(length(unique(res.reclig$gene)) >= 2){
@@ -293,51 +270,59 @@ if(length(unique(res.reclig$gene)) >= 2){
   }, silent=T)
 }
 
-
+  
 ggplot(res.reclig[significant == TRUE], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
-ggsave(dirout(out, "Receptor_Ligand.pdf"), height=29, width=15)
+ggsave(dirout(out, "Receptor_Ligand_all.pdf"), height=29, width=15)
 
 ggplot(res.reclig[significant2 == TRUE], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
-ggsave(dirout(out, "Receptor_Ligand_Strict.pdf"), height=25, width=15)
+ggsave(dirout(out, "Receptor_Ligand_Strict_all.pdf"), height=29, width=15)
 
-
+for(ct in unique(res.reclig$cellType)){
+  ggplot(res.reclig[significant == TRUE & cellType == ct], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
+  ggsave(dirout(out, "Receptor_Ligand_",ct,".pdf"), height=29, width=6)
+  
+  ggplot(res.reclig[significant2 == TRUE & cellType == ct], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
+  ggsave(dirout(out, "Receptor_Ligand_Strict_",ct,".pdf"), height=25, width=6)
+}
 
 
 # ACTUALLY LOOK AT INTERACTIONS -------------------------------------------
 
-table(ramilowski.rec_lig$Pair.Evidence)
-table(is.na(ramilowski.rec_lig$Pair.Evidence))
-
-rlDT <- data.table()
-for(pat in unique(res$patient)){
-  resPat <- res[patient == pat][qvalue < 0.05]
-  for(ct1 in unique(resPat$cellType)){
-    for(ct2 in unique(resPat$cellType)){
-      # rec in ct1
-      resCT1 <- resPat[cellType == ct1]
-      recDat <- resCT1[match(ramilowski.rec_lig[Pair.Evidence == "literature supported"]$Receptor.ApprovedSymbol, resCT1$gene)]
-      colnames(recDat) <- paste0("rec_",colnames(recDat))
-      # lig in ct2
-      resCT2 <- resPat[cellType == ct2]
-      ligDat <- resCT2[match(ramilowski.rec_lig[Pair.Evidence == "literature supported"]$Ligand.ApprovedSymbol, resCT2$gene)]
-      colnames(ligDat) <- paste0("lig_",colnames(ligDat))
-      
-      rlDat <- cbind(recDat, ligDat)[!is.na(rec_gene) & !is.na(lig_gene)]
-      rlDT <- rbind(rlDT, rlDat)
-    }
-  }
-}
-
-(rlDT2 <- rlDT[, c("rec_patient", "rec_cellType", "rec_gene", "rec_logFC", "lig_cellType", "lig_gene", "lig_logFC"), with=F])
-rlDT2[sign(rec_logFC) != sign(lig_logFC)]
-rlDT3 <- rlDT2[sign(rec_logFC) == sign(lig_logFC)]
-ramilowski.rec_lig[Receptor.ApprovedSymbol == "KLRC1" & Ligand.ApprovedSymbol == "HLA-E"]
-rlDT3[order(lig_gene)]
-rlDT3[!grepl("HLA", lig_gene)]
-rlDT3[grepl("HLA", lig_gene)]
-
-write.table(rlDT3[order(lig_gene)], dirout(out, "Ligand_Interactions.tsv"), sep="\t", quote=F, row.names=F)
+# table(ramilowski.rec_lig$Pair.Evidence)
+# table(is.na(ramilowski.rec_lig$Pair.Evidence))
+# 
+# rlDT <- data.table()
+# for(pat in unique(res$patient)){
+#   resPat <- res[patient == pat][qvalue < 0.05]
+#   for(ct1 in unique(resPat$cellType)){
+#     for(ct2 in unique(resPat$cellType)){
+#       # rec in ct1
+#       resCT1 <- resPat[cellType == ct1]
+#       recDat <- resCT1[match(ramilowski.rec_lig[Pair.Evidence == "literature supported"]$Receptor.ApprovedSymbol, resCT1$gene)]
+#       colnames(recDat) <- paste0("rec_",colnames(recDat))
+#       # lig in ct2
+#       resCT2 <- resPat[cellType == ct2]
+#       ligDat <- resCT2[match(ramilowski.rec_lig[Pair.Evidence == "literature supported"]$Ligand.ApprovedSymbol, resCT2$gene)]
+#       colnames(ligDat) <- paste0("lig_",colnames(ligDat))
+#       
+#       rlDat <- cbind(recDat, ligDat)[!is.na(rec_gene) & !is.na(lig_gene)]
+#       rlDT <- rbind(rlDT, rlDat)
+#     }
+#   }
+# }
+# 
+# (rlDT2 <- rlDT[, c("rec_patient", "rec_cellType", "rec_gene", "rec_logFC", "lig_cellType", "lig_gene", "lig_logFC"), with=F])
+# rlDT2[sign(rec_logFC) != sign(lig_logFC)]
+# rlDT3 <- rlDT2[sign(rec_logFC) == sign(lig_logFC)]
+# ramilowski.rec_lig[Receptor.ApprovedSymbol == "KLRC1" & Ligand.ApprovedSymbol == "HLA-E"]
+# rlDT3[order(lig_gene)]
+# rlDT3[!grepl("HLA", lig_gene)]
+# rlDT3[grepl("HLA", lig_gene)]
+# 
+# write.table(rlDT3[order(lig_gene)], dirout(out, "Ligand_Interactions.tsv"), sep="\t", quote=F, row.names=F)
 
 message("Completed successfully")

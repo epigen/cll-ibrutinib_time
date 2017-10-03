@@ -135,6 +135,8 @@ enrichGeneList.oddsRatio <- function(gene.list, databases = "KEGG_2016", fdr.cut
     }
   }
   
+  closeAllConnections()
+  
   query.results[,listLength := length(gene.list)]
   
   if(nrow(query.results) > 0){

@@ -9,6 +9,7 @@ require(pryr)
 if(!exists("enrichrDBs")) enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location")
 if(!exists("extra.genes.to.plot")) extra.genes.to.plot <- c()
 if(!exists("seurat.diff.test")) seurat.diff.test <- "negbinom"
+if(!exists("seurat.thresh.use")) seurat.thresh.use <- 0.25
 if(!exists("max.nr.of.cores")) max.nr.of.cores <- 3
 if(!exists("seurat.min.pct")) seurat.min.pct <- 0.25
 
@@ -189,7 +190,11 @@ foreach(cl.x = clusterings) %dopar% {
         cl2 <- clusters[i2]
         if(!file.exists(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")) & !file.exists(dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv"))){
           try({
-            cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, test.use=seurat.diff.test, min.pct = seurat.min.pct)
+            cluster.markers <- FindMarkers(pbmc,  
+                                           ident.1 = cl1, ident.2 = cl2, 
+                                           test.use=seurat.diff.test, 
+                                           min.pct = seurat.min.pct,
+                                           thresh.use=seurat.thresh.use)
             mm <- row.names(cluster.markers)
             mm <- mm[mm %in% row.names(pbmc@data)]
             if(length(mm) > 0){
