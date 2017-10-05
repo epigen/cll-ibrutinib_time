@@ -16,7 +16,7 @@ do
       --output="$CODEBASE/cll-time_course/src/single_cell_RNA/13_4_OverTime_${file}.log"
 done
 
-sbatch --job-name="cll-time_course 13_4_OverTime_inclDay30" --ntasks=1 --mem=50000 --partition=shortq --time=08:00:00 \
+sbatch --job-name="cll-time_course 13_4_OverTime_inclDay30" --ntasks=1 --mem=50000 --partition=develop --time=05:00:00 \
     --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/13_4_OverTime_inclDay30.R" \
     --output="$CODEBASE/cll-time_course/src/single_cell_RNA/13_4_OverTime_inclDay30.log"
 
@@ -67,6 +67,9 @@ sbatch --job-name="30_9_Signatures_inclDay30.R" --ntasks=12 --mem=180000 --parti
     --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/30_9_Signatures_inclDay30.R" \
     --output="$CODEBASE/cll-time_course/src/single_cell_RNA/30_9_Signatures_inclDay30.log"
 
+sbatch --job-name="30_9_2_Signatures_inclDay30.R" --ntasks=1 --mem=180000 --partition=longq --time=20:00:00 \
+    --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/30_9_2_Signatures_inclDay30.R" \
+    --output="$CODEBASE/cll-time_course/src/single_cell_RNA/30_9_2_Signatures_inclDay30.log"
 
 # Signatures for CNVS
 sbatch --job-name="41_CNV_Signatures.R" --ntasks=12 --mem=180000 --partition=longq \
@@ -108,6 +111,11 @@ module unload gcc/4.8.2; module load gcc/7.1.0; module unload R/3.2.3; module lo
 sbatch --job-name="52_3_Monocle.R" --ntasks=12 --mem=180000 --partition=longq --time=3-00:00:00 \
     --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/52_3_Monocle.R" \
     --output="$CODEBASE/cll-time_course/src/single_cell_RNA/52_3_Monocle.log"
+
+module unload gcc/4.8.2; module load gcc/7.1.0; module unload R/3.2.3; module load R/3.4.0
+sbatch --job-name="52_3_Monocle_Endpoints.R" --ntasks=12 --mem=180000 --partition=longq --time=3-00:00:00 \
+    --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/52_3_Monocle_Endpoints.R" \
+    --output="$CODEBASE/cll-time_course/src/single_cell_RNA/52_3_Monocle_Endpoints.log"
 
 module unload R/3.2.3; module load R/3.3.2
 sbatch --job-name="53_GroupCorrelations.R" --ntasks=1 --mem=70000 --partition=develop --time=08:00:00 \

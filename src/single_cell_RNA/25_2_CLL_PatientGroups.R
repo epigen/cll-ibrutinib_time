@@ -12,13 +12,13 @@ seurat.diff.test <- "negbinom"
 seurat.min.pct <- 0.1
 seurat.thresh.use <- 0.1
 
-clustering.precision <- seq(0.5, 2.5, 0.2)
+clustering.precision <- seq(0.5, 2.5, 0.4)
 
-out <- "11_CellTypes_inclDay30/"
+out <- "25_Patient_CLL/"
 dir.create(dirout(out))
 
 
-cell = "Mono"
+cell = "PT"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 1) {
   stop("Need arguments: 1 - celltype")
@@ -36,36 +36,28 @@ outS <- paste0(out, cell, "/")
 dir.create(dirout(outS))
 
 if(!file.exists(dirout(outS, cell,".RData"))){
-  load(dirout("10_Seurat_raw/inclDay30_noIGHLK_negbinom/", "inclDay30_noIGHLK.RData"))
-	
+  (load(dirout("11_CellTypes_inclDay30/CLL/CLL.RData")))
+  
   pbmcOrig <- pbmc
   
   stopifnot(all(rownames(pbmc@data.info) == colnames(pbmc@data)))
   
   # SUBSET DATA -------------------------------------------------------------
-  cellToKeep.idx <- which(pbmc@data.info$CellType == cell)
+  cellToKeep.idx <- which(pbmc@data.info$patient == cell)
   
   stopifnot(!is.na(cellToKeep.idx))
   str(cellToKeep <- rownames(pbmcOrig@data.info)[cellToKeep.idx])
   pbmc <- SubsetData(pbmcOrig, cells.use = cellToKeep)
+  
+  pbmc@data.info <- pbmc@data.info[,!grepl("ClusterNames", colnames(pbmc@data.info))]
+  pbmc@data.info <- pbmc@data.info[,!grepl("res", colnames(pbmc@data.info))]
+  str(pbmc@data.info)
   
   pDat <- pbmcOrig@tsne.rot
   pDat$selected <- "no"
   pDat$selected[cellToKeep.idx] <- "yes"
   ggplot(pDat, aes(x=tSNE_1, y=tSNE_2, color=selected)) + geom_point()
   ggsave(dirout(outS, "SelectedCells.pdf"))
-  
-  
-  # ASSIGN PATIENT -------------------------------------------------------------  
-  if(is.null(pbmc@data.info[["patient"]])){
-    pbmc@data.info[["patient"]] <- gsub("_.*", "", gsub("\\d", "", substr(gsub("LiveBulk_10x_", "", pbmc@data.info[["sample"]]), 0,6)))
-    
-    for(pat in unique(pbmc@data.info[["patient"]])){
-      res <- pbmc@data.info[["sample"]]
-      res[!grepl(paste0(pat, "\\d?_(d\\d+|\\d+d)"), pbmc@data.info[["sample"]])] <- "IGNORED"
-      pbmc@data.info[[paste0("pat_",pat)]] <- res
-    }
-  }
   
   
   # COUNT CELLS -------------------------------------------------------------
@@ -83,7 +75,7 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   # PREP DATASET ------------------------------------------------------------
   pbmc <- MeanVarPlot(pbmc ,fxn.x = expMean, fxn.y = logVarDivMean, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5, do.contour = F)
   pbmc <- PCA(pbmc, pc.genes = pbmc@var.genes, do.print = TRUE, pcs.print = 5, genes.print = 5)
-  pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = F)
+  pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = TRUE)
   
   # Clustering
   for(x in clustering.precision){
@@ -129,3 +121,6 @@ for(pc in unique(pcDat2$variable)){
     theme(axis.text.x = element_text(angle = 90, hjust = 1))
   ggsave(dirout(out, "PC_Distr_",cell,"_", pc,".pdf"), height=15, width=15)
 }
+
+# Cluster analysis
+source("src/single_cell_RNA/10_2_Seurat_Script_3.R", echo=TRUE)

@@ -82,6 +82,15 @@ res[,logqval := pmin(5, -log(qvalue))]
 
 res.sig <- res[qvalue < 0.05 & abs(logFC) > 0.3]
 
+res.sig[,direction := ifelse(logFC > 0, "up", "down")]
+res.sig$direction <- factor(res.sig$direction, levels = c("up","down"))
+res.sig[,patient2 := gsub("d30", "d030", patient)]
+
+ggplot(res.sig, aes(x=patient2, fill=direction)) + geom_bar(position="dodge") + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_grid(. ~ cellType) + ylab("Number of genes") + xlab("")
+ggsave(dirout(out, "NumberOfGenesChanging.pdf"), height=7, width=14)
 
 # COMPARE TO PREVIOUS -----------------------------------------------------
 # res.old <- fread(dirout("13_3_Overtime_Together_tobit/SigGenes_overTime.tsv"))
@@ -192,6 +201,7 @@ for(cell in c("All", unique(res$cellType))){
     
     # ENRICHR
     enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location")
+    #enrichrDBs <- c("ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X", "Transcription_Factor_PPIs")
     enrichRes <- data.table()
     res2[,group := paste0(cellPat, "_", ifelse(logFC > 0, "up", "down"))]
     hitSets <- split(res2$gene, factor(res2$group))

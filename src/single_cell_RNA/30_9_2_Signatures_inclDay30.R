@@ -7,7 +7,7 @@ require(pheatmap)
 require(gplots)
 
 project.init2("cll-time_course")
-out <- "30_9_Signatures_inclDay30/"
+out <- "30_9_Signatures_inclDay30_downLists/"
 dir.create(dirout(out))
 
 
@@ -54,6 +54,10 @@ for(line in lines){
 }
 load(dirout("20_AggregatedLists/lists.RData"))
 genesets <- c(genesets, cll.lists)
+
+cllDownGenes <- fread(dirout("13_4_Overtime_inclDay30/SigGenes_overTime.tsv"))
+cllDownGenes <- cllDownGenes[cellType == "CLL"][qvalue < 0.05 & logFC < 0]
+genesets <- c(genesets, split(cllDownGenes$gene, factor(cllDownGenes$patient)))
 
 file.remove(dirout(out, "Genesets.tsv"))
 lapply(names(genesets), function(lnam){

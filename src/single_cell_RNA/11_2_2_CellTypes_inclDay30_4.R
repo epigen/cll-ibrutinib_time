@@ -103,8 +103,14 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   load(file=dirout(outS, cell,".RData"))
   
   update <- FALSE
+    
+  if(!.hasSlot(pbmc, "version")){
+      pbmc <- UpdateSeuratObject(pbmc)
+      update <- TRUE
+  }
+
   for(x in clustering.precision){
-    if(is.null(pbmc@data.info[[paste0("ClusterNames_", x)]])){
+    if(is.null(pbmc@meta.data[[paste0("ClusterNames_", x)]])){
       update <- TRUE
       pbmc <- FindClusters(pbmc, pc.use = 1:10, resolution = x, print.output = 0, save.SNN = T)
       pbmc <- StashIdent(pbmc, save.name = paste0("ClusterNames_", x))
@@ -116,16 +122,18 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   }
 }
 
-str(pbmc@pca.rot)
-str(pbmc@data.info)
-pcDat <- data.table(pbmc@pca.rot, sample=pbmc@data.info$sample)
-pcDat2 <- melt(pcDat,id.vars="sample")[variable %in% paste0("PC", 1:10)]
-ggplot(pcDat2, aes(x=sample, y=value)) + geom_violin() + facet_grid(variable ~ .) + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
-ggsave(dirout(out, "PC_Distr_",cell,".pdf"), height=29, width=29)
-  
-for(pc in unique(pcDat2$variable)){
-  ggplot(pcDat2[variable == pc], aes(x=sample, y=value)) + geom_violin() +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1))
-  ggsave(dirout(out, "PC_Distr_",cell,"_", pc,".pdf"), height=15, width=15)
-}
+# str(pbmc@pca.rot)
+# str(pbmc@data.info)
+# pcDat <- data.table(pbmc@pca.rot, sample=pbmc@data.info$sample)
+# pcDat2 <- melt(pcDat,id.vars="sample")[variable %in% paste0("PC", 1:10)]
+# ggplot(pcDat2, aes(x=sample, y=value)) + geom_violin() + facet_grid(variable ~ .) +
+#   theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# ggsave(dirout(out, "PC_Distr_",cell,".pdf"), height=29, width=29)
+#
+# for(pc in unique(pcDat2$variable)){
+#   ggplot(pcDat2[variable == pc], aes(x=sample, y=value)) + geom_violin() +
+#     theme(axis.text.x = element_text(angle = 90, hjust = 1))
+#   ggsave(dirout(out, "PC_Distr_",cell,"_", pc,".pdf"), height=15, width=15)
+# }
+
+source("src/single_cell_RNA/FUNC_Seurat2.R", echo=TRUE)

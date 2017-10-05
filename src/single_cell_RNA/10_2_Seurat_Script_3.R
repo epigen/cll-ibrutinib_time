@@ -142,8 +142,8 @@ write.table(clusterCounts[, .N, by=c("V1", "nam")], dirout(outS, "ClusterCounts.
 # Markers for each cluster ------------------------------------------------
 message("Plotting cluster Markers")
 cl.x <- "patient_PT"
-# for(cl.x in clusterings){
-foreach(cl.x = clusterings) %dopar% { 
+for(cl.x in clusterings){
+# foreach(cl.x = clusterings) %dopar% { 
   if(!is.null(pbmc@data.info[[cl.x]])){
     x <- gsub("ClusterNames_","", cl.x)
     out.cl <- paste0(outS, "Cluster_",x, "/")
@@ -158,11 +158,12 @@ foreach(cl.x = clusterings) %dopar% {
       if(!file.exists(dirout(out.cl, "Markers_Cluster",cl.i, ".tsv"))){
         try({
           cluster.markers <- FindMarkers(pbmc,  ident.1 = cl.i, ident.2 = clusters[clusters != cl.i],test.use=seurat.diff.test, min.pct = seurat.min.pct)    
+          write.table(cluster.markers, dirout(out.cl, "Markers_Cluster",cl.i, ".tsv"), sep="\t", quote=F, row.names=TRUE)
+
           pdf(dirout(out.cl,"Markers_Cluster",cl.i,".pdf"), height=15, width=15)
           FeaturePlot(pbmc, row.names(cluster.markers)[1:min(nrow(cluster.markers),9)],cols.use = c("grey","blue"))
           dev.off()
-          write.table(cluster.markers, dirout(out.cl, "Markers_Cluster",cl.i, ".tsv"), sep="\t", quote=F, row.names=TRUE)
-        }, silent=T)
+        }, silent=TRUE)
       }
     }
   }
@@ -188,13 +189,14 @@ foreach(cl.x = clusterings) %dopar% {
       for(i2 in (i1+1):length(clusters)){
         cl1 <- clusters[i1]
         cl2 <- clusters[i2]
-        if(!file.exists(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")) & !file.exists(dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv"))){
+        if(!file.exists(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")) | !file.exists(dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv"))){
+          cluster.markers <- FindMarkers(pbmc,  
+                                         ident.1 = cl1, ident.2 = cl2, 
+                                         test.use=seurat.diff.test, 
+                                         min.pct = seurat.min.pct,
+                                         thresh.use=seurat.thresh.use)
+          write.table(cluster.markers, dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv"), sep="\t", quote=F, row.names=TRUE)
           try({
-            cluster.markers <- FindMarkers(pbmc,  
-                                           ident.1 = cl1, ident.2 = cl2, 
-                                           test.use=seurat.diff.test, 
-                                           min.pct = seurat.min.pct,
-                                           thresh.use=seurat.thresh.use)
             mm <- row.names(cluster.markers)
             mm <- mm[mm %in% row.names(pbmc@data)]
             if(length(mm) > 0){
@@ -202,7 +204,6 @@ foreach(cl.x = clusterings) %dopar% {
               FeaturePlot(object=pbmc,features.plot=row.names(cluster.markers)[1:min(nrow(cluster.markers),9)],cols.use = c("grey","blue"),
                           cells.use=names(pbmc@ident)[pbmc@ident %in% c(cl1, cl2)])
               dev.off()
-              write.table(cluster.markers, dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv"), sep="\t", quote=F, row.names=TRUE)
             }
           }, silent=TRUE)
         }

@@ -33,7 +33,7 @@ registerDoMC(cores=cores_u)
 clusterings <- colnames(pbmc@meta.data)[apply(pbmc@meta.data, 2, function(x) sum(table(x[x!="IGNORED"])>1)>1)]
 clusterings <- clusterings[!clusterings %in% c("nUMI", "nGene", "orig.ident", "percent.mito", "var.ratio.pca")]
 # reorder to do the kmeans at the end
-(clusterings <- c(clusterings[!grepl("res", clusterings)], clusterings[grepl("res", clusterings)]))
+(clusterings <- c(clusterings[!grepl("res", clusterings)]))
 
 
 # PLOT MARKERS 2
@@ -61,11 +61,11 @@ if(file.exists("metadata/CellMarkers.csv")){
 }
 
 # PLOT UMIS ---------------------------------------------------------------
-# message("Plotting UMIs")
-# umip <- ggplot(data.table(pbmc@dr$tsne@cell.embeddings, UMIs=pbmc@meta.data$nUMI), aes(x=tSNE_1,y=tSNE_2, color=log10(UMIs))) + 
-#   scale_color_gradient(low="blue", high="red") +
-#   geom_point() + ggtitle(paste(sample.x, "\n",nrow(pbmc@data), "genes\n", ncol(pbmc@data), "cells")) + theme_bw(24)
-# ggsave(dirout(outS, "UMI.pdf"),plot=umip)
+message("Plotting UMIs")
+umip <- ggplot(data.table(pbmc@dr$tsne@cell.embeddings, UMIs=pbmc@meta.data$nUMI), aes(x=tSNE_1,y=tSNE_2, color=log10(UMIs))) +
+  scale_color_gradient(low="blue", high="red") +
+  geom_point() + ggtitle(paste(sample.x, "\n",nrow(pbmc@data), "genes\n", ncol(pbmc@data), "cells")) + theme_bw(24)
+ggsave(dirout(outS, "UMI.pdf"),plot=umip)
 
 
 # PLOT CLUSTERS
@@ -107,13 +107,12 @@ foreach(cl.x = clusterings) %dopar% {
     for(cl.i in clusters){
       # message(cl.i)
       if(!file.exists(dirout(out.cl, "Markers_Cluster",cl.i, ".tsv"))){
-        try({
           cluster.markers <- FindMarkers(pbmc,  ident.1 = cl.i, ident.2 = clusters[clusters != cl.i],
                                          test.use=seurat.diff.test, 
                                          min.pct = seurat.min.pct,
                                          thresh.use=seurat.thresh.use)    
           write.table(cluster.markers, dirout(out.cl, "Markers_Cluster",cl.i, ".tsv"), sep="\t", quote=F, row.names=TRUE)
-          
+        try({
           pdf(dirout(out.cl,"Markers_Cluster",cl.i,".pdf"), height=15, width=15)
           FeaturePlot(pbmc, row.names(cluster.markers)[1:min(nrow(cluster.markers),9)],cols.use = c("grey","blue"))
           dev.off()

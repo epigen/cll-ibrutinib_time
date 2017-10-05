@@ -89,12 +89,14 @@ pbmc@meta.data$State <- pData(mcle)$State
 pbmc@meta.data$Pseudotime <- pData(mcle)$Pseudotime
 
 sapply(split(pbmc@meta.data$Pseudotime, factor(pbmc@meta.data$State)), quantile)
-rownames(subset(pbmc@meta.data, (State == 1 & Pseudotime < 2) | (State == 2 & Pseudotime > 4.5) | (State == 3 & Pseudotime > 6)))
+
+cellsKeep <- rownames(subset(pbmc@meta.data, (State == 1 & Pseudotime < 2) | (State == 2 & Pseudotime > 4.5) | (State == 3 & Pseudotime > 6)))
+
+mcle <- mcle[,cellsKeep]
 plot_cell_trajectory(mcle, color_by = "Pseudotime")
-ggsave(dirout(out, "Pseudotime.pdf"), width=7, height=7)
+ggsave(dirout(out, "Pseudotime2.pdf"), width=7, height=7)
 
-pbmc <- SubsetData(pbmc,cells.use=)
-
+pbmc <- SubsetData(pbmc,cells.use=cellsKeep)
 
 pDat <- data.table(pbmc@dr$tsne@cell.embeddings, State=pbmc@meta.data$State)
 p <- ggplot(pDat, aes(x=tSNE_1, y=tSNE_2, color= State)) 
@@ -323,7 +325,7 @@ counts[grepl(":", names(counts)) & counts > 10]
 counts[counts > 10]
 select <- ii[names(counts[counts > 10])]
 sapply(select, length)
-enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location")
+enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location", "ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X", "Transcription_Factor_PPIs")
 enrichRes <- data.table()
 for(grp.x in names(select)){
   ret=try(as.data.table(enrichGeneList.oddsRatio(select[[grp.x]],databases = enrichrDBs)),silent = FALSE)
@@ -339,7 +341,7 @@ ggsave(dirout(out, "StateBySample_Enrichr.pdf"), height=12, width=7)
 
 
 # Get enrichments for sepearate lists
-enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location")
+enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location", "ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X", "Transcription_Factor_PPIs")
 enrichRes <- data.table()
 for(grp.x in names(diffGenes2)){
   ret=try(as.data.table(enrichGeneList.oddsRatio(diffGenes2[[grp.x]],databases = enrichrDBs)),silent = FALSE)
@@ -352,3 +354,10 @@ write.table(enrichRes[qval < 0.05], file=dirout(out, "StateBySample_Enrichr_Sepa
 
 enrichr.plot(enrichRes=enrichRes)
 ggsave(dirout(out, "StateBySample_Enrichr_Separate.pdf"), height=25, width=10)
+
+for(database.x in unique(enrichRes$database)){
+  enrichRes.x <- enrichRes[database == database.x]
+  enrichRes.x[,comparison := gsub(".+?_", "", grp)]
+  enrichr.plot(enrichRes=enrichRes.x) + facet_grid(. ~ comparison,scales="free")
+  ggsave(dirout(out, "StateBySample_Enrichr_Separate_",database.x,".pdf"), height=25, width=15)
+}
