@@ -136,4 +136,9 @@ if(!file.exists(dirout(outS, cell,".RData"))){
 #   ggsave(dirout(out, "PC_Distr_",cell,"_", pc,".pdf"), height=15, width=15)
 # }
 
+pbmc@meta.data <- cbind(
+  pbmc@meta.data[,grepl("pat_", colnames(pbmc@meta.data)), drop=F],
+  pbmc@meta.data[,c("nGene", "nUMI")]
+  )
+
 source("src/single_cell_RNA/FUNC_Seurat2.R", echo=TRUE)

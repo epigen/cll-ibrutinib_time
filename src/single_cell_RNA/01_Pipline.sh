@@ -67,7 +67,7 @@ sbatch --job-name="30_9_Signatures_inclDay30.R" --ntasks=12 --mem=180000 --parti
     --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/30_9_Signatures_inclDay30.R" \
     --output="$CODEBASE/cll-time_course/src/single_cell_RNA/30_9_Signatures_inclDay30.log"
 
-sbatch --job-name="30_9_2_Signatures_inclDay30.R" --ntasks=1 --mem=180000 --partition=longq --time=20:00:00 \
+sbatch --job-name="30_9_2_Signatures_inclDay30.R" --ntasks=1 --mem=180000 --partition=longq --time=7-00:00:00 \
     --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/30_9_2_Signatures_inclDay30.R" \
     --output="$CODEBASE/cll-time_course/src/single_cell_RNA/30_9_2_Signatures_inclDay30.log"
 

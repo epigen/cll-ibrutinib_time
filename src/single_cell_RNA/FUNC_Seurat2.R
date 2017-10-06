@@ -18,6 +18,8 @@ require(pheatmap)
 require(ggplot2)
 require(doMC)
 require(pryr)
+source("src/single_cell_RNA/FUNC_Enrichr.R") #devtools::install_github("definitelysean/enrichR")
+
 
 # manage memory and number of tasks used
 mem_u <- as.numeric(mem_used())/10**6
@@ -30,10 +32,14 @@ registerDoMC(cores=cores_u)
 
 # use colnames from pbmc@meta.data as clusterings
 # only those with >= 2 groups with > 1 cell
-clusterings <- colnames(pbmc@meta.data)[apply(pbmc@meta.data, 2, function(x) sum(table(x[x!="IGNORED"])>1)>1)]
+clusterings <- colnames(pbmc@meta.data)[apply(pbmc@meta.data, 2, function(x) sum(table(x[x!="IGNORED"])>2)>1)]
 clusterings <- clusterings[!clusterings %in% c("nUMI", "nGene", "orig.ident", "percent.mito", "var.ratio.pca")]
 # reorder to do the kmeans at the end
 (clusterings <- c(clusterings[!grepl("res", clusterings)]))
+
+for(cl.x in clusterings){
+  print(table(pbmc@meta.data[[cl.x]]))
+}
 
 
 # PLOT MARKERS 2
@@ -60,13 +66,17 @@ if(file.exists("metadata/CellMarkers.csv")){
   }
 }
 
+
+
+
 # PLOT UMIS ---------------------------------------------------------------
 message("Plotting UMIs")
-umip <- ggplot(data.table(pbmc@dr$tsne@cell.embeddings, UMIs=pbmc@meta.data$nUMI), aes(x=tSNE_1,y=tSNE_2, color=log10(UMIs))) +
-  scale_color_gradient(low="blue", high="red") +
-  geom_point() + ggtitle(paste(sample.x, "\n",nrow(pbmc@data), "genes\n", ncol(pbmc@data), "cells")) + theme_bw(24)
-ggsave(dirout(outS, "UMI.pdf"),plot=umip)
-
+try({
+  umip <- ggplot(data.table(pbmc@dr$tsne@cell.embeddings, UMIs=pbmc@meta.data$nUMI), aes(x=tSNE_1,y=tSNE_2, color=log10(UMIs))) +
+    scale_color_gradient(low="blue", high="red") +
+    geom_point() + ggtitle(paste(sample.x, "\n",nrow(pbmc@data), "genes\n", ncol(pbmc@data), "cells")) + theme_bw(24)
+  ggsave(dirout(outS, "UMI.pdf"),plot=umip)
+}, silent = TRUE)
 
 # PLOT CLUSTERS
 message("Plotting Clusters")
@@ -90,18 +100,22 @@ clusterCounts <- do.call(rbind, lapply(names(clusterCounts), function(nam) data.
 write.table(clusterCounts[, .N, by=c("V1", "nam")], dirout(outS, "ClusterCounts.tsv"), sep="\t", quote=F,row.names=F)
 
 
+
+
+
 # Markers for each cluster ------------------------------------------------
 message("Plotting cluster Markers")
 cl.x <- "sample"
 # for(cl.x in clusterings){
 foreach(cl.x = clusterings) %dopar% { 
   if(!is.null(pbmc@meta.data[[cl.x]])){
+    print(cl.x)
     x <- gsub("ClusterNames_","", cl.x)
     out.cl <- paste0(outS, "Cluster_",x, "/")
     dir.create(dirout(out.cl))
     pbmc@ident <- factor(pbmc@meta.data[[cl.x]])
     names(pbmc@ident) <- pbmc@cell.names # it needs those names apparently
-    clusters <- names(table(pbmc@ident))[table(pbmc@ident)>1]
+    clusters <- names(table(pbmc@ident))[table(pbmc@ident)>2]
     clusters <- clusters[clusters != "IGNORED"]
     cl.i <- "PT_d0"
     for(cl.i in clusters){
@@ -123,18 +137,68 @@ foreach(cl.x = clusterings) %dopar% {
 }
 
 
+
+
+
+# Enrichr on first Markers -----------------------------------------------------------------
+message("EnrichR on first markers")
+cl.x <- "patient"
+cl.x <- clusterings[13]
+for(cl.x in clusterings){
+  if(!is.null(pbmc@meta.data[[cl.x]])){
+    print(cl.x)
+    x <- gsub("ClusterNames_","", cl.x)
+    #     if(!file.exists(dirout(outS, "Enrichr_",x,".tsv"))){
+    out.cl <- paste0(outS, "Cluster_",x, "/")
+    f <- list.files(dirout(out.cl), pattern="^Markers_.+?[^2]\\.tsv$")
+    genes <- lapply(f, function(fx) fread(dirout(out.cl, fx)))
+    names(genes) <- gsub("Markers_", "", gsub(".tsv","",f))
+    genes <- genes[sapply(genes, ncol) == 5]
+    genes <- lapply(genes, function(fx) fx[V2 < 0.05 & V3 > 0.3]$V1)
+    genes <- genes[sapply(genes, length) > 4]
+    enrichRes <- data.table()
+    for(grp.x in names(genes)){
+      ret=try(as.data.table(enrichGeneList.oddsRatio(genes[[grp.x]],databases = enrichrDBs)),silent = FALSE)
+      if(!any(grepl("Error",ret)) && nrow(ret) > 0){
+        enrichRes <- rbind(enrichRes, data.table(ret, grp = grp.x))
+      }
+    }
+    
+    write.table(enrichRes, file=dirout(outS, "Enrich_simpleMarkers_",x,".tsv"), sep="\t", quote=F, row.names=F)
+    
+    if(nrow(enrichRes) > 0){
+      # plot
+      enrClass <- enrichRes$database[1]
+      for(enrClass in unique(enrichRes$database)){
+        enrichResX <- enrichRes[database == enrClass]
+        if(nrow(enrichResX) > 0){
+          enrichr.plot(enrichResX)
+          ggsave(dirout(outS, "Enrich_simpleMarkers_", enrClass, "_",x,".pdf"), width=min(29, 6+ length(unique(enrichResX$grp))*0.3), height=min(29, length(unique(enrichResX$category))*0.3 + 4))
+        }
+      }
+    } else {
+      message("No enrichments for ", cl.x)
+    }
+  }
+}
+
+
+
+
+
 # Differences between clusters --------------------------------------------
 message("Plotting cluster differences")
-cl.x <- "ClusterNames_0.5"
-# for(cl.x in c("sample", paste0("ClusterNames_",c(seq(0.5,0.9,0.1), 0.95)))){
+cl.x <- "pat_PT"
+# for(cl.x in clusterings){
 foreach(cl.x = clusterings) %dopar% {  
   if(!is.null(pbmc@meta.data[[cl.x]])){
+    print(cl.x)
     x <- gsub("ClusterNames_","", cl.x)
     out.cl <- paste0(outS, "Cluster_",x, "/")
     dir.create(dirout(out.cl))
     pbmc@ident <- factor(pbmc@meta.data[[cl.x]])
     names(pbmc@ident) <- pbmc@cell.names # it needs those names apparently
-    clusters <- names(table(pbmc@ident))[table(pbmc@ident)>1]
+    clusters <- names(table(pbmc@ident))[table(pbmc@ident)>2]
     clusters <- clusters[clusters != "IGNORED"]
     i1 <- 1
     i2 <- 2
@@ -142,7 +206,8 @@ foreach(cl.x = clusterings) %dopar% {
       for(i2 in (i1+1):length(clusters)){
         cl1 <- clusters[i1]
         cl2 <- clusters[i2]
-        if(!file.exists(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")) | !file.exists(dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv"))){
+        #         message(cl1 ," _ ", cl2)
+        if(!file.exists(dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")) & !file.exists(dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv"))){
             cluster.markers <- FindMarkers(pbmc,  ident.1 = cl1, ident.2 = cl2, 
                                            test.use=seurat.diff.test, 
                                            min.pct = seurat.min.pct,
@@ -165,62 +230,64 @@ foreach(cl.x = clusterings) %dopar% {
 }
 
 
+
+
+
 # SECOND WAY OF GETTING CLUSTER MARKERS -----------------------------------
 # Those markers are specific from the pairwise comparisons
 message("Plotting second type of cluster markers")
 cl.x <- "ClusterNames_0.5"
-cl.x <- "patient"
+cl.x <- "pat_PT"
 for(cl.x in clusterings){
   if(!is.null(pbmc@meta.data[[cl.x]])){
+    print(cl.x)
     x <- gsub("ClusterNames_","", cl.x)
-    if(!file.exists(dirout(outS, "Cluster_HM_",x, ".pdf"))){
-      out.cl <- paste0(outS, "Cluster_",x, "/")
-      pbmc@ident <- factor(pbmc@meta.data[[cl.x]])
-      names(pbmc@ident) <- pbmc@cell.names # it needs those names apparently
-      clusters <- names(table(pbmc@ident))[table(pbmc@ident)>1]
-      clusters <- clusters[clusters != "IGNORED"]
-      i1 <- 1
-      i2 <- 2
-      allClDiff <- data.table()
-      for(i1 in 1:(length(clusters)-1)){
-        for(i2 in (i1+1):length(clusters)){
-          cl1 <- clusters[i1]
-          cl2 <- clusters[i2]
-          f1 <- dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")
-          f2 <- dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv")
-          if(file.exists(f1) | file.exists(f2)){
-            clusterDiff <- if(file.exists(f1)) fread(f1) else fread(f2)
-            namesDiff <- if(file.exists(f1)) c(cl1, cl2) else c(cl2,cl1)
-            if(ncol(clusterDiff) == 5){
-              colnames(clusterDiff) <- c("gene", "pval", "diff", "pct1", "pct2")
-              clusterDiff[diff > 0, c("up", "down") := as.list(namesDiff)]
-              clusterDiff[diff < 0, c("up", "down") := as.list(rev(namesDiff))]
-              allClDiff <- rbind(allClDiff, clusterDiff)
-            }
+    out.cl <- paste0(outS, "Cluster_",x, "/")
+    pbmc@ident <- factor(pbmc@meta.data[[cl.x]])
+    names(pbmc@ident) <- pbmc@cell.names # it needs those names apparently
+    clusters <- names(table(pbmc@ident))[table(pbmc@ident)>2]
+    clusters <- clusters[clusters != "IGNORED"]
+    i1 <- 1
+    i2 <- 2
+    allClDiff <- data.table()
+    for(i1 in 1:(length(clusters)-1)){
+      for(i2 in (i1+1):length(clusters)){
+        cl1 <- clusters[i1]
+        cl2 <- clusters[i2]
+        f1 <- dirout(out.cl,"Diff_Cluster",cl1,"vs",cl2,".tsv")
+        f2 <- dirout(out.cl,"Diff_Cluster",cl2,"vs",cl1,".tsv")
+        if(file.exists(f1) | file.exists(f2)){
+          clusterDiff <- if(file.exists(f1)) fread(f1) else fread(f2)
+          namesDiff <- if(file.exists(f1)) c(cl1, cl2) else c(cl2,cl1)
+          if(ncol(clusterDiff) == 5){
+            colnames(clusterDiff) <- c("gene", "pval", "diff", "pct1", "pct2")
+            clusterDiff[diff > 0, c("up", "down") := as.list(namesDiff)]
+            clusterDiff[diff < 0, c("up", "down") := as.list(rev(namesDiff))]
+            allClDiff <- rbind(allClDiff, clusterDiff)
           }
         }
       }
-      i <- 1
-      allClDiff[,diff2 := abs(pct1-pct2)]
-      # plot for each cluster and write table
-      for(i in 1:length(clusters)){
-        clx <- clusters[i]
-        clMarkers2 <- allClDiff[,.(minDiff = min(diff2),N=.N), by=c("up", "gene")][N == length(clusters)-1][up == clx][order(minDiff, decreasing=TRUE)]
-        if(nrow(clMarkers2) > 0){
-          pdf(dirout(out.cl,"Markers_Cluster",clx,"_version2.pdf"), height=15, width=15)
-          FeaturePlot(object=pbmc,features.plot=clMarkers2[1:min(nrow(clMarkers2),9)]$gene,cols.use = c("grey","blue"))
-          dev.off()
-          write.table(clMarkers2, dirout(out.cl, "Markers_Cluster",clx, "_version2.tsv"), sep="\t", quote=F, row.names=TRUE)
-        }
-      }
-      # Plot for all clusters heatmap
-      cllDiffSummary <- allClDiff[,.(minDiff = min(diff2),N=.N), by=c("up", "gene")][N == length(clusters)-1][,rank := rank(-minDiff), by="up"]
-      try({
-        pdf(dirout(outS, "Cluster_HM_",x, ".pdf"), width=10, height=min(29, nrow(cllDiffSummary[rank < 20])/10))
-        DoHeatmap(pbmc, genes.use=cllDiffSummary[rank < 20][order(up)]$gene,order.by.ident=TRUE,slim.col.label=TRUE,remove.key=TRUE)
-        dev.off()
-      }, silent=TRUE)
     }
+    i <- 1
+    allClDiff[,diff2 := abs(pct1-pct2)]
+    # plot for each cluster and write table
+    for(i in 1:length(clusters)){
+      clx <- clusters[i]
+      clMarkers2 <- allClDiff[,.(minDiff = min(diff2),N=.N, meanChange=mean(diff), minChange=min(diff), maxPval=max(pval)), by=c("up", "gene")][N == length(clusters)-1][up == clx][order(minDiff, decreasing=TRUE)]
+      if(nrow(clMarkers2) > 0){
+        pdf(dirout(out.cl,"Markers_Cluster",clx,"_version2.pdf"), height=15, width=15)
+        FeaturePlot(object=pbmc,features.plot=clMarkers2[1:min(nrow(clMarkers2),9)]$gene,cols.use = c("grey","blue"))
+        dev.off()
+        write.table(clMarkers2, dirout(out.cl, "Markers_Cluster",clx, "_version2.tsv"), sep="\t", quote=F, row.names=TRUE)
+      }
+    }
+    # Plot for all clusters heatmap
+    cllDiffSummary <- allClDiff[,.(minDiff = min(diff2),N=.N), by=c("up", "gene")][N == length(clusters)-1][,rank := rank(-minDiff), by="up"]
+    try({
+      pdf(dirout(outS, "Cluster_HM_",x, ".pdf"), width=10, height=min(29, nrow(cllDiffSummary[rank < 20])/10))
+      DoHeatmap(pbmc, genes.use=cllDiffSummary[rank < 20][order(up)]$gene,order.by.ident=TRUE,slim.col.label=TRUE,remove.key=TRUE)
+      dev.off()
+    }, silent=TRUE)
   }
 }
 
@@ -228,62 +295,45 @@ for(cl.x in clusterings){
 
 
 
-# NEW ENRICHR -----------------------------------------------------------------
+# ENRICHR  ON SECOND MARKERS -----------------------------------------------------------------
 message("EnrichR on markers")
 source("src/single_cell_RNA/FUNC_Enrichr.R") #devtools::install_github("definitelysean/enrichR")
 cl.x <- "patient"
-cl.x <- clusterings[13]
+cl.x <- clusterings[1]
 for(cl.x in clusterings){
-  if(!is.null(pbmc@data.info[[cl.x]])){
+  if(!is.null(pbmc@meta.data[[cl.x]])){
+    print(cl.x)
     x <- gsub("ClusterNames_","", cl.x)
     #     if(!file.exists(dirout(outS, "Enrichr_",x,".tsv"))){
     out.cl <- paste0(outS, "Cluster_",x, "/")
-    f <- list.files(dirout(out.cl))
-    f <- f[grepl("_version2.tsv$", f)]
+    f <- list.files(dirout(out.cl), pattern="_version2.tsv$")
     genes <- lapply(f, function(fx) fread(dirout(out.cl, fx)))
     names(genes) <- gsub("Markers_", "", gsub("_version2.tsv","",f))
-    genes <- genes[sapply(genes, ncol) == 5]
-    genes <- lapply(genes, function(fx) fx[V4 > 0.1]$V3)
+    genes <- genes[sapply(genes, ncol) == 8]
+    genes <- lapply(genes, function(fx) fx[V7 > 0.2 & V8 < 0.05]$V3)
     genes <- genes[sapply(genes, length) > 4]
-    if(length(genes) > 2){
-      enrichRes <- data.table()
-      for(grp.x in names(genes)){
-        ret=try(as.data.table(enrichGeneList.oddsRatio(genes[[grp.x]],databases = enrichrDBs)),silent = FALSE)
-        if(!any(grepl("Error",ret)) && nrow(ret) > 0){
-          enrichRes <- rbind(enrichRes, data.table(ret, grp = grp.x))
+    enrichRes <- data.table()
+    for(grp.x in names(genes)){
+      ret=try(as.data.table(enrichGeneList.oddsRatio(genes[[grp.x]],databases = enrichrDBs)),silent = FALSE)
+      if(!any(grepl("Error",ret)) && nrow(ret) > 0){
+        enrichRes <- rbind(enrichRes, data.table(ret, grp = grp.x))
+      }
+    }
+    
+    write.table(enrichRes, file=dirout(outS, "Enrich_Markers2_",x,".tsv"), sep="\t", quote=F, row.names=F)
+    
+    if(nrow(enrichRes) > 0){
+      # plot
+      enrClass <- enrichRes$database[1]
+      for(enrClass in unique(enrichRes$database)){
+        enrichResX <- enrichRes[database == enrClass]
+        if(nrow(enrichResX) > 0){
+          enrichr.plot(enrichResX)
+          ggsave(dirout(outS, "Enrich_Markers2_", enrClass, "_",x,".pdf"), width=min(29, 6+ length(unique(enrichResX$grp))*0.3), height=min(29, length(unique(enrichResX$category))*0.3 + 4))
         }
       }
-      
-      enrichRes <- enrichRes[hitLength > 3]
-      write.table(enrichRes, file=dirout(outS, "EnrichOR_",x,".tsv"), sep="\t", quote=F, row.names=F)
-      
-      enrichRes$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", enrichRes$category)
-      enrichRes$category <- abbreviate(enrichRes$category, minlength=50)
-      enrichRes[, mLog10Q := pmin(-log10(qval),4)]
-      
-      # order terms by OR
-      enrichRes[,term := paste0(category, "_", dbLength)]
-      if(length(unique(enrichRes$term)) >= 2){
-        distMT <- dist(t(as.matrix(dcast.data.table(enrichRes, grp ~ term, value.var="oddsRatio")[,-"grp",with=F])))
-        distMT[is.na(distMT)] <- 0
-        hclustObj <- hclust(distMT)
-        enrichRes$term <- factor(enrichRes$term, levels=hclustObj$labels[hclustObj$order])
-      }
-      
-      # order groups by similarity (of OR)
-      if(length(unique(enrichRes$grp)) >= 2){
-        distMT <- dist(t(as.matrix(dcast.data.table(enrichRes, term ~ grp, value.var="oddsRatio")[,-"term",with=F])))
-        distMT[is.na(distMT)] <- 0
-        hclustObj <- hclust(distMT)
-        enrichRes$grp <- factor(enrichRes$grp, levels=hclustObj$labels[hclustObj$order])
-      }
-      
-      # plot
-      ggplot(enrichRes[term %in% enrichRes[,.(min(qval)), by="term"][V1 < 0.05]$term], 
-             aes(x=grp, y=term, size=log10(oddsRatio), color=mLog10Q)) + 
-        geom_point() + scale_color_gradient(low="white", high="red") + theme_bw(12) + 
-        theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("-log10(q) capped at 4")
-      ggsave(dirout(outS, "EnrichOR_",x,".pdf"), width=min(29, 6+ length(unique(enrichRes$grp))*0.3), height=min(29, length(unique(enrichRes$category))*0.3 + 4))
+    } else {
+      message("No enrichments for ", cl.x)
     }
   }
 }
