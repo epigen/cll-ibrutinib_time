@@ -85,3 +85,29 @@ if(nrow(enrichRes) > 2 & length(unique(enrichRes$grp)) > 1){
     dev.off()
   }
 }
+
+
+
+
+# Bcell Terms ----------------
+cll.lists2 <- cll.lists
+
+bcellTerms <- list(
+	list(term="CD19\\+_BCells\\(neg._sel.\\)", db="Human_Gene_Atlas"),
+	list(term="BCR signaling pathway_Homo sapiens_acbf44e2-618c-11e5-8ac5-06603eb7f303", db="NCI-Nature_2016"),
+	list(term="B Cell Receptor Signaling Pathway_Homo sapiens_WP23", db="WikiPathways_2016")
+)
+
+bcTermI <- 1
+for(bcTermI in 1:length(bcellTerms)){
+	fpath <- paste0("http://amp.pharm.mssm.edu/Enrichr/geneSetLibrary?mode=text&libraryName=",bcellTerms[[bcTermI]]$db)
+	fhandle <- file(fpath)
+	dblines <- readLines(con=fhandle)
+	close(fhandle)
+	linex <- dblines[grepl(bcellTerms[[bcTermI]]$term, dblines)]
+	print(linex)
+	genesx <- sapply(strsplit(linex, "\t")[[1]], function(s) return(strsplit(s, ",")[[1]][1]))
+	names(genesx) <- NULL
+	cll.lists2[[paste0("Bcells_", make.names(bcellTerms[[bcTermI]]$db))]] <- genesx
+}
+save(cll.lists2, file=dirout(out, "lists_plusBcells.RData"))

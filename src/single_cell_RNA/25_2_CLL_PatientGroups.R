@@ -118,7 +118,10 @@ if(!file.exists(dirout(outS, cell,".RData"))){
 #   ggsave(dirout(out, "PC_Distr_",cell,"_", pc,".pdf"), height=15, width=15)
 # }
 
-pbmc@meta.data <- pbmc@meta.data[,c("ClusterNames_0.5", "nUMI", "nGene")]
 
-# Cluster analysis
-source("src/single_cell_RNA/FUNC_Seurat2.R", echo=TRUE)
+write.table(data.table(pbmc@meta.data,keep.rownames=TRUE), file=dirout(outS, "MetaData.tsv"), sep="\t", quote=F, row.names=F)
+
+# pbmc@meta.data <- pbmc@meta.data[,c("ClusterNames_0.5", "nUMI", "nGene")]
+#
+# # Cluster analysis
+# source("src/single_cell_RNA/FUNC_Seurat2.R", echo=TRUE)

@@ -200,8 +200,7 @@ for(cell in c("All", unique(res$cellType))){
     #     }
     
     # ENRICHR
-    enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location")
-    #enrichrDBs <- c("ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X", "Transcription_Factor_PPIs")
+    enrichrDBs <- c("NCI-Nature_2016", "WikiPathways_2016", "Human_Gene_Atlas", "Chromosome_Location", "ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X", "Transcription_Factor_PPIs")
     enrichRes <- data.table()
     res2[,group := paste0(cellPat, "_", ifelse(logFC > 0, "up", "down"))]
     hitSets <- split(res2$gene, factor(res2$group))
@@ -211,47 +210,21 @@ for(cell in c("All", unique(res$cellType))){
       if(!any(grepl("Error",ret)) && nrow(ret) > 0){
         enrichRes <- rbind(enrichRes, data.table(ret, grp = grp.x))
       }
-    }
+    }      
+	write.table(enrichRes, file=dirout(out, cell, "_Enrich_",filter,".tsv"), sep="\t", quote=F, row.names=F)
+
     if(nrow(enrichRes) > 0){
-      enrichRes <- enrichRes[hitLength > 3]
-      write.table(enrichRes[qval < 0.05], file=dirout(out, cell, "_EnrichOR_",filter,".tsv"), sep="\t", quote=F, row.names=F)
-      
-      enrichRes$category <- gsub("\\_(\\w|\\d){8}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){4}-(\\w|\\d){12}", "", enrichRes$category)
-      enrichRes$category <- abbreviate(enrichRes$category, minlength=50) # substr(enrichRes$category2, 0, 50)
-      enrichRes[, mLog10Q := pmin(-log10(qval),4)]
-      enrichRes
-      
-      # order terms by similarity (of OR)
-      enrichRes[,term := paste0(category, "_", dbLength)]
-      if(length(unique(enrichRes$term)) >= 2){
-        try({
-          orMT <- t(as.matrix(dcast.data.table(enrichRes, grp ~ term, value.var="oddsRatio")[,-"grp",with=F]))
-          orMT[is.na(orMT)] <- 1
-          hclustObj <- hclust(dist(orMT))
-          enrichRes$term <- factor(enrichRes$term, levels=hclustObj$labels[hclustObj$order])
-        },silent=T)
-      }
-      
-      # order groups by similarity (of OR)
-      if(length(unique(enrichRes$grp)) >= 2){
-        try({
-          orMT <- t(as.matrix(dcast.data.table(enrichRes, term ~ grp, value.var="oddsRatio")[,-"term",with=F]))
-          orMT[is.na(orMT)] <- 1
-          hclustObj <- hclust(dist(orMT))
-          enrichRes$grp <- factor(enrichRes$grp, levels=hclustObj$labels[hclustObj$order])
-        }, silent=T)
-      }
-      
       # plot
-      sigTerms <- enrichRes[,.(min(qval)), by="term"][V1 < 0.05]$term
-      freqTerms <- enrichRes[,.N, by="term"][N >=2]$term
-      
-      ggplot(enrichRes[term %in% sigTerms  & term %in% freqTerms], 
-             aes(x=grp, y=term, size=log10(oddsRatio), color=mLog10Q)) + 
-        geom_point() + scale_color_gradient(low="grey", high="red") + theme_bw(12) + 
-        theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("-log10(q) capped at 4")
-      ggsave(dirout(out, cell,  "_EnrichOR_", filter,".pdf"), width=min(29, 6+ length(unique(enrichRes$grp))*0.3), height=min(29, length(unique(enrichRes$category))*0.3 + 4))
-  
+      enrClass <- enrichRes$database[1]
+      for(enrClass in unique(enrichRes$database)){
+        enrichResX <- enrichRes[database == enrClass]
+        if(nrow(enrichResX) > 0){
+          enrichr.plot(enrichResX)
+          ggsave(dirout(out, cell, "_Enrich_", enrClass,".pdf"), width=min(29, 6+ length(unique(enrichResX$grp))*0.3), height=min(29, length(unique(enrichResX$category))*0.3 + 4))
+        }
+      }
+    } else {
+      message("No enrichments for ", cell)
     }
   }
 }

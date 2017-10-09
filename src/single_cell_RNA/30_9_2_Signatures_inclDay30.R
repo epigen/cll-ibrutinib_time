@@ -7,7 +7,7 @@ require(pheatmap)
 require(gplots)
 
 project.init2("cll-time_course")
-out <- "30_9_Signatures_inclDay30_downLists/"
+out <- "30_9_Signatures_inclDay30_downLists2/"
 dir.create(dirout(out))
 
 
@@ -52,12 +52,14 @@ for(line in lines){
   x <- strsplit(line, "\t")[[1]]
   genesets[[x[1]]] <- x[3:length(x)]
 }
-load(dirout("20_AggregatedLists/lists.RData"))
-genesets <- c(genesets, cll.lists)
+load(dirout("20_AggregatedLists/lists_plusBcells.RData"))
+genesets <- c(genesets, cll.lists2)
 
 cllDownGenes <- fread(dirout("13_4_Overtime_inclDay30/SigGenes_overTime.tsv"))
 cllDownGenes <- cllDownGenes[cellType == "CLL"][qvalue < 0.05 & logFC < 0]
 genesets <- c(genesets, split(cllDownGenes$gene, factor(cllDownGenes$patient)))
+
+save(genesets, file=dirout(out, "Genesets.RData"))
 
 file.remove(dirout(out, "Genesets.tsv"))
 lapply(names(genesets), function(lnam){
@@ -152,7 +154,6 @@ if(!file.exists(dirout(out,"Scores.RData"))){
 # ANALYSIS OVER TIME ----------------------------------------------------------------
 pDat <- Dat1
 pDat2 <- pDat
-# just a little trick to add PT2 as PT: 0 vs 280
 pDat2 <- pDat2[CellType %in% c("CD8", "CD4", "Mono", "CLL")]# & grepl("PT", sample)]
 pDat2[,sample_cell := paste(patient, timepoint, CellType, sep="_")]
 out.details <- paste0(out, "Details/")

@@ -5,7 +5,6 @@ module load gcc/7.1.0
 module load R/3.4.0
 
 cells=("CLL" "NurseLikeCell" "CD8" "CD4" "NK" "Mono")
-cells=("Mono")
 
 for cell in ${cells[@]}
 do

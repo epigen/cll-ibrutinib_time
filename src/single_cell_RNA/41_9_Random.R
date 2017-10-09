@@ -111,6 +111,7 @@ if(!file.exists(dirout(out,"Scores.RData"))){
 colnames(Dat1) <- gsub("^\\d+_", "", colnames(Dat1))
 names(genesets) <- gsub("^\\d+_", "", names(genesets))
 
+
 # ANALYSIS OVER TIME ----------------------------------------------------------------
 pDat <- Dat1
 pDat2 <- pDat
@@ -168,7 +169,7 @@ for(pat in unique(pDat2$patient)){
   for(cell in unique(pDat2$cellType)){
     x <- pDat2[patient == pat & cellType == cell]
     if(nrow(x[timepoint == "d0"]) > 5 & nrow(x[timepoint == "d120"]) >5){
-      for(geneset in names(genesets)){
+      for(geneset in colnames(x)[grepl("^set_", colnames(x))]){
         p <- t.test(x[timepoint == "d0"][[geneset]], x[timepoint == "d120"][[geneset]])$p.value
         ef <- mean(x[timepoint == "d120"][[geneset]]) - mean(x[timepoint == "d0"][[geneset]])
         overTime.sig <- rbind(overTime.sig, data.table(patient=pat, cellType=cell, pvalue=p, Diff=ef, geneset=geneset))
@@ -182,6 +183,7 @@ for(pat in unique(pDat2$patient)){
 # # overTime.sig[logFC == -Inf, logFC := min(overTime.sig$logFC[overTime.sig$logFC != -Inf])]
 # overTime.sig[abs(logFC) > 1, logFC := 1 * sign(logFC)]
 overTime.sig[,pvalue2 := pmin(5, -1*log10(pvalue))]
+write.table(overTime.sig, dirout(out, "Significantchanges.tsv"), sep="\t", quote=F, row.names=F)
 ggplot(
   overTime.sig, 
   aes(x=paste0(cellType, "_", patient), y=geneset, color=Diff, size=pvalue2)) + 
@@ -190,6 +192,15 @@ ggplot(
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
 ggsave(dirout(out, "0_Overview.pdf"),height=15, width=15)
 
+
+overTime.sig[, size := as.numeric(gsub("set_(\\d+)_\\d+", "\\1", geneset))]
+ggplot(overTime.sig, aes(x=Diff, color=size, group=size)) + geom_density()
+
+ggplot(overTime.sig, aes(y=Diff, x=as.factor(size))) + geom_violin(fill="lightgrey") + theme_bw(24) +
+  xlab("Size of geneset") + ylab("Difference over time")
+ggsave(dirout(out, "Random_distributions.pdf"), height=7, width=7)
+
+table(unique(overTime.sig$geneset))
 
 # PLOT INDIVIDUAL EXAMPLES ------------------------------------------------
 
