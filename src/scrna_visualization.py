@@ -490,6 +490,31 @@ expression_norm = (expression / expression.sum()) * 1e3
 expression_norm = np.log2(1 + expression_norm)
 
 
+expression.to_csv("scrna-seq.expression_matrix.csv.gz")
+metadata.to_csv("scrna-seq.metadata.csv.gz")
+
+
+"""
+library("data.table")
+library("MAST")
+
+
+df = data.table::fread("scrna-seq.expression_matrix.csv.gz", sep=',', header=TRUE, data.table=FALSE)
+rownames(df) = df$gene_index
+df <- df[, 2:dim(df)[2]]
+expression = log2(((df / colSums(df)) * 1e3) + 1)
+
+metadata = data.table::fread("scrna-seq.metadata.csv.gz", sep=',', header=TRUE, data.table=FALSE)
+rownames(metadata) = metadata$cell_index
+
+fdat = data.frame(rownames(df))
+colnames(fdat) <- c("gene_name")
+
+scaRaw <- FromMatrix(expression, metadata, fdat)
+
+"""
+
+
 # Plot example genes from distribution of expression
 n = 9
 w = h = int(np.sqrt(n))
@@ -571,20 +596,91 @@ sns.swarmplot(data=expression_norm.loc[["CD44"], expression_norm.columns.get_lev
 
 
 # Differential expression
+from ngs_toolkit.general import least_squares_fit
+import gseapy
 
-results = least_squares_fit(
-    quant_matrix=expression_norm.loc[:,
-        (expression_norm.columns.get_level_values("cell_type") == "CD8") &
-        (expression_norm.columns.get_level_values("timepoint") <= 120)].T,
-    design_matrix=meta[
-        (meta["cell_type"] == "CD8") &
-        (meta["timepoint"] <= 120)
-    ],
-    test_model="~ patient_id + timepoint", null_model="~ 1", standardize_data=True, multiple_correction_method="fdr_bh")
+gene_set_libraries = [
+    'GO_Biological_Process_2017b',
+    # 'GO_Cellular_Component_2017b',
+    'GO_Molecular_Function_2017b',
+    "ChEA_2016",
+    "KEGG_2016",
+    # "ESCAPE",
+    # "Epigenomics_Roadmap_HM_ChIP-seq",
+    "ENCODE_TF_ChIP-seq_2015",
+    "ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X",
+    # "ENCODE_Histone_Modifications_2015",
+    # "OMIM_Expanded",
+    # "TF-LOF_Expression_from_GEO",
+    # "Single_Gene_Perturbations_from_GEO_down",
+    # "Single_Gene_Perturbations_from_GEO_up",
+    # "Disease_Perturbations_from_GEO_down",
+    # "Disease_Perturbations_from_GEO_up",
+    # "Drug_Perturbations_from_GEO_down",
+    # "Drug_Perturbations_from_GEO_up",
+    "WikiPathways_2016",
+    "Reactome_2016",
+    "BioCarta_2016",
+    "NCI-Nature_2016"
+]
 
-results.loc[:, 'timepoint'].sort_values().head(100).index.to_series().to_clipboard(index=False)
-results.loc[:, 'timepoint'].sort_values().tail(100).index.to_series().to_clipboard(index=False)
+results = pd.DataFrame()
+enrichments = pd.DataFrame()
+for cell_type in expression_norm.columns.get_level_values("cell_type").unique():
+    print(cell_type)
+    res = least_squares_fit(
+        quant_matrix=expression_norm.loc[:,
+            (expression_norm.columns.get_level_values("cell_type") == cell_type) &
+            (expression_norm.columns.get_level_values("timepoint") <= 120)].T,
+        design_matrix=meta[
+            (meta["cell_type"] == cell_type) &
+            (meta["timepoint"] <= 120)
+        ],
+        test_model="~ patient_id + timepoint", null_model="~ patient_id", standardize_data=True, multiple_correction_method="fdr_bh")
+    res["cell_type"] = cell_type
+    results = results.append(res)
 
-results.loc[:, 'timepoint'].sort_values().tail(250).index.to_series().to_clipboard(index=False)
-results.loc[:, 'timepoint'].sort_values().tail(500).index.to_series().to_clipboard(index=False)
+    all_genes = res[res['q_value'] < 0.01].index.tolist()
+    up_genes = res[(res['q_value'] < 0.01) & (res['timepoint'] > 0)].index.tolist()
+    down_genes = res[(res['q_value'] < 0.01) & (res['timepoint'] < 0)].index.tolist()
+
+    for name, gene_set in [("all_genes", all_genes), ("up_genes", up_genes), ("down_genes", down_genes)]:
+        if len(gene_set) == 0:
+            continue
+        print(name)
+        for gene_set_library in gene_set_libraries:
+            print(gene_set_library)
+            enr = gseapy.enrichr(
+                    gene_list=gene_set, description='test_name', gene_sets=gene_set_library,
+                    outdir='enrichr_kegg', cutoff=0.5, no_plot=False).res2d
+            enr["gene_set_library"] = gene_set_library
+            enr["gene_set"] = name
+            enr["cell_type"] = cell_type
+            enrichments = enrichments.append(enr, ignore_index=True)
+
+results.to_csv(os.path.join("results", "cll-time_course.single_cell.all_samples.no_bad_genes.tpm_norm.differential_expression.csv"), index=True)
+enrichments.to_csv(os.path.join("results", "cll-time_course.single_cell.all_samples.no_bad_genes.tpm_norm.differential_expression.enrichments.csv"), index=True)
+
+
+enrichments = pd.read_csv(os.path.join("results", "cll-time_course.single_cell.all_samples.no_bad_genes.tpm_norm.differential_expression.enrichments.csv"), index_col=0)
+
+
+top_n = 20
+
+for gene_set_library in gene_set_libraries:
+    enr = enrichments[enrichments['gene_set_library'] == gene_set_library]
+    enr = enr[enr["gene_set"] != "all_genes"]
+
+    enr['label'] = enr["cell_type"] + " " + enr["gene_set"]
+    piv = -np.log10(pd.pivot_table(data=enr, index="Term", columns="label", values="Adjusted P-value", fill_value=1))
+
+    terms = enr.set_index("Term").groupby(["cell_type", "gene_set"])["Adjusted P-value"].nsmallest(top_n).reset_index(level='Term')['Term'].unique()
+    print(gene_set_library, terms.shape[0])
+
+    piv = piv.apply(scipy.stats.zscore, axis=0)
+
+    g = sns.clustermap(piv.loc[terms], figsize=(piv.shape[1] * 0.2, terms.shape[0] * 0.12), rasterized=True, cbar_kws={"label": "-log10(p-value)"})
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+    g.savefig(os.path.join("results", "cll-time_course.single_cell.all_samples.no_bad_genes.tpm_norm.differential_expression.enrichments.{}.svg".format(gene_set_library)), dpi=300, bbox_inches="tight")
 
