@@ -63,8 +63,11 @@ ggsave(dirout(out, "Enrichr_TFs.pdf"), width=11, height=8)
 
 (load(dirout("11_CellTypes_inclDay30/CLL/CLL.RData")))
 
-pDat <- data.table(pbmc@data.info)
-pDat <- cbind(pDat, data.table(pbmc@tsne.rot))
+
+
+# PLOT PATIENT AND TIMEPOINTS ---------------------------------------------
+pDat <- data.table(pbmc@meta.data)
+pDat <- cbind(pDat, data.table(pbmc@dr$tsne@cell.embeddings))
 
 ggplot(pDat, aes(x=tSNE_1, y=tSNE_2, color=patient)) + geom_point(alpha=0.5) + theme_bw(24)
 ggsave(dirout(out, "Patient.pdf"), height=7, width=8)
@@ -76,3 +79,16 @@ pDat[timepoint %in% c("120", "150"), timepoint2 := 3]
 pDat[timepoint %in% c("280"), timepoint2 := 3.5]
 ggplot(pDat, aes(x=tSNE_1, y=tSNE_2, color=timepoint2)) + geom_point(alpha=0.5) + theme_bw(24) + scale_color_gradient(low="grey", high="red")
 ggsave(dirout(out, "Timepoint.pdf"), height=7, width=8)
+
+
+
+# PLOT GENES --------------------------------------------------------------
+genes <- c("CD5", "TCL1A", "MS4A1", "CD38", "CD79A", "CD79B")
+pDat$Patient <- pDat$patient
+g <- "MS4A1"
+pDat$time <- as.numeric(pDat$timepoint)
+for(g in genes){
+  pDat$Expression <- pbmc@data[g,]
+  ggplot(pDat, aes(x=Patient, y=Expression, alpha=factor(time), fill=Patient)) + geom_violin() + theme_bw(24) + ggtitle(g)
+  ggsave(dirout(out, "Gene_", g, ".pdf"), height=6, width=10)
+}

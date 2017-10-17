@@ -12,19 +12,22 @@ seurat.diff.test <- "negbinom"
 seurat.min.pct <- 0.1
 seurat.thresh.use <- 0.1
 
-clustering.precision <- seq(0.5, 2.5, 0.4)
+clustering.precision <- seq(0.5, 2.5, 0.2)
 
-out <- "25_Patient_CLL_nUMI_Cutoff/"
+out <- "11_2_3_CellTypes_UMI_Cutoff/"
 dir.create(dirout(out))
 
 
-cell = "PBGY"
+cell = "Mono"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 1) {
   stop("Need arguments: 1 - celltype")
 } else {
   cell <- args[1]
 }
+# if (!cell %in% pbmc@data.info$CellType) {
+#   stop("Celltypes not defined ", cell)
+# }
 
 sample.x <- cell
 
@@ -33,28 +36,36 @@ outS <- paste0(out, cell, "/")
 dir.create(dirout(outS))
 
 if(!file.exists(dirout(outS, cell,".RData"))){
-  (load(dirout("11_2_3_CellTypes_UMI_Cutoff/CLL/CLL.RData")))
+  load(dirout("10_Seurat_raw/inclDay30_noIGHLK_negbinom/", "inclDay30_noIGHLK.RData"))
+	
+  pbmcOrig <- UpdateSeuratObject(pbmc)
   
-  pbmcOrig <- pbmc
-  
-  stopifnot(all(rownames(pbmc@meta.data) == colnames(pbmc@data)))
+  stopifnot(all(rownames(pbmcOrig@meta.data) == colnames(pbmcOrig@data)))
   
   # SUBSET DATA -------------------------------------------------------------
-  cellToKeep.idx <- which(pbmc@meta.data$patient == cell)
+  cellToKeep.idx <- which(pbmcOrig@meta.data$CellType == cell & pbmcOrig@meta.data$nUMI > 1000 & pbmcOrig@meta.data$nUMI < 3000)
   
   stopifnot(!is.na(cellToKeep.idx))
   str(cellToKeep <- rownames(pbmcOrig@meta.data)[cellToKeep.idx])
   pbmc <- SubsetData(pbmcOrig, cells.use = cellToKeep)
   
-  pbmc@meta.data <- pbmc@meta.data[,!grepl("ClusterNames", colnames(pbmc@meta.data))]
-  pbmc@meta.data <- pbmc@meta.data[,!grepl("res", colnames(pbmc@meta.data))]
-  str(pbmc@meta.data)
-  
   pDat <- data.table(pbmcOrig@dr$tsne@cell.embeddings)
   pDat$selected <- "no"
   pDat$selected[cellToKeep.idx] <- "yes"
-  ggplot(pDat, aes(x=tSNE_1, y=tSNE_2, color=selected)) + geom_point()
+  ggplot(pDat, aes(x=tSNE_1, y=tSNE_2, color=selected)) + geom_point(alpha=0.3)
   ggsave(dirout(outS, "SelectedCells.pdf"))
+  
+  
+  # ASSIGN PATIENT -------------------------------------------------------------  
+  if(is.null(pbmc@meta.data[["patient"]])){
+    pbmc@meta.data[["patient"]] <- gsub("_.*", "", gsub("\\d", "", substr(gsub("LiveBulk_10x_", "", pbmc@meta.data[["sample"]]), 0,6)))
+    
+    for(pat in unique(pbmc@meta.data[["patient"]])){
+      res <- pbmc@meta.data[["sample"]]
+      res[!grepl(paste0(pat, "\\d?_(d\\d+|\\d+d)"), pbmc@meta.data[["sample"]])] <- "IGNORED"
+      pbmc@meta.data[[paste0("pat_",pat)]] <- res
+    }
+  }
   
   
   # COUNT CELLS -------------------------------------------------------------
@@ -70,7 +81,6 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   write.table(cellCounts, dirout(outS, "Cellcounts.tsv"), sep="\t", quote=F, row.names=F)
   
   # PREP DATASET ------------------------------------------------------------
-  pbmc <- ScaleData(object = pbmc, vars.to.regress = c("nUMI", "percent.mito"))
   pbmc <- FindVariableGenes(pbmc, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
   pbmc <- RunPCA(pbmc, pc.genes = pbmc@var.genes, do.print = TRUE, pcs.print = 5, genes.print = 5)
   pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = F)
@@ -85,16 +95,11 @@ if(!file.exists(dirout(outS, cell,".RData"))){
 } else {
   load(file=dirout(outS, cell,".RData"))
   
-  if(!.hasSlot(pbmc, "version")){
-      pbmc <- UpdateSeuratObject(pbmc)
-      update <- TRUE
-  }
-  
   update <- FALSE
   for(x in clustering.precision){
-    if(is.null(pbmc@meta.data[[paste0("ClusterNames_", x)]])){
+    if(is.null(pbmc@data.info[[paste0("ClusterNames_", x)]])){
       update <- TRUE
-      pbmc <- FindClusters(pbmc, reduction.type="pca", dims.use = 1:10, resolution = x, print.output = 0, save.SNN = T)
+      pbmc <- FindClusters(pbmc, pc.use = 1:10, resolution = x, print.output = 0, save.SNN = T)
       pbmc <- StashIdent(pbmc, save.name = paste0("ClusterNames_", x))
     }
   }
@@ -103,10 +108,10 @@ if(!file.exists(dirout(outS, cell,".RData"))){
     save(pbmc, file=dirout(outS, cell,".RData"))
   }
 }
-# 
+
 # str(pbmc@pca.rot)
-# str(pbmc@meta.data)
-# pcDat <- data.table(pbmc@pca.rot, sample=pbmc@meta.data$sample)
+# str(pbmc@data.info)
+# pcDat <- data.table(pbmc@pca.rot, sample=pbmc@data.info$sample)
 # pcDat2 <- melt(pcDat,id.vars="sample")[variable %in% paste0("PC", 1:10)]
 # ggplot(pcDat2, aes(x=sample, y=value)) + geom_violin() + facet_grid(variable ~ .) + 
 #   theme(axis.text.x = element_text(angle = 90, hjust = 1))
@@ -118,10 +123,9 @@ if(!file.exists(dirout(outS, cell,".RData"))){
 #   ggsave(dirout(out, "PC_Distr_",cell,"_", pc,".pdf"), height=15, width=15)
 # }
 
+pbmc@meta.data <- cbind(
+  pbmc@meta.data[,grepl("pat_", colnames(pbmc@meta.data)), drop=F],
+  pbmc@meta.data[,c("nGene", "nUMI")]
+)
 
-write.table(data.table(pbmc@meta.data,keep.rownames=TRUE), file=dirout(outS, "MetaData.tsv"), sep="\t", quote=F, row.names=F)
-
-pbmc@meta.data <- pbmc@meta.data[,c("ClusterNames_0.5", "ClusterNames_0.9", "sample", "nUMI", "nGene")]
-#
-# # Cluster analysis
 source("src/single_cell_RNA/FUNC_Seurat2.R", echo=TRUE)

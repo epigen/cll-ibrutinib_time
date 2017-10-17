@@ -7,12 +7,12 @@ require(pheatmap)
 require(gplots)
 
 project.init2("cll-time_course")
-out <- "30_9_Plots/"
+out <- "30_9_4_Clone_Plots/"
 dir.create(dirout(out))
 
-list.files(dirout())
+list.files(dirout("30_9_4_30_9_4_Signatures_nUMI_Cutoff2"))
 
-(load(dirout("30_9_Signatures_inclDay30_downLists2/","Scores.RData")))
+(load(dirout("30_9_4_Signatures_nUMI_Cutoff2/","Scores.RData")))
 Dat1CLL <- Dat1[CellType == "CLL"]
 # (load(dirout("41_9_Random/","Scores.RData")))
 # Dat1 <- merge(Dat1CLL, Dat1[,c("rn", colnames(Dat1)[grepl("_set_", colnames(Dat1))]), with=F], all.x=TRUE)
@@ -20,8 +20,8 @@ Dat1CLL <- Dat1[CellType == "CLL"]
 
 
 # Genesets ----------------------------------------------------------------
-(load(dirout("30_9_Signatures_inclDay30_downLists2/Genesets.RData")))
-genesets.selected <- names(genesets)[(grepl("d\\d\\d", names(genesets))) | grepl("^Bcells", names(genesets)) | names(genesets) == "Ibrutinib_treatment"]
+(load(dirout("30_9_4_Signatures_nUMI_Cutoff2/Genesets.RData")))
+genesets.selected <- names(genesets)#[(grepl("d\\d\\d", names(genesets))) | grepl("^Bcells", names(genesets)) | names(genesets) == "Ibrutinib_treatment"]
 
 
 # CLL patient samples, metadata

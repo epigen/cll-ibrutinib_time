@@ -51,6 +51,8 @@ facsDat2[,m := gsub("CD5CLL", "CLL", m)]
 
 mDat <- merge(scCounts, facsDat2, by="m")
 
+write.table(mDat, dirout(out, "FACS_Data.tsv"), quote=F, row.names=F, sep="\t")
+
 
 # PLOTS -------------------------------------------------------------------
 ggplot(mDat, aes(x=count, y=value/100, color=cellType, shape=sample2.x)) + 

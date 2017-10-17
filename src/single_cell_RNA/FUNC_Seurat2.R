@@ -42,6 +42,9 @@ for(cl.x in clusterings){
 }
 
 
+# WRITE TABLE OF META DATA ------------------------------------------------
+write.table(data.table(pbmc@meta.data, keep.rownames=TRUE), dirout(outS, "MetaData.tsv"), quote=F, row.names=F, sep="\t")
+
 # PLOT MARKERS 2
 message("Plotting Known marker genes")
 if(file.exists("metadata/CellMarkers.csv")){

@@ -76,6 +76,19 @@ str(pData(mcle))
 table(gsub(".+\\-(\\d+)", "\\1", pData(mcle)$barcode), pData(mcle)$sample)
 
 
+
+pDat <- data.table(pData(mcle))
+pDat[,sample := gsub("d0", "d000", sample)]
+pDat[,sample := gsub("d30", "d030", sample)]
+pDat[,Timepoint := as.numeric(gsub("\\w+_d", "", sample))]
+
+ggplot(pDat, aes(y=Pseudotime, x=sample)) + geom_boxplot(outlier.colour=NA) + coord_flip()
+
+ggplot(pDat, aes(y=Pseudotime, x=factor(Timepoint), fill=patient)) + geom_violin(color=NA) + 
+  facet_grid(. ~ patient, scales="free") + theme_bw(24)
+ggsave(dirout(out, "Violin_Pseudotime.pdf"), height=7, width=12)
+
+
 str(pData(mcle))
 
 dim(mcle)

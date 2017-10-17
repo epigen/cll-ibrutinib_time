@@ -20,6 +20,12 @@ sbatch --job-name="cll-time_course 13_4_OverTime_inclDay30" --ntasks=1 --mem=500
     --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/13_4_OverTime_inclDay30.R" \
     --output="$CODEBASE/cll-time_course/src/single_cell_RNA/13_4_OverTime_inclDay30.log"
 
+module unload gcc/4.8.2; module load gcc/7.1.0; module unload R/3.2.3; module load R/3.4.0
+sbatch --job-name="cll-time_course 13_4_OverTime_nUMI_Cutoff.R" --ntasks=1 --mem=50000 --partition=develop --time=05:00:00 \
+    --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/13_4_OverTime_nUMI_Cutoff.R" \
+    --output="$CODEBASE/cll-time_course/src/single_cell_RNA/13_4_OverTime_nUMI_Cutoff.log"
+
+
 # MAGIC
 sbatch --job-name="15_Magic.R" --ntasks=32 --mem=180000 --partition=longq \
     --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/15_Magic.R" \
@@ -70,6 +76,25 @@ sbatch --job-name="30_9_Signatures_inclDay30.R" --ntasks=12 --mem=180000 --parti
 sbatch --job-name="30_9_2_Signatures_inclDay30.R" --ntasks=1 --mem=180000 --partition=longq --time=7-00:00:00 \
     --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/30_9_2_Signatures_inclDay30.R" \
     --output="$CODEBASE/cll-time_course/src/single_cell_RNA/30_9_2_Signatures_inclDay30.log"
+
+sbatch --job-name="30_9_2_Random.R" --ntasks=1 --mem=180000 --partition=longq --time=7-00:00:00 \
+    --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/30_9_2_Random.R" \
+    --output="$CODEBASE/cll-time_course/src/single_cell_RNA/30_9_2_Random.log"
+
+
+# After UMI Cutoff
+module unload gcc/4.8.2; module load gcc/7.1.0; module unload R/3.2.3; module load R/3.4.0
+sbatch --job-name="30_9_4_Signatures_nUMI_Cutoff.R" --ntasks=1 --mem=100000 --partition=longq --time=7-00:00:00 \
+    --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/30_9_4_Signatures_nUMI_Cutoff.R" \
+    --output="$CODEBASE/cll-time_course/src/single_cell_RNA/30_9_4_Signatures_nUMI_Cutoff.log"
+
+sbatch --job-name="30_9_4_Random.R" --ntasks=1 --mem=180000 --partition=longq --time=7-00:00:00 \
+    --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/30_9_4_Random.R" \
+    --output="$CODEBASE/cll-time_course/src/single_cell_RNA/30_9_4_Random.log"
+
+sbatch --job-name="42_1_CNV_nUMI_Cutoff_min50.R" --ntasks=1 --mem=100000 --partition=longq --time=3-00:00:00 \
+    --wrap="Rscript $CODEBASE/cll-time_course/src/single_cell_RNA/42_1_CNV_nUMI_Cutoff_min50.R" \
+    --output="$CODEBASE/cll-time_course/src/single_cell_RNA/42_1_CNV_nUMI_Cutoff_min50.log"
 
 # Signatures for CNVS
 sbatch --job-name="41_CNV_Signatures.R" --ntasks=12 --mem=180000 --partition=longq \
