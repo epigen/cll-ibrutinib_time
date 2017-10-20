@@ -25,14 +25,14 @@ pDat$timepoint <- gsub(".+_(d[0-9]+)", "\\1", pDat$sample)
 
 
 # A problem is the difference in number of UMIs between samples (in particular the later time points have less)
-ggplot(pDat, aes(x=sample, y=nUMI)) + geom_boxplot(outlier.shape=NA) + coord_flip()
-ggsave(dirout(out, "UMI_boxplot.pdf"))
-ggplot(
-  pDat,
-  aes_string(x="cellType", y="nUMI", group="sample_cell", fill="patient", alpha="timepoint")) + 
-  geom_boxplot(outlier.shape=NA) + coord_flip() + 
-  scale_color_manual(values=c("grey", "black")) + scale_alpha_manual(values=c(0.30,0.85,1))
-ggsave(dirout(out, "UMI_boxplot_byCell.pdf"))
+# ggplot(pDat, aes(x=sample, y=nUMI)) + geom_boxplot(outlier.shape=NA) + coord_flip()
+# ggsave(dirout(out, "UMI_boxplot.pdf"))
+# ggplot(
+#   pDat,
+#   aes_string(x="cellType", y="nUMI", group="sample_cell", fill="patient", alpha="timepoint")) +
+#   geom_boxplot(outlier.shape=NA) + coord_flip() +
+#   scale_color_manual(values=c("grey", "black")) + scale_alpha_manual(values=c(0.30,0.85,1))
+# ggsave(dirout(out, "UMI_boxplot_byCell.pdf"))
 
 # Read genesets
 (gene.annot <- fread(paste0(Sys.getenv("RESOURCES"), "/genomes/hg38/10X/refdata-cellranger-GRCh38-1.2.0/genes/genes.gtf")))
@@ -88,6 +88,7 @@ dev.off()
 if(!file.exists(dirout(out,"Scores.RData"))){  
   # CALCULATE SCORE ---------------------------------------------------------
   data <- pbmc@data
+  data <- data[rowSums(as.matrix(data)) != 0,]
   data@x <- exp(data@x) - 1
   data <- data - apply(data, 1, min)
   data <- data / apply(data, 1, max)
@@ -129,7 +130,7 @@ if(!file.exists(dirout(out,"Scores.RData"))){
 # ANALYSIS T_ZERO ----------------------------------------------------------------
 pDat2 <- Dat1
 pDat2 <- pDat2[timepoint %in% c("d0")]
-pDat2 <- pDat2[cellType %in% c("CD8", "CD4", "Mono", "CLL")]# & grepl("PT", sample)]
+# pDat2 <- pDat2[cellType %in% c("CD8", "CD4", "Mono", "CLL")]# & grepl("PT", sample)]
 
 # Make one large heatmap
 tzero.sig <- data.table()

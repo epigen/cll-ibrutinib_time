@@ -235,12 +235,14 @@ for(cell in celltypes){
 # 4 Signatures
 ######
 
-(load(file=dirout("30_9_4_Signatures_nUMI_Cutoff2/", "OverTime_Tests.RData")))
+(load(file=dirout("30_9_4_Signatures_nUMI_Cutoff_TFs/", "OverTime_Tests.RData")))
 overTime.sig[,patient := cleanPatients(patient)]
 overTime.sig[,CellType := cleanCells(CellType)]
+overTime.sig[,qvalue := p.adjust(pvalue, method='BH')]
+overTime.sig[,pvalue2 := pmin(5, -log10(qvalue))]
 
 # MAIN SIGNATURES ---------------------------------------------------------
-otsig <- overTime.sig[grepl("Bcells", geneset) | geneset == "Ibrutinib_treatment" | grepl("HALLMARK", geneset)]
+otsig <- overTime.sig[!grepl("_d\\d", geneset) & !grepl("Fereira", geneset)]#[grepl("Bcells", geneset) | geneset == "Ibrutinib_treatment" | grepl("HALLMARK", geneset)]
 otsig[,geneset := gsub("HALLMARK_", "", geneset)]
 ggplot(otsig[geneset %in% otsig[, sum(abs(Diff) > 1), by="geneset"][V1 >= 2]$geneset], 
        aes(x=paste0(timepoint, "_", patient), y=geneset, color=Diff, size=pvalue2)) + 
@@ -250,7 +252,7 @@ ggplot(otsig[geneset %in% otsig[, sum(abs(Diff) > 1), by="geneset"][V1 >= 2]$gen
   scale_size_continuous(name=expression(log[10](q-value))) +
   theme(axis.text.x = element_text(angle = 90, hjust=1, vjust=0.5, size=12), axis.text.y=element_text(size=12)) + 
   facet_grid(. ~ CellType, scales="free", space="free") 
-ggsave(dirout(out, "4_CLL_Signatures.pdf"),height=7, width=13)
+ggsave(dirout(out, "4_CLL_Signatures2.pdf"),height=7, width=13)
 
 # FIGURE 4F: Ibrutinib signature ------------------------------------------
 sigs.cells[,Timepoint := as.numeric(gsub("d", "", timepoint))]
@@ -261,17 +263,53 @@ ggplot(sigs.cells, aes(x=factor(Timepoint), y=Ibrutinib_treatment, fill=Patient)
   guides(fill=FALSE) +
   theme_bw(24) + theme(axis.text.x = element_text(angle = 90, hjust=1, vjust=0.5))
 ggsave(dirout(out, "4_Ibrutinib_Signature.pdf"), width=6, height=7)
+# Heatmap
+(load(dirout("30_9_4_Signatures_nUMI_Cutoff_TFs/Genesets.RData")))
+set.nam <- "Bcells_Human_Gene_Atlas"
+set.nam <- "BATF"
+set.nam <- "HALLMARK_INFLAMMATORY_RESPONSE"
+dat <- pbmcFull@data
+sampleAnnot <- subset(pbmcFull@data.info, CellType %in% c("CLL"))
+sampleAnnot$sample <- gsub("d30", "d030", gsub("d0", "d000", sampleAnnot$sample))
+sampleAnnot$patient <- gsub("(\\w+)_d\\d+", "\\1", sampleAnnot$sample)
+sampleAnnot$timepoint <- gsub("(\\w+)_d(\\d+)", "\\2", sampleAnnot$sample)
+cells <- rownames(sampleAnnot)[do.call(c, lapply(split(1:nrow(sampleAnnot), factor(sampleAnnot$sample)), function(x) sample(x, min(length(x), 100))))]
+dat <- dat[genesets[[set.nam]][genesets[[set.nam]] %in% rownames(dat)], cells]
+dat <- dat[apply(dat, 1, max) != 0,,drop=F]
+dat <- dat - apply(dat, 1, min)
+dat <- dat / apply(dat,1, max)
+dat <- dat[, order(with(sampleAnnot[cells,],paste0(patient, timepoint))), drop=F]
+pdf(dirout(out, "4_Details2_", set.nam, ".pdf"), height=min(29, nrow(dat) * 0.3 + 3), width=min(ncol(dat)*0.03+3,29), onefile=FALSE)
+pheatmap::pheatmap(dat, cluster_rows=TRUE, cluster_cols=F, scale="row",
+                   annotation_col=subset(sampleAnnot, select=c(nUMI, timepoint, patient)),
+                   show_colnames=FALSE,
+                   color=colorRampPalette(c("darkblue", "orange", "yellow"))(8))
+dev.off()
+# dat <- pbmcFull@data[,rownames(subset(pbmcFull@data.info, CellType == "CLL"))]
+# dat <- dat[genesets[[set.nam]][genesets[[set.nam]] %in% rownames(dat)],]
+# dat <- dat[rowSums(as.matrix(dat)) > 0,]
+# # dat <- dat - apply(dat, 1, min)
+# # dat <- dat / apply(dat,1, max)
+# sample.ids <- gsub("\\w+\\-(\\d+)", "\\1", colnames(dat))
+# mm <- do.call(cbind, lapply(unique(sample.ids), function(s) apply(dat[,sample.ids == s], 1, mean)))
+# (colAn <- data.table(subset(pbmcFull@data.info, CellType == "CLL"), keep.rownames=TRUE)[,c("rn", "sample"),with=F])
+# colAn <- unique(colAn[,rn := gsub("\\w+\\-(\\d+)", "\\1", rn)])
+# colnames(mm) <- colAn$sample[match(unique(sample.ids), colAn$rn)]
+# pheatmap::pheatmap(mm, scale="row", cluster_cols=FALSE)
+# str(mm)
 
-# B cell signatures -------------------------------------------------------
-ggplot(overTime.sig[grepl("d\\d", geneset)], 
+# patient down signatures -------------------------------------------------------
+otsig <- overTime.sig[grepl("d\\d", geneset)]
+otsig[,geneset := cleanPatients(geneset)]
+ggplot(otsig, 
        aes(x=paste0(patient, "_", timepoint), y=geneset, color=Diff, size=pvalue2)) + 
   geom_point() +
   ylab("") + xlab("") + theme_bw(24) +  
   scale_color_gradient2(name="Effect size", high="red", mid="white", low="blue") +
   scale_size_continuous(name=expression(log[10](q-value))) +
-  theme(axis.text.x = element_text(angle = 90, hjust=1, vjust=0.5, size=12), axis.text.y=element_text(size=12)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust=1, vjust=0.5), axis.text.y=element_text()) + 
   facet_grid(. ~ CellType, scales="free", space="free") 
-ggsave(dirout(out, "4_CLL_Patient_Signatures.pdf"),height=6, width=14)
+ggsave(dirout(out, "4_CLL_Patient_Signatures.pdf"),height=6, width=18)
 
 overTime.sig.new <- overTime.sig
 (load(dirout("30_9_Signatures_inclDay30_downLists/","OverTime_Tests.RData")))
@@ -298,6 +336,8 @@ sink()
 overTime.sig[,patient := cleanPatients(patient)]
 overTime.sig[,CellType := cleanCells(CellType)]
 overTime.sig[, size := as.numeric(gsub("\\d*_?set_(\\d+)_\\d+", "\\1", geneset))]
+overTime.sig[,qvalue := p.adjust(pvalue, method='BH')]
+overTime.sig[,pvalue2 := pmin(5, -log10(qvalue))]
 ggplot(overTime.sig, aes(y=Diff, x=as.factor(size))) + 
   geom_boxplot() +
   theme_bw(24) +
@@ -358,7 +398,7 @@ for(gg in c("CD79A", "CD3D", "NKG7", "CD14", "FCGR3A", "CD8A")){
 res <- fread(dirout("13_4_Overtime_nUMI_Cutoff/", "SigGenes_overTime.tsv"))
 res[,sum(logFC), by=c("cellType", "gene")][cellType == "Mono"][order(V1, decreasing=TRUE)][1:20]
 res[,logqval := pmin(5, -log10(qvalue))]
-res[,patient := gsub("d30", "d030", patient)]
+res[,patient := cleanPatients(gsub("d30", "d030", patient))]
 ggplot(res[(gene %in% c("TNF", "CCL3", "CCL3L3", "CXCL8") | grepl("NFKBI[Z|A]", gene)) & cellType %in% c("CD8", "CD4", "Mono", "CLL")], 
        aes(x=patient, y=gene, size=logqval, color=logFC)) + geom_point() + 
   theme_bw(24) + 
@@ -375,8 +415,11 @@ ggsave(dirout(out, "6_MonoGenes.pdf"), height=7, width=18)
 #############
 
 (load(dirout("30_9_4_Clone_Plots/", "OverTime_Tests.RData")))
-otsig <- overTime.sig[!grepl("d\\d", geneset)]
-otsig <- overTime.sig[grepl("Bcells", geneset) | geneset == "Ibrutinib_treatment" | grepl("HALLMARK", geneset)]
+overTime.sig[,qvalue := p.adjust(pvalue, method='BH')]
+overTime.sig[,pvalue2 := pmin(5, -log10(qvalue))]
+otsig <- overTime.sig[!grepl("_d\\d", geneset) & !grepl("Fereira", geneset)]#[grepl("Bcells", geneset) | geneset == "Ibrutinib_treatment" | grepl("HALLMARK", geneset)]
+# otsig <- overTime.sig[!grepl("d\\d", geneset)]
+# otsig <- overTime.sig[grepl("Bcells", geneset) | geneset == "Ibrutinib_treatment" | grepl("HALLMARK", geneset)]
 otsig[,geneset := gsub("HALLMARK_", "", geneset)]
 otsig[,patient := cleanPatients(patient)]
 ggplot(otsig[patient %in% c("P4", "P5", "P7") & geneset %in% otsig[, sum(abs(Diff) > 1), by="geneset"][V1 >= 2]$geneset], 

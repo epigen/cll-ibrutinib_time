@@ -10,17 +10,14 @@ project.init2("cll-time_course")
 out <- "30_9_4_Clone_Plots/"
 dir.create(dirout(out))
 
-list.files(dirout("30_9_4_30_9_4_Signatures_nUMI_Cutoff2"))
+list.files(dirout())
 
-(load(dirout("30_9_4_Signatures_nUMI_Cutoff2/","Scores.RData")))
+(load(dirout("30_9_4_Signatures_nUMI_Cutoff_TFs/","Scores.RData")))
 Dat1CLL <- Dat1[CellType == "CLL"]
-# (load(dirout("41_9_Random/","Scores.RData")))
-# Dat1 <- merge(Dat1CLL, Dat1[,c("rn", colnames(Dat1)[grepl("_set_", colnames(Dat1))]), with=F], all.x=TRUE)
-
 
 
 # Genesets ----------------------------------------------------------------
-(load(dirout("30_9_4_Signatures_nUMI_Cutoff2/Genesets.RData")))
+(load(dirout("30_9_4_Signatures_nUMI_Cutoff_TFs/Genesets.RData")))
 genesets.selected <- names(genesets)#[(grepl("d\\d\\d", names(genesets))) | grepl("^Bcells", names(genesets)) | names(genesets) == "Ibrutinib_treatment"]
 
 
@@ -67,7 +64,7 @@ for(ptx in unique(pat.md$patient)){
 }
 
 # ANALYSIS OVER TIME ----------------------------------------------------------------
-pDat2 <- merge(Dat1, pat.md[,c("rn", "Clone"), with=F], by="rn")
+pDat2 <- merge(Dat1CLL, pat.md[,c("rn", "Clone"), with=F], by="rn")
 pDat2[,sample_cell := paste(patient, Clone, timepoint, sep="_")]
 out.details <- paste0(out, "Details/")
 dir.create(dirout(out.details))
@@ -176,3 +173,55 @@ ggplot(pDat[patient == "PT"], aes(x=timepoint, y=fraction, color=patient, linety
 ggplot(pDat, aes(x=timepoint, y=fraction, color=patient, linetype=Clone, group=paste0(Clone, "_", patient))) + 
   geom_line(size=2) + ylim(0,100) + ylab("Clone count (%)") + xlab("Timepoint (days)") + theme_bw(24)
 ggsave(dirout(out, "CLL_percentage.pdf"), height=7, width=7)
+
+
+
+
+
+
+
+
+
+# CNVs --------------------------------------------------------------------
+
+
+outCNV <- paste0(out, "CNV/")
+dir.create(dirout(outCNV))
+
+(load(dirout("42_1_CNVs_Sigs_nUMI_Cutoff_min50/","Scores.RData")))
+Dat1Clones <- Dat1
+pat.md <- fread(dirout(out, "Patient_Clones_Meta.data.tsv"))
+pDat2 <- merge(Dat1Clones, pat.md[,c("rn", "Clone"), with=F], by="rn")
+genesets <- colnames(Dat1Clones)[grepl("(X|Y|\\d+)_\\d+", colnames(Dat1Clones))]
+# Make one large heatmap over time
+overTime.sig <- data.table()
+for(pat in unique(pDat2$patient)){
+  patDat <- pDat2[patient == pat]
+  message(pat)
+  print(clones <- unique(patDat$Clone))
+  for(cl1 in 1:(length(clones)-1)){
+    for(cl2 in (cl1 + 1):length(clones)){
+      for(geneset in genesets){
+        d1 <- patDat[Clone == clones[cl1]][[geneset]]
+        d2 <- patDat[Clone == clones[cl2]][[geneset]]
+        if(length(d1) > 5 & length(d2) > 5){
+          p <- t.test(d1, d2)$p.value
+          ef <- mean(d1) - mean(d2)
+          overTime.sig <- rbind(overTime.sig, data.table(patient=pat, Clone1=clones[cl1], Clone2=clones[cl2], pvalue=p, Diff=ef,geneset=geneset))
+        }
+      }
+    }
+  }
+}
+
+overTime.sig[,qvalue := p.adjust(pvalue, method="BH")]
+overTime.sig[,plogq := pmin(5, -1*log10(qvalue))]
+overTime.sig[,up_in := ifelse(Diff > 0, Clone1, Clone2)]
+overTime.sig[,hits := sum(qvalue < 0.1 & abs(Diff) > 0.5), by=c("geneset", "up_in", "patient")]
+overTime.sig[,cloneN := length(unique(c(Clone1, Clone2))), by=c("patient")]
+
+save(overTime.sig, file=dirout(outCNV, "OverTime_Tests.RData"))
+
+with(overTime.sig[cloneN-3 < hits], table(geneset, patient))
+
+(load(dirout("42_1_CNVs_Sigs_nUMI_Cutoff_min50/genesets.RData")))
