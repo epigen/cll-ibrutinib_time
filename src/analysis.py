@@ -949,6 +949,85 @@ def transcription_factor_accessibility():
     g.savefig(os.path.join("results", "fig2X.all_factor_binding.mean_patients.CLL_only.clustermap.svg".format(factor_name)), dpi=300, bbox_inches="tight")
 
 
+def differentiation_assessment():
+    # Load quantification matrix from major analysis
+    accessibility = pd.read_csv(os.path.join("results", "cll-time_course" + "_peaks.coverage.joint_qnorm.pca_fix.power.csv"), index_col=0, header=range(8))
+    accessibility.columns = accessibility.columns.get_level_values("sample_name")
+
+    for sample_set in ["fzhao", "dlara"]:
+        # Make new config file pointing to respective annotation sheet
+        new_annot = "annotation.{}_samples.csv".format(sample_set)
+        new_config = os.path.join("metadata", "project_config.{}_samples.yaml".format(sample_set))
+        c = open(os.path.join("metadata", "project_config.yaml"), 'r').read().replace("annotation.csv", new_annot)
+        with open(new_config, 'w') as handle:
+            handle.write(c)
+
+        # Start new analysis
+        prj = Project(new_config)
+        for sample in prj.samples:
+            sample.filtered = os.path.join(sample.paths.sample_root, "mapped", sample.name + ".trimmed.bowtie2.filtered.bam")
+        analysis = ATACSeqAnalysis(name="cll-time_course.{}_samples".format(sample_set), prj=prj, samples=prj.samples)
+        # Get consensus peak set from major analysis
+        analysis.set_consensus_sites(os.path.join("results", "cll-time_course_peak_set.bed"))
+        # Get coverage values for each peak in each sample
+        analysis.measure_coverage(analysis.samples)
+        analysis.coverage = analysis.coverage.loc[:, ~analysis.coverage.columns.str.contains("D199")]
+        # Normalize cell types jointly (quantile normalization)
+        analysis.normalize_coverage_quantiles(samples=[s for s in analysis.samples if "D199" not in s.name])
+        analysis.to_pickle()
+
+        # Join matrix with CLL samples from major analysis
+        q = accessibility.join(analysis.coverage_qnorm).drop(['chrom', 'start', 'end'], axis=1)
+        # Compute correlation
+
+        c = q.corr()
+
+        g = sns.clustermap(analysis.coverage_qnorm.drop(['chrom', 'start', 'end'], axis=1).corr(), xticklabels=False, figsize=(8 ,8), rasterized=True)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.savefig(os.path.join("results", "differentiation_assessment.{}_only.map.svg".format(sample_set)), dpi=200)
+
+        g = sns.clustermap(c, xticklabels=False, figsize=(8 ,8), rasterized=True)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.savefig(os.path.join("results", "differentiation_assessment.{}_together.map.svg".format(sample_set)), dpi=200)
+
+        mask = c.index.str.contains("CLL") | (c.index.str.contains("CB") & c.index.str.contains("NaiveBcell|chedBcell"))
+        g = sns.clustermap(c.loc[mask, mask], xticklabels=False, figsize=(8 ,8), rasterized=True)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+        g.savefig(os.path.join("results", "differentiation_assessment.{}_together.relevant.map.svg".format(sample_set)), dpi=200)
+
+        c2 = pd.melt(c.loc[mask, mask].reset_index(), "index")
+        annot = pd.DataFrame(map(pd.Series, c2['index'].str.split("_"))).iloc[:, [1, 2, 3]]
+        annot[2] = annot[2].str.replace("d|ND", "").astype(int)
+        c2.index = pd.MultiIndex.from_arrays(annot.T.values, names=["patient_id", "timepoint", "cell_type"])
+
+        c3 = c2[c2['variable'].str.contains("ND") & ~c2.index.get_level_values("cell_type").str.contains("ND") & ~c2['index'].str.contains("ND")]
+        c3['healty_subset'] = [x[3] for x in c3['variable'].str.split("_")]
+        g = sns.factorplot(data=c3.reset_index(), x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False)
+        g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.svg".format(sample_set)), dpi=300)
+
+
+        data = pd.pivot_table(data=c3.reset_index(), index=['patient_id', 'timepoint', 'cell_type'], columns='healty_subset', values="value")
+
+
+        from ngs_toolkit.graphics import radar_plot
+
+        f = radar_plot(
+            data[data['patient_id'] != "KI"].reset_index(),
+            subplot_var="patient_id", group_var="timepoint",
+            radial_vars=["NaiveBcell", "SwitchedBcell", "UnswitchedBcell"],
+            cmap="inferno", scale_to_max=False)
+        f.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.radar_plot.svg".format(sample_set)), dpi=300)
+
+        f = radar_plot(
+            data[data['patient_id'] != "KI"].reset_index(),
+            subplot_var="patient_id", group_var="timepoint",
+            radial_vars=["NaiveBcell", "SwitchedBcell", "UnswitchedBcell"],
+            cmap="inferno", scale_to_max=True)
+        f.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.radar_plot.scale_to_max.svg".format(sample_set)), dpi=300)
+
+
+
+
 def get_gene_level_accessibility(analysis):
     """
     Get gene-level measurements of chromatin accessibility.
