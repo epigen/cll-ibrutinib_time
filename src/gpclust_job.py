@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 """
+Fit hierarchical gaussian processes to cluster chromatin accessibility
+features on their temporal dynamic pattern.
 """
 
 import matplotlib
@@ -20,8 +22,10 @@ import pandas as pd
 import seaborn as sns
 from sklearn.preprocessing import LabelEncoder
 
-sns.set_style("white")
 
+# graphics settings
+sns.set_style("white")
+plt.rcParams['svg.fonttype'] = 'none'
 
 # random seed
 SEED = int("".join(
@@ -32,48 +36,82 @@ random.seed(SEED)
 np.random.seed(SEED)
 
 
+def main():
+    """
+    Script's entry point.
+    """
+    # Parse command-line arguments.
+    args = parse_arguments()
+
+    print("Starting.")
+    print("Arguments: {}.".format(args))
+
+    # Read matrix
+    matrix = read_matrix(args.matrix_file, args.cell_type, args.matrix_header_range)
+
+    varying = read_fits(args.fits_file, args.cell_type, alpha=args.alpha)
+
+    model = fit_gaussian_process(
+        matrix.loc[varying, :], args.output_dir, args.output_prefix, args.cell_type)
+
+    plot(model, matrix.loc[varying, :], args.output_dir,
+         args.output_prefix, args.cell_type)
+
+    print("Done.")
+
+
 def parse_arguments():
     """
     Argument Parsing.
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cell-type", dest="cell_type", default="CLL", type=str)
-    parser.add_argument("--alpha", dest="alpha", default=0.01, type=float)
-    parser.add_argument("--output-prefix", dest="output_prefix", default="gp_fit_job.MOHGP", type=str)
-    parser.add_argument("--output-dir", dest="output_dir", default="/scratch/users/arendeiro/gp_fit_job/combat/output", type=str)
+    parser.add_argument("--matrix-file", dest="matrix_file", type=str)
+    parser.add_argument("--fits-file", dest="fits_file", type=str)
+    parser.add_argument("--matrix-header-range",
+                        dest="matrix_header_range", default=9, type=int)
+    parser.add_argument("--cell-type", dest="cell_type",
+                        default="CLL", type=str)
+    parser.add_argument("--output-prefix", dest="output_prefix",
+                        default="gp_fit_job", type=str)
+    parser.add_argument("--output-dir", dest="output_dir",
+                        default="/scratch/users/arendeiro/cll-time_course/mohgp_fit_job/fits", type=str)
+    parser.add_argument("--alpha", dest="alpha", default=0.05, type=float)
 
     args = parser.parse_args()
 
     return args
 
 
-def read_matrix(cell_type):
+def read_matrix(matrix_file, cell_type="CLL", header_range=9):
     """
+    Read matrix of (n_features, n_samples) and return samples from respective cell type
+    (sample annotation as column metadata) with length `header_range`.
     """
-    print("Reading matrix for cell type {}.".format(cell_type))
-    matrix = pd.read_csv(os.path.join(
-        "/", "home", "arendeiro", "cll-time_course", "results",
-        "cll-time_course" + "_peaks.coverage.log2.z_score.qnorm.pca_fix.csv"), index_col=0, header=range(9))
-    X = matrix.loc[:, matrix.columns.get_level_values("cell_type").isin([cell_type])]
+    print("Reading matrix {} for cell type {}.".format(matrix_file, cell_type))
+    matrix = pd.read_csv(matrix_file, index_col=0, header=range(header_range))
+    X = matrix.loc[:, matrix.columns.get_level_values(
+        "cell_type").isin([cell_type])]
+
+    print("Finished reading matrix with {} features and {} samples of '{}' cell type.".format(
+        X.shape[0], X.shape[1], cell_type))
 
     return X
 
 
-def read_fits(cell_type, alpha=0.05):
+def read_fits(fits_file, cell_type, alpha=0.05):
     """
+    Read Gaussian Process fits from `gp_fit_job.py` in and return variable regions for given cell type.
     """
     print("Reading fits from GPs.")
-    fits = pd.read_csv(os.path.join(
-        "/", "home", "arendeiro", "cll-time_course", "results",
-        ".".join(["gp_fit_job", "combat", "GPy", "all_fits.csv"])), index_col=0)
+    fits = pd.read_csv(fits_file, index_col=0)
 
     return fits[(fits['p_value'] < alpha) & (fits['cell_type'] == cell_type)].index
 
 
 def fit_gaussian_process(matrix, output_dir, output_prefix, cell_type):
     """
+    Fit Mixture of Hierarchical Gaussian Processes for clustering of features.
     """
-
     # Sort by timepoint
     matrix = matrix.sort_index(axis=1, level="timepoint")
 
@@ -99,18 +137,22 @@ def fit_gaussian_process(matrix, output_dir, output_prefix, cell_type):
 
     print("Finished optimization.")
 
+    # Order clusters by their size
     model.reorder()
 
     # Save optimized model parameters
     model.save(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.hd5"))
 
     # Save posterior probability matrix Phi
-    model.phi.tofile(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.posterior_probs_phi.np"))
+    model.phi.tofile(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.posterior_probs_phi.npy"))
 
     return model
 
 
 def plot(model, matrix, output_dir, output_prefix, cell_type):
+    """
+    Fitted model's parameters and probabilities.
+    """
 
     print("Plotting cluster posteriors.")
     # Plot clusters
@@ -124,7 +166,8 @@ def plot(model, matrix, output_dir, output_prefix, cell_type):
 
     print("Plotting parameters/probabilities.")
     # Posterior parameters
-    fig, axis = plt.subplots(2, 1,
+    fig, axis = plt.subplots(
+        2, 1,
         gridspec_kw={'height_ratios':[12, 1]},
         figsize=(3 * 4, 1 * 4),
         tight_layout=True)
@@ -185,28 +228,6 @@ def plot(model, matrix, output_dir, output_prefix, cell_type):
     # g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
     # g2.ax_col_dendrogram.set_rasterized(True)
     # g2.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.clustermap.cluster_labels.svg"), dpi=300, bbox_inches="tight")
-
-
-def main():
-    """
-    Program's main entry point.
-    """
-    # Parse command-line arguments.
-    args = parse_arguments()
-
-    print("Starting.")
-    print("Arguments: {}.".format(args))
-
-    # Do it.
-    matrix = read_matrix(args.cell_type)
-
-    varying = read_fits(args.cell_type, alpha=args.alpha)
-
-    model = fit_gaussian_process(matrix.loc[varying, :], args.output_dir, args.output_prefix, args.cell_type)
-
-    plot(model, matrix.loc[varying, :], args.output_dir, args.output_prefix, args.cell_type)
-
-    print("Done.")
 
 
 if __name__ == '__main__':
