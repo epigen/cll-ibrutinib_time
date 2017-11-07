@@ -40,7 +40,7 @@ def parse_arguments():
     parser.add_argument("--cell-type", dest="cell_type", default="CLL", type=str)
     parser.add_argument("--alpha", dest="alpha", default=0.01, type=float)
     parser.add_argument("--output-prefix", dest="output_prefix", default="gp_fit_job.MOHGP", type=str)
-    parser.add_argument("--output-dir", dest="output_dir", default="/scratch/users/arendeiro/gp_fit_job/output", type=str)
+    parser.add_argument("--output-dir", dest="output_dir", default="/scratch/users/arendeiro/gp_fit_job/combat/output", type=str)
 
     args = parser.parse_args()
 
@@ -53,31 +53,19 @@ def read_matrix(cell_type):
     print("Reading matrix for cell type {}.".format(cell_type))
     matrix = pd.read_csv(os.path.join(
         "/", "home", "arendeiro", "cll-time_course", "results",
-        "cll-time_course" + "_peaks.coverage.joint_qnorm.pca_fix.power.csv"), index_col=0, header=range(8))
-    X = matrix.loc[:, ~matrix.columns.get_level_values("patient_id").isin(["KI"])]
-    X = X.loc[:, X.columns.get_level_values("cell_type").isin([cell_type])]
-
-    samples_to_exclude = [
-        "PBGY_1d_NK",
-        "240d_CD8", "280d_CD8",
-        "240d_CD4", "280d_CD4",
-        "PBGY_1d_Mono", "PBGY_8d_Mono", "PBGY_150d_Mono",
-        "KZ_240d_Bulk",
-        "FE_3d_Bulk",
-        "VZS_2d_Bulk",
-    ]
-    X = X.loc[:, ~X.columns.get_level_values("sample_name").str.contains("|".join(samples_to_exclude))]
+        "cll-time_course" + "_peaks.coverage.log2.z_score.qnorm.pca_fix.csv"), index_col=0, header=range(9))
+    X = matrix.loc[:, matrix.columns.get_level_values("cell_type").isin([cell_type])]
 
     return X
 
 
-def read_fits(cell_type, alpha=0.01):
+def read_fits(cell_type, alpha=0.05):
     """
     """
     print("Reading fits from GPs.")
     fits = pd.read_csv(os.path.join(
-        "/", "home", "arendeiro", "cll-time_course", "results_deconvolve",
-        ".".join(["gp_fit_job", "sorted", "GPy", "all_fits.csv"])), index_col=0)
+        "/", "home", "arendeiro", "cll-time_course", "results",
+        ".".join(["gp_fit_job", "combat", "GPy", "all_fits.csv"])), index_col=0)
 
     return fits[(fits['p_value'] < alpha) & (fits['cell_type'] == cell_type)].index
 
@@ -180,6 +168,23 @@ def plot(model, matrix, output_dir, output_prefix, cell_type):
     g3.ax_heatmap.set_yticklabels(g3.ax_heatmap.get_yticklabels(), rotation=0)
     g3.ax_col_dendrogram.set_rasterized(True)
     g3.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.mean_acc.clustermap.cluster_labels.svg"), dpi=300, bbox_inches="tight")
+
+
+    # # Filter more stringently for cluster assignments
+    # # Threshold probabilities to filter out some regions
+    # posterior_threshold = 0.8
+    # phi = pd.DataFrame(model.phi.T)
+    # assigned = (phi > posterior_threshold).any(axis=1)
+
+    # g2 = sns.clustermap(
+    #     matrix.loc[:, tp.index].T,
+    #     col_colors=[plt.get_cmap("Paired")(i) for i in np.argmax(model.phi,1)],
+    #     row_cluster=False, col_cluster=True, z_score=1, xticklabels=False, yticklabels=matrix.loc[:, tp.index].columns.get_level_values("sample_name"),
+    #     rasterized=True, figsize=(8, 0.2 * matrix.shape[1]), metric="correlation", robust=True)
+    # g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+    # g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    # g2.ax_col_dendrogram.set_rasterized(True)
+    # g2.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.clustermap.cluster_labels.svg"), dpi=300, bbox_inches="tight")
 
 
 def main():
