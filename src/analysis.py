@@ -112,27 +112,35 @@ def main():
             "results", analysis.name + ".accessibility.annotated_metadata.csv")),
         prefix="accessibility.qnorm_pcafix_cuberoot")  # wait for jobs to complete
     gp_output_dir = os.path.join(analysis.results_dir, "gp_fits")
-    fits = gather_gaussian_processes(matrix, prefix="accessibility.qnorm_pcafix_cuberoot")
+    fits = gather_gaussian_processes(
+        analysis.accessibility,
+        matrix_file=os.path.abspath(os.path.join(
+            "results", analysis.name + ".accessibility.annotated_metadata.csv")),
+        prefix="accessibility.qnorm_pcafix_cuberoot")
     fits.to_csv(os.path.join(gp_output_dir, "accessibility.qnorm_pcafix_cuberoot.GP_fits.all_cell_types.csv"), index=True)
 
     visualize_gaussian_process_fits(analysis, fits, output_dir=gp_output_dir, prefix="accessibility.qnorm_pcafix_cuberoot")
 
     # cluster variable regulatory elements with hierarchical mixtures of GPs (MOHGP)
-    fit_MOHGP(
-        analysis.accessibility, prefix="accessibility.qnorm_pcafix_cuberoot",
-        output_dir="/scratch/users/arendeiro/cll-time_course/mohgp_fit_job/",
-        alpha=0.05)
-    assignments = gather_MOHGP(
-        analysis.accessibility, fits, prefix="accessibility.qnorm_pcafix_cuberoot",
-        fits_dir="/scratch/users/arendeiro/cll-time_course/mohgp_fit_job/",
-        alpha=0.05, posterior_threshold=0.8)
-    assignments = pd.merge(assignments.reset_index(), fits.reset_index(), on=['index', 'cell_type'], how='left')
-    assignments.to_csv(os.path.join(analysis.results_dir, "accessibility.qnorm_pcafix_cuberoot" + ".GP_fits.MOHCP_clusters.csv"), index=False)
+    mohgp_output_dir = os.path.join(analysis.results_dir, "mohgp_fits")
+    for alpha in [0.05, 0.01]:
+        prefix = "accessibility.qnorm_pcafix_cuberoot.p={}".format(alpha)
+        fit_MOHGP(
+            analysis.accessibility,
+            matrix_file=os.path.abspath(os.path.join(
+                "results", analysis.name + ".accessibility.annotated_metadata.csv")),
+            fits_file=os.path.join(gp_output_dir, "accessibility.qnorm_pcafix_cuberoot.GP_fits.all_cell_types.csv"),
+            prefix=prefix, output_dir=mohgp_output_dir, alpha=alpha)
+        # wait for jobs to finish
 
-    visualize_clustering_fits(
-        analysis, os.path.join(analysis.results_dir, "mohgp_fits"),
-        prefix="accessibility.qnorm_pcafix_cuberoot",
-        output_dir=os.path.join("results", "mohgp_fit_job"))
+        assignments = gather_MOHGP(
+            analysis.accessibility, fits,
+            prefix=prefix, fits_dir=mohgp_output_dir, alpha=alpha, posterior_threshold=0.8)
+        assignments.to_csv(os.path.join(mohgp_output_dir, prefix + ".GP_fits.MOHCP_clusters.csv"), index=False)
+
+        visualize_clustering_assignments(
+            analysis.accessibility, assignments, prefix=prefix,
+            output_dir=os.path.join("results", "mohgp_fits"))
 
     # Plot distribution of clusters per cell type dependent on their dynamic pattern
     cluster_dynamics(assignments)
@@ -413,7 +421,7 @@ def gather_gaussian_processes(
     return fits
 
 
-def visualize_gaussian_process_fits(analysis, fits, output_dir, prefix):
+def visualize_gaussian_process_fits(analysis, fits, output_dir, prefix="accessibility"):
     """
     Visualize statistics of Gaussian Process fitting in isolation as well as their relationship.
     Plot some examples of temporaly dynamic regions.
@@ -426,7 +434,7 @@ def visualize_gaussian_process_fits(analysis, fits, output_dir, prefix):
 
     # Plot likelihood relationships
     g = sns.FacetGrid(data=fits, col="cell_type", col_wrap=2)
-    g.map(plt.scatter, "RBF", "White", alpha=0.1, s=2, rasterized=True)
+    g.map(plt.scatter, "White", "RBF", alpha=0.1, s=2, rasterized=True)
     g.savefig(os.path.join(output_dir, prefix + ".fits.RBF_vs_White.cell_types.svg"), dpi=300, bbox_inches="tight")
 
     g = sns.FacetGrid(data=fits, col="cell_type", col_wrap=2)
@@ -483,14 +491,15 @@ def visualize_gaussian_process_fits(analysis, fits, output_dir, prefix):
         ax.set_title(cell_types[i])
     fig.savefig(os.path.join(output_dir, prefix + ".top_variable.scatter.all_samples.svg"), dpi=300, bbox_inches="tight")
 
-    return fits
-
 
 def fit_MOHGP(
-        matrix, prefix="accessibility",
+        matrix,
+        matrix_file,
+        fits_file,
+        prefix="accessibility",
         output_dir="/scratch/users/arendeiro/cll-time_course/mohgp_fit_job/",
         alpha=0.05,
-        partition="longq", cpus=2, mem=4000):
+        partition="shortq", cpus=24, mem=48000):
     """
     Cluster temporaly variable regulatory elements with
     a Hierarchical Mixture of Gaussian Processes (MOHGP).
@@ -499,20 +508,22 @@ def fit_MOHGP(
     library = "GPy"
 
     # setup output dirs
-    fits_dir = os.path.join(output_dir, "fits")
     log_dir = os.path.join(output_dir, "log")
-    for _dir in [output_dir, fits_dir, log_dir]:
+    for _dir in [output_dir, log_dir]:
         if not os.path.exists(_dir):
             os.makedirs(_dir)
 
     for cell_type in matrix.columns.get_level_values("cell_type").drop_duplicates():
-        name = ".".join([output_prefix, prefix, cell_type, "GPclust"])
+        name = ".".join([prefix, cell_type, "GPclust"])
         log = os.path.join(output_dir, "log", name + ".log")
         job = " ".join([
             "python -u ~/jobs/gpclust_job.py",
+            "--matrix-file {}".format(matrix_file),
+            "--fits-file {}".format(fits_file),
             "--cell-type {}".format(cell_type),
             "--output-prefix {}".format(name),
             "--alpha {}".format(alpha),
+            "--matrix-header-range 9",
             "--output-dir {}".format(output_dir)])
         cmd = " ".join([
             "sbatch",
@@ -528,7 +539,7 @@ def fit_MOHGP(
 def gather_MOHGP(
         matrix, fits, prefix="accessibility",
         fits_dir="/scratch/users/arendeiro/cll-time_course/mohgp_fit_job/",
-        alpha=0.05, posterior_threshold=0.8):
+        n_clust=4, alpha=0.05, posterior_threshold=0.8):
     """
     Cluster temporaly variable regulatory elements with
     a Hierarchical Mixture of Gaussian Processes (MOHGP).
@@ -541,103 +552,128 @@ def gather_MOHGP(
         variable = fits[(fits['p_value'] < alpha) & (fits['cell_type'] == cell_type)].index
 
         # Read in the posterior probabilities matrix (Phi) of cluster assignments
-        name = ".".join([output_prefix, matrix_name, cell_type, "GPclust"])
-
+        name = ".".join([prefix, cell_type, "GPclust"])
         phi = pd.DataFrame(
-            np.fromfile(os.path.join(fits_dir, name + "." + cell_type + ".MOHCP.posterior_probs_phi.npy")).reshape((len(variable), 4)),
+            np.fromfile(os.path.join(fits_dir, name + "." + cell_type + ".mohgp.posterior_probs_phi.npy")).reshape((len(variable), n_clust)),
             index=variable)
 
-        # Threshold probabilities to filter out some regions
-        assigned = (phi > posterior_threshold).any(axis=1)
+        # Apply threshold probability to filter out some regions
+        phi['assigned'] = (phi > posterior_threshold).any(axis=1)
 
-        # Append
-        cluster_labels = phi.loc[assigned].apply(np.argmax, axis=1).to_frame(name="cluster")
-        cluster_labels["cell_type"] = cell_type
-        assignments = assignments.append(cluster_labels)
+        # Assign to cluster 
+        phi['cluster_assignment'] = phi.loc[:, phi.dtypes == float].apply(np.argmax, axis=1).to_frame(name="cluster").squeeze()
 
-    return assignments
+        ass = fits.loc[phi.index]
+        ass = ass.loc[ass['cell_type'] == cell_type]
+
+        assignments = assignments.append(ass.join(phi).reset_index(), ignore_index=True)
+
+    return assignments.set_index("index")
 
 
-def visualize_clustering_fits(
-        analysis, output_dir, prefix,
+def visualize_clustering_assignments(
+        matrix, assignments, prefix="accessibility",
         output_dir="results/mohgp_fit_job/"):
     """
     Visualize discovered feature clusters and observe their temporal dynamics across samples.
     """
 
-    matrix = analysis.accessibility
-
     for cell_type in matrix.columns.get_level_values("cell_type").drop_duplicates():
-        # Read in the posterior probabilities matrix (Phi) of cluster assignments
-        name = ".".join([output_prefix, matrix_name, cell_type, "GPclust"])
-        phi = pd.DataFrame(
-            np.fromfile(os.path.join(fits_dir, name + "." + cell_type + ".MOHCP.posterior_probs_phi.npy")).reshape((len(variable), 4)),
-            index=variable)
+
+        regions = assignments[assignments['cell_type'] == cell_type]
+        regions_assigned = regions[regions['assigned'] == True]
 
         # Plot
-        matrix2 = matrix.loc[variable, matrix.columns.get_level_values("cell_type") == cell_type]
-        tp = pd.Series(matrix2.columns.get_level_values("timepoint").str.replace("d", "").astype(int), index=matrix2.columns).sort_values()
+        matrix2 = matrix.loc[regions.index, matrix.columns.get_level_values(
+            "cell_type") == cell_type].astype(float)
+        tp = pd.Series(matrix2.columns.get_level_values("timepoint").str.replace(
+            "d", "").astype(int), index=matrix2.columns).sort_values()
 
         # all variable regions with assignments and threshold mask
-        col_colors = [[plt.get_cmap("Paired")(i) for i in phi.apply(np.argmax, axis=1)], [plt.get_cmap("binary")(i) for i in assigned.astype(float)]]
+        col_colors = [[plt.get_cmap("Paired")(i) for i in regions['cluster_assignment']], [
+            plt.get_cmap("binary")(i) for i in regions['assigned'].astype(float)]]
         g = sns.clustermap(
             matrix2.loc[:, tp.index].T,
             col_colors=col_colors,
-            row_cluster=False, col_cluster=True, z_score=1, xticklabels=False, yticklabels=matrix2.loc[:, tp.index].columns.get_level_values("sample_name"),
+            row_cluster=False, col_cluster=True, z_score=1,
+            xticklabels=False, yticklabels=matrix2.loc[:, tp.index].columns.get_level_values("sample_name"),
             rasterized=True, figsize=(8, 0.2 * matrix2.shape[1]), metric="correlation", robust=True)
-        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.ax_heatmap.set_xticklabels(
+            g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(
+            g.ax_heatmap.get_yticklabels(), rotation=0)
         g.ax_col_dendrogram.set_rasterized(True)
-        g.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.clustermap.cluster_labels.with_posterior_probs.svg"), dpi=300, bbox_inches="tight")
+        g.savefig(os.path.join(output_dir, prefix + "." + cell_type +
+                               ".mohgp.fitted_model.clustermap.cluster_labels.with_posterior_probs.svg"), dpi=300, bbox_inches="tight")
 
         # only variable and with assignments above threshold
         g = sns.clustermap(
-            matrix2.loc[assigned, tp.index].T,
-            col_colors=[plt.get_cmap("Paired")(i) for i in phi.loc[assigned].apply(np.argmax, axis=1)],
-            row_cluster=False, col_cluster=True, z_score=1, xticklabels=False, yticklabels=matrix2.loc[:, tp.index].columns.get_level_values("sample_name"),
+            matrix2.loc[regions_assigned.index, tp.index].T,
+            col_colors=[plt.get_cmap("Paired")(i)
+                        for i in regions_assigned['cluster_assignment']],
+            row_cluster=False, col_cluster=True, z_score=1,
+            xticklabels=False, yticklabels=matrix2.loc[:, tp.index].columns.get_level_values("sample_name"),
             rasterized=True, figsize=(8, 0.2 * matrix2.shape[1]), metric="correlation", robust=True)
-        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.ax_heatmap.set_xticklabels(
+            g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(
+            g.ax_heatmap.get_yticklabels(), rotation=0)
         g.ax_col_dendrogram.set_rasterized(True)
-        g.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.clustermap.cluster_labels.only_posterior_above_threshold.svg"), dpi=300, bbox_inches="tight")
+        g.savefig(os.path.join(output_dir, prefix + "." + cell_type +
+                               ".mohgp.fitted_model.clustermap.cluster_labels.only_posterior_above_threshold.svg"), dpi=300, bbox_inches="tight")
 
         # only variable and with assignments above threshold: mean per timepoint
-        matrix_mean = matrix2.loc[assigned, tp.index].T.groupby(level="timepoint").mean()
+        matrix_mean = matrix2.loc[regions_assigned.index,
+                                  tp.index].T.groupby(level="timepoint").mean()
         g = sns.clustermap(
             matrix_mean,
-            col_colors=[plt.get_cmap("Paired")(i) for i in phi.loc[assigned].apply(np.argmax, axis=1)],
+            col_colors=[plt.get_cmap("Paired")(i)
+                        for i in regions_assigned['cluster_assignment']],
             row_cluster=False, col_cluster=True, z_score=1, xticklabels=False, yticklabels=True,
             rasterized=True, figsize=(8, 0.2 * matrix_mean.shape[0]), metric="correlation", robust=True)
-        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.ax_heatmap.set_xticklabels(
+            g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+        g.ax_heatmap.set_yticklabels(
+            g.ax_heatmap.get_yticklabels(), rotation=0)
         g.ax_col_dendrogram.set_rasterized(True)
-        g.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.mean_acc.clustermap.cluster_labels.only_posterior_above_threshold.svg"), dpi=300, bbox_inches="tight")
+        g.savefig(os.path.join(output_dir, prefix + "." + cell_type +
+                               ".mohgp.fitted_model.mean_acc.clustermap.cluster_labels.only_posterior_above_threshold.svg"), dpi=300, bbox_inches="tight")
 
         # Cluster patterns
         # this is a mock of the MOHGP underlying posterior.
-        cs = cluster_labels['cluster'].drop_duplicates().dropna().shape[0]
+        cs = regions_assigned['cluster_assignment'].drop_duplicates(
+        ).dropna().shape[0]
 
-        fig, axis = plt.subplots(1, cs, figsize=(cs * 4, 1 * 4), sharex=True, sharey=True)
-        for i, cluster in enumerate(cluster_labels['cluster'].drop_duplicates().sort_values()):
-            regions = cluster_labels[cluster_labels['cluster'] == cluster].index
+        fig, axis = plt.subplots(1, cs, figsize=(
+            cs * 4, 1 * 4), sharex=True, sharey=True)
+        for i, cluster in enumerate(regions_assigned['cluster_assignment'].drop_duplicates().sort_values()):
+            cluster_regions = regions_assigned[regions_assigned['cluster_assignment'] == cluster].index
 
-            X = matrix2.loc[regions, tp.index].mean(axis=0).T.reset_index()
-            X['time'] = np.log2(1 + X["timepoint"].str.replace("d", "").astype(int).values)
+            X = matrix2.loc[cluster_regions, tp.index].mean(
+                axis=0).T.reset_index()
+            X['time'] = np.log2(
+                1 + X["timepoint"].str.replace("d", "").astype(int).values)
             # d = X.groupby('time').mean().squeeze().to_frame(name="mean")
             # d['upper_q'] = X.groupby('time').quantile(.975)
             # d['lower_q'] = X.groupby('time').quantile(.025)
 
-            kernel = GPy.kern.RBF(1.0, variance=0.5) + GPy.kern.Bias(1.0, variance=0.05)
+            kernel = GPy.kern.RBF(1.0, variance=0.5) + \
+                GPy.kern.Bias(1.0, variance=0.05)
             m = GPy.models.GPRegression(X=X[['time']], Y=X[[0]], kernel=kernel)
             m.optimize()
             m.plot([0 - 0.5, max(X['time']) + 0.5], ax=axis[i], legend=None)
 
             # axis[i].set_ylim((1.5, 3.5))
-            axis[i].set_title("Cluster {}\n(n = {})".format(cluster, regions.shape[0]))
+            axis[i].set_title("Cluster {}\n(n = {})".format(
+                1 + cluster, cluster_regions.shape[0]))
         axis[0].set_ylabel("Chromatin accessibility")
         for ax in axis:
             ax.set_xlabel("Time (log2)")
-        fig.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.mean_acc.clustermap.cluster_labels.only_posterior_above_threshold.variable.cluster_means.svg"), dpi=300, bbox_inches="tight")
+        fig.savefig(os.path.join(
+            output_dir, prefix + "." + cell_type +
+            ".".join([
+                ".mohgp", "fitted_model", "mean_acc", "clustermap", "cluster_labels",
+                "only_posterior_above_threshold", "variable", "cluster_means.svg"])), dpi=300, bbox_inches="tight")
 
 
 def cluster_dynamics(assignments):
