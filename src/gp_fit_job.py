@@ -11,17 +11,21 @@ import random
 import string
 import sys
 
+import GPy
 import numpy as np
+import pandas as pd
+import scipy
 from sklearn.preprocessing import LabelEncoder
 
 
-# random seed
-SEED = int("".join(
-    LabelEncoder()
-    .fit(list(string.ascii_uppercase))
-    .transform(list("BOCKLAB")).astype(str)))
-random.seed(SEED)
-np.random.seed(SEED)
+def set_seed():
+    # random seed
+    SEED = int("".join(
+        LabelEncoder()
+        .fit(list(string.ascii_uppercase))
+        .transform(list("BOCKLAB")).astype(str)))
+    random.seed(SEED)
+    np.random.seed(SEED)
 
 
 def main():
@@ -34,13 +38,18 @@ def main():
     print("Starting.")
     print("Arguments: {}.".format(args))
 
+    if not args.randomize:
+        set_seed()
+
     # Read matrix
     matrix = read_matrix(args.matrix_file, args.cell_type,
                          args.matrix_header_range)
     # Fit GPs for requested range
     index_range = parse_range(args.data_range, delim=args.range_delim)
     fits = fit_gaussian_process(
-        matrix.iloc[range(*index_range), :], library=args.library)
+        matrix.iloc[range(*index_range), :], library=args.library, x_log_transform=not args.linear, x_randomize=args.randomize)
+    print("Finished fitting.")
+
     # Save fits
     fits.to_csv(os.path.join(args.output_dir,
                              args.output_prefix + ".csv"), index=True)
@@ -67,6 +76,8 @@ def parse_arguments():
                         default="mohgp_fit_job", type=str)
     parser.add_argument("--output-dir", dest="output_dir",
                         default="/scratch/users/arendeiro/cll-time_course/gp_fit_job/output", type=str)
+    parser.add_argument("--linear", dest="linear", action="store_true")
+    parser.add_argument("--randomize", dest="randomize", action="store_true")
 
     args = parser.parse_args()
 
@@ -80,9 +91,15 @@ def read_matrix(matrix_file, cell_type="CLL", header_range=9):
     """
     print("Reading matrix {} for cell type {}.".format(matrix_file, cell_type))
     matrix = pd.read_csv(matrix_file, index_col=0, header=range(header_range))
-    X = matrix.loc[:, matrix.columns.get_level_values(
-        "cell_type").isin([cell_type])]
-    X = X.loc[:, ~X.columns.get_level_values("timepoint").isin(["240d"])]
+    X = matrix.loc[:, matrix.columns.get_level_values("cell_type").isin([cell_type])]
+
+    t = ["240d", "280d"]
+    if cell_type in ["CD4", "CD8"]:
+        t += ["1d"]
+    elif cell_type in ["Bcell"]:
+        t += ["150d"]
+    X = X.loc[:, ~X.columns.get_level_values("timepoint").isin(t)]
+    X = X.astype(float).T.groupby(['patient_id', 'timepoint']).mean().T
 
     print("Finished reading matrix with {} features and {} samples of '{}' cell type.".format(
         X.shape[0], X.shape[1], cell_type))
@@ -98,24 +115,17 @@ def parse_range(range_string, delim="-"):
     return tuple([int(x) for x in range_string.split(delim)])
 
 
-def fit_gaussian_process(matrix, library="GPy"):
+def fit_gaussian_process(matrix, library="GPy", x_log_transform=True, x_randomize=False):
     """
     Given a matrix of (n_features, n_samples), fit Gaussian Process with
     'timepoint' (from sample/column metadata) as x values and measurements as y
     for each feature.
     Will calculate log likelihoods and further statistics for two models.
     """
-    def gpy_fit_optimize(index, matrix):
-        import GPy
-        import scipy
-
-        y = matrix.loc[index, :].values[:, None]
-        x = np.log2(1 +
-                    matrix
-                    .columns
-                    .get_level_values('timepoint')
-                    .str.replace("d", "")
-                    .astype(int).values.reshape((y.shape[0], 1)))
+    def gpy_fit_optimize(x, y):
+        if x.shape[0] != 1:
+            x = x.reshape((x.size, 1))
+            y = y.reshape((y.size, 1))
 
         kernel = GPy.kern.RBF(input_dim=1) + GPy.kern.Bias(input_dim=1)
         white_kernel = GPy.kern.Bias(input_dim=1)
@@ -283,22 +293,40 @@ def fit_gaussian_process(matrix, library="GPy"):
     print("Fitting with library {}.".format(library))
 
     if library == "GPy":
-        ll = [gpy_fit_optimize(i, matrix) for i in matrix.index]
-        print("Finished.")
-        return pd.DataFrame(ll, index=matrix.index, columns=["D", "p_value", "mean_posterior_std"] +
-                            ['RBF'] + ['sum.rbf.variance', 'sum.rbf.lengthscale', 'sum.bias.variance', 'rbf.Gaussian_noise.variance'] +
-                            ['White'] + ['bias.variance', 'bias.Gaussian_noise.variance'])
+        x = pd.Series(
+            matrix
+            .columns
+            .get_level_values('timepoint')
+            .str.replace("d", "")
+            .astype(int))
+        # Make sure each timepoint is represented at least twice
+        x = x[x.isin(x.value_counts()[x.value_counts() > 1].index)]
+        y = matrix.iloc[i, x.index]
+
+        if x_log_transform:
+            x = np.log2(1 + x)
+
+        if x_randomize:
+            np.random.shuffle(x.values)
+
+        return pd.DataFrame(
+                [gpy_fit_optimize(x.values, y.values) for i in range(matrix.shape[0])],
+                index=matrix.index,
+                columns=["D", "p_value", "mean_posterior_std"] +
+                        ['RBF'] + ['sum.rbf.variance', 'sum.rbf.lengthscale', 'sum.bias.variance', 'rbf.Gaussian_noise.variance'] +
+                        ['White'] + ['bias.variance', 'bias.Gaussian_noise.variance'])
     elif library == "sklearn":
-        ll = [sklearn_fit_optimize(i, matrix) for i in matrix.index]
-        print("Finished.")
-        return pd.DataFrame(ll, index=matrix.index, columns=['RBF'] + ['White'])
+        return pd.DataFrame(
+            [sklearn_fit_optimize(i, matrix) for i in matrix.index],
+            index=matrix.index, columns=['RBF'] + ['White'])
 
     elif library == "GPy_hierarchical":
-        ll = [gpy_hierarchical_fit_optimize(i, matrix) for i in matrix.index]
-        print("Finished.")
-        return pd.DataFrame(ll, index=matrix.index, columns=["D", "p_value", "mean_posterior_std"] +
-                            ['RBF'] + ['sum.rbf.variance', 'sum.rbf.lengthscale', 'sum.bias.variance', 'rbf.Gaussian_noise.variance'] +
-                            ['White'] + ['bias.variance', 'bias.Gaussian_noise.variance'])
+        return pd.DataFrame(
+            [gpy_hierarchical_fit_optimize(i, matrix) for i in matrix.index],
+            index=matrix.index,
+            columns=["D", "p_value", "mean_posterior_std"] +
+                    ['RBF'] + ['sum.rbf.variance', 'sum.rbf.lengthscale', 'sum.bias.variance', 'rbf.Gaussian_noise.variance'] +
+                    ['White'] + ['bias.variance', 'bias.Gaussian_noise.variance'])
 
 
 if __name__ == '__main__':

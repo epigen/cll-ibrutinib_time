@@ -52,7 +52,7 @@ def main():
     varying = read_fits(args.fits_file, args.cell_type, alpha=args.alpha)
 
     model = fit_gaussian_process(
-        matrix.loc[varying, :], args.output_dir, args.output_prefix, args.cell_type)
+        matrix.loc[varying, :], args.output_dir, args.output_prefix, args.cell_type, args.n_clust, not args.linear)
 
     plot(model, matrix.loc[varying, :], args.output_dir,
          args.output_prefix, args.cell_type)
@@ -69,6 +69,8 @@ def parse_arguments():
     parser.add_argument("--fits-file", dest="fits_file", type=str)
     parser.add_argument("--matrix-header-range",
                         dest="matrix_header_range", default=9, type=int)
+    parser.add_argument("--n_clust",
+                        dest="n_clust", default=4, type=int)
     parser.add_argument("--cell-type", dest="cell_type",
                         default="CLL", type=str)
     parser.add_argument("--output-prefix", dest="output_prefix",
@@ -76,6 +78,7 @@ def parse_arguments():
     parser.add_argument("--output-dir", dest="output_dir",
                         default="/scratch/users/arendeiro/cll-time_course/mohgp_fit_job/fits", type=str)
     parser.add_argument("--alpha", dest="alpha", default=0.05, type=float)
+    parser.add_argument("--linear", dest="linear", action="store_true")
 
     args = parser.parse_args()
 
@@ -89,8 +92,14 @@ def read_matrix(matrix_file, cell_type="CLL", header_range=9):
     """
     print("Reading matrix {} for cell type {}.".format(matrix_file, cell_type))
     matrix = pd.read_csv(matrix_file, index_col=0, header=range(header_range))
-    X = matrix.loc[:, matrix.columns.get_level_values(
-        "cell_type").isin([cell_type])]
+    X = matrix.loc[:, matrix.columns.get_level_values("cell_type").isin([cell_type])]
+    t = ["240d", "280d"]
+    if cell_type in ["CD4", "CD8"]:
+        t += ["1d"]
+    elif cell_type in ["Bcell"]:
+        t += ["150d"]
+    X = X.loc[:, ~X.columns.get_level_values("timepoint").isin(t)]
+    X = X.astype(float).T.groupby(['patient_id', 'timepoint']).mean().T
 
     print("Finished reading matrix with {} features and {} samples of '{}' cell type.".format(
         X.shape[0], X.shape[1], cell_type))
@@ -108,7 +117,7 @@ def read_fits(fits_file, cell_type, alpha=0.05):
     return fits[(fits['p_value'] < alpha) & (fits['cell_type'] == cell_type)].index
 
 
-def fit_gaussian_process(matrix, output_dir, output_prefix, cell_type):
+def fit_gaussian_process(matrix, output_dir, output_prefix, cell_type, n_clust_guess, x_log_transform=True):
     """
     Fit Mixture of Hierarchical Gaussian Processes for clustering of features.
     """
@@ -119,7 +128,17 @@ def fit_gaussian_process(matrix, output_dir, output_prefix, cell_type):
     matrix = matrix.apply(lambda x: (x - x.mean()) / x.std(), axis=1)
 
     # Get timepoints
-    times = np.log2(1 + matrix.columns.get_level_values("timepoint").str.replace("d", "").astype(int).values)
+    times = pd.Series(
+        matrix
+        .columns
+        .get_level_values('timepoint')
+        .str.replace("d", "")
+        .astype(int))
+    # Make sure each timepoint is represented at least twice
+    times = times[times.isin(times.value_counts()[times.value_counts() > 1].index)]
+    if x_log_transform:
+        times = np.log2(1 + times)
+    matrix = matrix.iloc[:, times.index]
 
     # Make kernels representing underlying process and mean and deviation from it
     k_underlying = GPy.kern.Matern52(input_dim=1, variance=1.0, lengthscale=times.max() / 3.)
@@ -129,7 +148,7 @@ def fit_gaussian_process(matrix, output_dir, output_prefix, cell_type):
     model = GPclust.MOHGP(
         X=times.reshape(-1, 1), Y=matrix.values,
         kernF=k_underlying, kernY=k_corruption,
-        K=4, alpha=1., prior_Z="DP")
+        K=n_clust_guess, alpha=1., prior_Z="DP")
     model.hyperparam_opt_interval = 1000
     model.hyperparam_opt_args['messages'] = True
 
@@ -141,10 +160,10 @@ def fit_gaussian_process(matrix, output_dir, output_prefix, cell_type):
     model.reorder()
 
     # Save optimized model parameters
-    model.save(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.hd5"))
+    model.save(os.path.join(output_dir, output_prefix + "." + cell_type + ".mohgp.fitted_model.hd5"))
 
     # Save posterior probability matrix Phi
-    model.phi.tofile(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.posterior_probs_phi.npy"))
+    model.phi.tofile(os.path.join(output_dir, output_prefix + "." + cell_type + ".mohgp.posterior_probs_phi.npy"))
 
     return model
 
@@ -162,7 +181,7 @@ def plot(model, matrix, output_dir, output_prefix, cell_type):
         ax.set_rasterized(True)
         ax.set_ylabel("Chromatin accessibility")
         ax.set_xlabel("Time (log2)")
-    fig.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.clusters.svg"), dpi=300, bbox_inches="tight")
+    fig.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".mohgp.fitted_model.clusters.svg"), dpi=300, bbox_inches="tight")
 
     print("Plotting parameters/probabilities.")
     # Posterior parameters
@@ -176,7 +195,7 @@ def plot(model, matrix, output_dir, output_prefix, cell_type):
     axis[0].set_ylabel('Cluster index')
     axis[1].set_aspect(0.1)
     plt.colorbar(mat, cax=axis[1], label="Posterior probability", orientation="horizontal")
-    fig.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.posterior_probs.svg"), dpi=300, bbox_inches="tight")
+    fig.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".mohgp.fitted_model.posterior_probs.svg"), dpi=300, bbox_inches="tight")
 
     # Assignment probabilities
     g = sns.clustermap(
@@ -185,7 +204,7 @@ def plot(model, matrix, output_dir, output_prefix, cell_type):
         figsize=(3, 0.2 * model.phi.T.shape[0]), cbar_kws={"label": "Posterior probability"})
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
-    g.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.posterior_probs.clustermap.svg"), dpi=300, bbox_inches="tight")
+    g.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".mohgp.fitted_model.posterior_probs.clustermap.svg"), dpi=300, bbox_inches="tight")
 
     # Clustermap with cluster assignments
     print("Plotting clusters.")
@@ -194,12 +213,12 @@ def plot(model, matrix, output_dir, output_prefix, cell_type):
     g2 = sns.clustermap(
         matrix.loc[:, tp.index].T,
         col_colors=[plt.get_cmap("Paired")(i) for i in np.argmax(model.phi,1)],
-        row_cluster=False, col_cluster=True, z_score=1, xticklabels=False, yticklabels=matrix.loc[:, tp.index].columns.get_level_values("sample_name"),
+        row_cluster=False, col_cluster=True, z_score=1, xticklabels=False,
         rasterized=True, figsize=(8, 0.2 * matrix.shape[1]), metric="correlation", robust=True)
     g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
     g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
     g2.ax_col_dendrogram.set_rasterized(True)
-    g2.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.clustermap.cluster_labels.svg"), dpi=300, bbox_inches="tight")
+    g2.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".mohgp.fitted_model.clustermap.cluster_labels.svg"), dpi=300, bbox_inches="tight")
 
     matrix_mean = matrix.loc[:, tp.index].T.groupby(level="timepoint").mean()
     g3 = sns.clustermap(
@@ -210,7 +229,7 @@ def plot(model, matrix, output_dir, output_prefix, cell_type):
     g3.ax_heatmap.set_xticklabels(g3.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
     g3.ax_heatmap.set_yticklabels(g3.ax_heatmap.get_yticklabels(), rotation=0)
     g3.ax_col_dendrogram.set_rasterized(True)
-    g3.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.mean_acc.clustermap.cluster_labels.svg"), dpi=300, bbox_inches="tight")
+    g3.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".mohgp.fitted_model.mean_acc.clustermap.cluster_labels.svg"), dpi=300, bbox_inches="tight")
 
 
     # # Filter more stringently for cluster assignments
@@ -222,12 +241,12 @@ def plot(model, matrix, output_dir, output_prefix, cell_type):
     # g2 = sns.clustermap(
     #     matrix.loc[:, tp.index].T,
     #     col_colors=[plt.get_cmap("Paired")(i) for i in np.argmax(model.phi,1)],
-    #     row_cluster=False, col_cluster=True, z_score=1, xticklabels=False, yticklabels=matrix.loc[:, tp.index].columns.get_level_values("sample_name"),
+    #     row_cluster=False, col_cluster=True, z_score=1, xticklabels=False,
     #     rasterized=True, figsize=(8, 0.2 * matrix.shape[1]), metric="correlation", robust=True)
     # g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
     # g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
     # g2.ax_col_dendrogram.set_rasterized(True)
-    # g2.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".MOHCP.fitted_model.clustermap.cluster_labels.svg"), dpi=300, bbox_inches="tight")
+    # g2.savefig(os.path.join(output_dir, output_prefix + "." + cell_type + ".mohgp.fitted_model.clustermap.cluster_labels.svg"), dpi=300, bbox_inches="tight")
 
 
 if __name__ == '__main__':
