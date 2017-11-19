@@ -92,6 +92,9 @@ def main():
     analysis.accessibility = analysis.annotate_with_sample_metadata(quant_matrix="accessibility", attributes=sample_attributes + ["good_batch"], save=True, assign=False)
     analysis.to_pickle()
 
+    analysis.annotate(quant_matrix="coverage")
+    analysis.to_pickle()
+
 
     # Unsupervised analysis
     unsupervised(analysis, quant_matrix="accessibility", samples=None, attributes_to_plot=plotting_attributes + ["good_batch"], plot_prefix="accessibility")
@@ -142,7 +145,7 @@ def main():
             cell_types=cell_types,
             n_clust=[3, 5, 4, 4, 4, 3],
             prefix=clust_prefix, fits_dir=mohgp_output_dir, alpha=alpha, posterior_threshold=0.8)
-        assignments.to_csv(os.path.join(mohgp_output_dir, clust_prefix + ".GP_fits.MOHCP_clusters.csv"), index=True)
+        assignments.to_csv(os.path.join(mohgp_output_dir, clust_prefix + ".GP_fits.mohgp_clusters.csv"), index=True)
 
         visualize_clustering_assignments(
             analysis.accessibility, assignments, prefix=clust_prefix,
@@ -219,27 +222,26 @@ def main():
     mohgp_output_dir = os.path.join(analysis.results_dir, "mohgp_fits")
     alpha = 0.05
     prefix = "accessibility.qnorm_pcafix_cuberoot" + ".p={}".format(alpha)
-    assignments = pd.read_csv(os.path.join(mohgp_output_dir, prefix + ".GP_fits.MOHCP_clusters.csv"))
-    cluster_dynamics(assignments)
+    assignments = pd.read_csv(os.path.join(mohgp_output_dir, prefix + ".GP_fits.mohgp_clusters.csv"))
+    l_assignments = cluster_stats(assignments, prefix=prefix)
+
 
     # Get enrichments of region clusters
-    assignments['comparison_name'] = assignments['cell_type'] + \
-        "_" + assignments['cluster'].astype(str)
+    enrichments_dir = os.path.join(analysis.results_dir, "cluster_enrichments")
+    l_assignments['comparison_name'] = l_assignments['cell_type'] + \
+        "_" + l_assignments['cluster_name'].astype(str)
 
     # In addition, get enrichments for all of changing regions for each cell type
-    _a = assignments.copy()
+    _a = l_assignments.copy()
     _a['comparison_name'] = _a['comparison_name'].str.replace("_.*", "")
-    assignments = assignments.append(_a)
-
-    output_prefix = 'gp_fit_job'
-    matrix_name = "sorted"
+    l_assignments = l_assignments.append(_a)
 
     differential_enrichment(
         analysis,
-        assignments.set_index("index"),
+        l_assignments,
         data_type="ATAC-seq",
-        output_dir="results_deconvolve/GPclust",
-        output_prefix=".".join([output_prefix, matrix_name, "GPclust"]),
+        output_dir=enrichments_dir,
+        output_prefix=prefix,
         genome="hg19",
         directional=False,
         max_diff=10000,
@@ -248,94 +250,82 @@ def main():
     )
 
     collect_differential_enrichment(
-        assignments,
+        l_assignments,
         directional=False,
         data_type="ATAC-seq",
-        output_dir="results_deconvolve/GPclust",
-        output_prefix=".".join([output_prefix, matrix_name, "GPclust"]),
+        output_dir=enrichments_dir,
+        output_prefix=prefix,
         permissive=True)
-    enrichment_table = pd.read_csv(os.path.join(
-        "results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.meme_ame.csv"))
-    plot_differential_enrichment(
-        enrichment_table,
-        "motif",
-        data_type="ATAC-seq",
-        direction_dependent=False,
-        output_dir="results_deconvolve/GPclust",
-        comp_variable="comparison_name",
-        output_prefix=".".join([output_prefix, matrix_name, "GPclust"]),
-        top_n=5)
-    enrichment_table = pd.read_csv(os.path.join(
-        "results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.lola.csv"))
-    plot_differential_enrichment(
-        enrichment_table,
-        "lola",
-        data_type="ATAC-seq",
-        direction_dependent=False,
-        output_dir="results_deconvolve/GPclust",
-        comp_variable="comparison_name",
-        output_prefix=".".join([output_prefix, matrix_name, "GPclust"]),
-        top_n=5)
-    enrichment_table = pd.read_csv(os.path.join(
-        "results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.enrichr.csv"))
-    plot_differential_enrichment(
-        enrichment_table,
-        "enrichr",
-        data_type="ATAC-seq",
-        direction_dependent=False,
-        output_dir="results_deconvolve/GPclust",
-        comp_variable="comparison_name",
-        output_prefix=".".join([output_prefix, matrix_name, "GPclust"]),
-        top_n=5)
+    
+    for simple, label in [(False, ""), (True, "-simple")]:
+        enrichment_table = pd.read_csv(os.path.join(
+            enrichments_dir, prefix + ".meme_ame.csv"))
+        if simple:
+            enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
+        plot_differential_enrichment(
+            enrichment_table,
+            "motif",
+            data_type="ATAC-seq",
+            direction_dependent=False,
+            output_dir=enrichments_dir,
+            comp_variable="comparison_name",
+            output_prefix=prefix + label,
+            top_n=5)
+        enrichment_table = pd.read_csv(os.path.join(
+            enrichments_dir, prefix + ".lola.csv"))
+        if simple:
+            enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
+        plot_differential_enrichment(
+            enrichment_table,
+            "lola",
+            data_type="ATAC-seq",
+            direction_dependent=False,
+            output_dir=enrichments_dir,
+            comp_variable="comparison_name",
+            output_prefix=prefix + label,
+            top_n=5)
+        enrichment_table = pd.read_csv(os.path.join(
+            enrichments_dir, prefix + ".enrichr.csv"))
+        if simple:
+            enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
+        plot_differential_enrichment(
+            enrichment_table,
+            "enrichr",
+            data_type="ATAC-seq",
+            direction_dependent=False,
+            output_dir=enrichments_dir,
+            comp_variable="comparison_name",
+            output_prefix=prefix + label,
+            top_n=5)
 
 
     # Plot specially for CLL the enrichments
-    enrichment_table = pd.read_csv(os.path.join(
-        "results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.meme_ame.csv"))
+    for cell_type in cell_types:
+        enrichment_table = pd.read_csv(os.path.join(
+            enrichments_dir, prefix + ".lola.csv"))
+        enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("{}_".format(cell_type))]
+        plot_differential_enrichment(
+            enrichment_table,
+            "lola",
+            data_type="ATAC-seq",
+            direction_dependent=False,
+            output_dir=enrichments_dir,
+            comp_variable="comparison_name",
+            output_prefix=prefix + ".{}_only".format(cell_type),
+            top_n=25)
 
-    enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains(
-        "CLL")]
-
-    plot_differential_enrichment(
-        enrichment_table,
-        "motif",
-        data_type="ATAC-seq",
-        direction_dependent=False,
-        output_dir="results_deconvolve/GPclust",
-        comp_variable="comparison_name",
-        output_prefix=".".join(
-            [output_prefix, matrix_name, "GPclust", "CLL_only"]),
-        top_n=5)
-    enrichment_table = pd.read_csv(os.path.join(
-        "results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.lola.csv"))
-    enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains(
-        "CLL")]
-
-    plot_differential_enrichment(
-        enrichment_table,
-        "lola",
-        data_type="ATAC-seq",
-        direction_dependent=False,
-        output_dir="results_deconvolve/GPclust",
-        comp_variable="comparison_name",
-        output_prefix=".".join(
-            [output_prefix, matrix_name, "GPclust", "CLL_only"]),
-        top_n=25)
-    enrichment_table = pd.read_csv(os.path.join(
-        "results_deconvolve", "GPclust", "gp_fit_job.sorted.GPclust.enrichr.csv"))
-    enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains(
-        "CLL")]
-
-    plot_differential_enrichment(
-        enrichment_table,
-        "enrichr",
-        data_type="ATAC-seq",
-        direction_dependent=False,
-        output_dir="results_deconvolve/GPclust",
-        comp_variable="comparison_name",
-        output_prefix=".".join(
-            [output_prefix, matrix_name, "GPclust", "CLL_only"]),
-        top_n=5)
+        enrichment_table = pd.read_csv(os.path.join(
+            enrichments_dir, prefix + ".enrichr.csv"))
+        enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("{}_".format(cell_type))]
+        plot_differential_enrichment(
+            enrichment_table,
+            "enrichr",
+            data_type="ATAC-seq",
+            direction_dependent=False,
+            output_dir=enrichments_dir,
+            comp_variable="comparison_name",
+            output_prefix=prefix + ".{}_only".format(cell_type),
+            top_n=5)
 
     # Figure 2c, 3c
     plot_lola_enrichments()
@@ -344,7 +334,7 @@ def main():
     plot_enrichments()
 
     # Figure 2e
-    transcription_factor_accessibility()
+    transcription_factor_accessibility(analysis)
 
 
 def print_name(function):
@@ -812,28 +802,40 @@ def visualize_clustering_assignments(
                 "only_posterior_above_threshold", "variable", "cluster_means.svg"])), dpi=300, bbox_inches="tight")
 
 
-def cluster_dynamics(assignments):
+def cluster_stats(assignments, prefix):
     import itertools
+
+    def overlap((a, b), func=max):
+        """
+        Return overlap of A and B sets as the maximum of either intersection (percentage).
+        """
+        return (
+            func(
+                len(set(a).intersection(set(b))),
+                len(set(b).intersection(set(a))))
+            /
+            float(func(len(a), len(b)))
+        ) * 100
+
     cluster_labels = pd.DataFrame({
-        "Bcell": {0: "down", 1: "up", 2: "other", 3: "other"},
+        "Bcell": {0: "down", 1: "up", 2: "sine"},
         # "Bulk": {0: "down", 1: "up2", 2: "up1", 3: "other"},
         "Bulk": {0: "down", 1: "up", 2: "up", 3: "other"},
-        "CD4": {0: "down", 1: "up", 2: "middle", 3: "extremes"},
-        "CD8": {0: "down", 1: "up", 2: "middle", 3: "extremes"},
-        "CLL": {0: "down", 1: "up", 2: "extremes", 3: "middle"},
-        # "NK": {0: "down", 1: "up", 2: "extremes2", 3: "extremes1"},
-        "NK": {0: "down", 1: "up", 2: "extremes", 3: "extremes"},
-        "Mono": {0: "extremes", 1: "up", 2: "down", 3: "other"}
+        "CD4": {0: "down", 1: "up", 2: "sine", 3: "other"},
+        "CD8": {0: "up", 1: "down", 2: "sine", 3: "other"},
+        "CLL": {0: "down", 1: "up", 2: "middle", 3: "sine"},
+        "Mono": {0: "down", 1: "up", 2: "sine"},
+        "NK": {0: "up", 1: "down"},
     })
-    cluster_labels.index.name = "cluster"
+    cluster_labels = pd.DataFrame(cluster_labels)
+    cluster_labels.index.name = "cluster_assignment"
+    assignments = pd.merge(
+        assignments.reset_index(),
+        pd.melt(cluster_labels.reset_index(),
+            id_vars=['cluster_assignment'], var_name="cell_type", value_name="cluster_name")).set_index("index")
 
-    cluster_counts = assignments.groupby(['cell_type', 'cluster'])['index'].count().to_frame(name="count")
-
-    counts = pd.merge(cluster_counts.reset_index(), pd.melt(cluster_labels.reset_index(), id_vars="cluster", var_name="cell_type", value_name='cluster_name'))
-
-    counts2 = counts.groupby(['cell_type', 'cluster_name'])['count'].sum().to_frame(name="count")
-
-    counts_fraction = (counts2 / counts2.groupby(level='cell_type').sum()) * 100.
+    cluster_counts = assignments.reset_index().groupby(['cell_type', 'cluster_name'])['index'].count().to_frame(name="count")
+    counts_fraction = (cluster_counts / cluster_counts.groupby(level=['cell_type']).sum()) * 100.
 
     fig, axis = plt.subplots(1, 2, figsize=(4 * 2, 4), tight_layout=True)
     sns.factorplot(
@@ -847,23 +849,15 @@ def cluster_dynamics(assignments):
     axis[0].set_ylabel("Count")
     axis[1].set_ylabel("% of total")
     sns.despine(fig)
-    fig.savefig(os.path.join("results", output_prefix + ".MOHCP.cluster_name.counts.barplot.svg"), bbox_inches="tight")
+    fig.savefig(os.path.join("results", prefix + ".mohgp.cluster_name.counts.barplot.svg"), bbox_inches="tight")
 
     # Physical overlap
-    def overlap((a, b), func=max):
-        return (
-            func(
-                len(set(a).intersection(set(b))),
-                len(set(b).intersection(set(a))))
-            /
-            float(func(len(a), len(b)))
-        ) * 100
-
-    a = assignments.sort_values(['cell_type', 'cluster']).set_index("index")
-    g = a.groupby(['cell_type', 'cluster']).groups.values()
-    n = map(lambda x: "_".join([str(i) for i in x]), a.groupby(['cell_type', 'cluster']).groups.keys())
-    comb = pd.DataFrame(np.array(map(overlap, itertools.product(g, repeat=2))).reshape((28, 28)))
-    ns = pd.DataFrame(np.array(map(lambda x: ":".join(x), itertools.product(n, repeat=2))).reshape((28, 28)))
+    a = assignments.sort_values(['cell_type', 'cluster_name'])
+    g = a.groupby(['cell_type', 'cluster_name']).groups.values()
+    n = map(lambda x: "_".join([str(i) for i in x]), a.groupby(['cell_type', 'cluster_name']).groups.keys())
+    l = len(n)
+    comb = pd.DataFrame(np.array(map(overlap, itertools.product(g, repeat=2))).reshape((l, l)))
+    ns = pd.DataFrame(np.array(map(lambda x: ":".join(x), itertools.product(n, repeat=2))).reshape((l, l)))
     comb.index = [x[0] for x in ns[0].str.split(":")]
     comb.columns = [x[1] for x in ns.loc[0].str.split(":")]
     comb = comb.sort_index(axis=0).sort_index(axis=1)
@@ -877,7 +871,9 @@ def cluster_dynamics(assignments):
     sns.heatmap(data=comb2, cmap="inferno", cbar_kws={"label": "Percentage overlap (no diagonal)"}, square=True, ax=axis[1])
     axis[1].set_xticklabels(axis[1].get_xticklabels(), rotation=90, fontsize="x-small", ha="left", va="center")
     axis[1].set_yticklabels(axis[1].get_yticklabels(), rotation=0, fontsize="x-small", ha="right", va="center")
-    fig.savefig(os.path.join("results", output_prefix + ".MOHCP.cluster_name.overlap.heatmap.svg"), dpi=300)
+    fig.savefig(os.path.join("results", prefix + ".mohgp.cluster_name.overlap.heatmap.svg"), dpi=300)
+
+    return assignments
 
 
 def plot_lola_enrichments():
@@ -1015,7 +1011,6 @@ def plot_lola_enrichments():
         g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
         g.fig.savefig(os.path.join("results", "fig2c.{}.corr".format(label) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
-
 
 
 def plot_enrichments(top_n=10):
@@ -1206,17 +1201,9 @@ def specific_cll_enrichments():
         ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize="xx-small")
 
 
-def fig2e():
-    cll = analysis.accessibility.loc[:, 
-        (analysis.accessibility.columns.get_level_values("patient_id") != "KI") &
-        (analysis.accessibility.columns.get_level_values("cell_type") == "CLL")]
-
-    bcell = analysis.accessibility.loc[:, 
-        (analysis.accessibility.columns.get_level_values("patient_id") != "KI") &
-        (analysis.accessibility.columns.get_level_values("cell_type") == "Bcell")]
-
-    # fc = np.log2(bcell.mean(axis=1) / cll.mean(axis=1)).sort_values()
-    # sns.distplot(fc)
+def correlation_to_bcell():
+    cll = analysis.accessibility.loc[:, (analysis.accessibility.columns.get_level_values("cell_type") == "CLL")]
+    bcell = analysis.accessibility.loc[:, (analysis.accessibility.columns.get_level_values("cell_type") == "Bcell")]
 
     m_cll = cll.mean(axis=1)
     m_cll.name = "CLL"
@@ -1243,13 +1230,14 @@ def fig2e():
     res['ratio'] = res['bcell'] / res['cll']
 
     g = sns.factorplot(data=res, x='timepoint', y='ratio', col="patient_id")
+    g.savefig(os.path.join(output_dir, "correlation_to_bcell.ratio_Bcell_CLL.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
 
-
-    diff = res.groupby(['patient_id']).apply(lambda x: x.loc[x['timepoint'].argmax(), 'ratio'].squeeze() / x.loc[x['timepoint'] == 0, 'ratio'].squeeze())
+    diff = res.groupby(['patient_id']).apply(lambda x: np.log2(x.loc[x['timepoint'].argmax(), 'ratio'].squeeze() / x.loc[x['timepoint'] == 0, 'ratio'].squeeze()))
     g = sns.barplot(data=diff.reset_index(), x='patient_id', y=0)
-    
+    g.set_ylim(diff.min(), diff.max())
 
-    g = sns.clustermap(cll.loc[fc.abs().sort_values().tail(2000).index, :], yticklabels=False, metric="correlation")
+    fc = np.log2(bcell.mean(axis=1) / cll.mean(axis=1)).sort_values()
+    g = sns.clustermap(cll.loc[fc.abs().sort_values().tail(2000).index, :], yticklabels=False, metric="correlation", z_score=1)
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
 
     # from scipy.optimize import linprog
@@ -1267,22 +1255,39 @@ def fig2e():
     #     res = np.vstack([res, linprog(c, A_ub=A, b_ub=b, bounds=(x0_bounds, x1_bounds)).x])
 
 
-def transcription_factor_accessibility():
+def transcription_factor_accessibility(
+        analysis, output_dir="{results_dir}/tf_accessibility",
+        bed_dir="/home/arendeiro/resources/regions/LOLACore/hg19/encode_tfbs/regions/"):
     from glob import glob
     import pybedtools
 
+    if "{results_dir}" in output_dir:
+        output_dir = output_dir.format(results_dir=results_dir)
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    tfs = [
+        "NFKB",
+        "PU1", "ATF2", "ATF3", "BATF", "NFIC", "IRF4", "RUNX3", "BCL11A", "JUN", "FOS",
+        "POL2", "CTCF", "SP1", "SP2", "ELK1", "ELK4", "STAT1", "STAT3", "STAT5",
+        "GATA1", # "REST",
+        "NANOG", "POU5F", # "SOX2"
+    ]
+
     all_res = pd.DataFrame()
-    for factor_name in ["NFKB", "PU1", "ATF2", "BATF", "NFIC", "IRF4", "RUNX3", "BCL11A", "POL2", "GATA1", "NANOG", "POU5F", "CTCF"]:
+    for factor_name in tfs:
         print(factor_name)
-        # get consensus NFKB regions from LOLA database
-        transcription_factor_regions_sets = glob("/home/arendeiro/resources/regions/LOLACore/hg19/encode_tfbs/regions/*{}*".format(factor_name.capitalize()))[:5]
+        # get consensus TF regions from LOLA database
+        transcription_factor_regions_sets = glob(
+            os.path.join(bed_dir, "*{}*".format(factor_name.capitalize())))[:5]
         bt = pybedtools.BedTool(transcription_factor_regions_sets[0]).sort()
         for fn in transcription_factor_regions_sets[1:]:
             bt = bt.cat(pybedtools.BedTool(fn).sort().merge())
         bt = bt.merge()
         bt.saveas(os.path.join("data", "external", "TF_binding_sites" + factor_name + ".bed"))
 
-        # get regions overlapping with NFKB sites
+        # get regions overlapping with TF sites
         transcription_factor_r = analysis.sites.intersect(bt, wa=True).to_dataframe(names=['chrom', 'start', 'end'])
         transcription_factor_r.index = transcription_factor_r['chrom'] + ":" + transcription_factor_r['start'].astype(str) + "-" + transcription_factor_r['end'].astype(str)
         transcription_factor_a = analysis.accessibility.loc[transcription_factor_r.index].dropna()
@@ -1316,42 +1321,78 @@ def transcription_factor_accessibility():
 
         g = sns.clustermap(res.dropna().T, col_cluster=False, z_score=1, rasterized=True, figsize=(res.shape[0] * 0.12, res.shape[1] * 0.12), row_cluster=False)
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
-        g.savefig(os.path.join("results", "fig2X.{}_binding.per_quantile.sorted.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+        g.savefig(os.path.join(output_dir, "{}_binding.per_quantile.sorted.svg".format(factor_name)), dpi=300, bbox_inches="tight")
 
         res_mean = res.dropna().T.groupby(level=['cell_type', 'timepoint']).mean()
         g = sns.clustermap(res_mean.dropna(), col_cluster=False, z_score=1, rasterized=False, square=True, row_cluster=False)
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
-        g.savefig(os.path.join("results", "fig2X.{}_binding.per_quantile.mean_patients.sorted.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+        g.savefig(os.path.join(output_dir, "{}_binding.per_quantile.mean_patients.sorted.svg".format(factor_name)), dpi=300, bbox_inches="tight")
 
         # d = pd.melt(res.dropna().T.groupby(level=['cell_type', 'timepoint']).mean().reset_index(), id_vars=['cell_type', 'timepoint'], var_name="quantile", value_name='accessibility')
         # g = sns.factorplot(data=d, x="timepoint", y="accessibility", hue="quantile", col="cell_type")
-        # g.savefig(os.path.join("results", "fig2X.{}_binding.per_quantile.mean_patients_quantiles.col.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+        # g.savefig(os.path.join(output_dir, "{}_binding.per_quantile.mean_patients_quantiles.col.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
 
         d = res.dropna().T.groupby(level=['cell_type', 'timepoint']).mean().mean(1).reset_index()
         # g = sns.factorplot(data=d, x="timepoint", y=0, col="cell_type")
-        # g.savefig(os.path.join("results", "fig2X.{}_binding.per_quantile.mean_patients_all_sites.col.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+        # g.savefig(os.path.join(output_dir, "{}_binding.per_quantile.mean_patients_all_sites.col.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
         g = sns.factorplot(data=d, x="timepoint", y=0, hue="cell_type")
-        g.savefig(os.path.join("results", "fig2X.{}_binding.per_quantile.mean_patients_all_sites.hue.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+        g.savefig(os.path.join(output_dir, "{}_binding.per_quantile.mean_patients_all_sites.hue.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
 
         d = res.dropna().T.groupby(level=['cell_type', 'timepoint']).mean().mean(1).reset_index()
         d["transcription_factor"] = factor_name
         all_res = all_res.append(d, ignore_index=True)
 
     all_res = all_res.rename(columns={0: "accessibility"})
-    g = sns.factorplot(data=all_res, x="timepoint", y="accessibility", hue="cell_type", col="transcription_factor", col_wrap=3)
-    g.savefig(os.path.join("results", "fig2X.all_factor_binding.mean_patients.cell_type_hue.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+    all_res.to_csv(os.path.join(output_dir, "all_factor_binding.csv"), index=False)
 
-    d = all_res[all_res['cell_type'] == "CLL"]
-    g = sns.factorplot(data=d, x="timepoint", y="accessibility", hue="transcription_factor")
-    g.savefig(os.path.join("results", "fig2X.all_factor_binding.mean_patients.CLL_only.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+    g = sns.factorplot(data=all_res, x="timepoint", y="accessibility", hue="cell_type", col="transcription_factor", col_wrap=5, sharey=False)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.cell_type_hue.lineplots.free_y.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+
+    g = sns.factorplot(data=all_res, x="timepoint", y="accessibility", hue="cell_type", col="transcription_factor", col_wrap=5)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.cell_type_hue.lineplots.svg".format(factor_name)), dpi=300, bbox_inches="tight")
 
 
-    d_h = d.groupby('transcription_factor')['accessibility'].apply(scipy.stats.zscore).apply(pd.Series)
-    d_h.columns = d['timepoint'].unique()
+    p = pd.pivot_table(all_res, index="transcription_factor", columns=["cell_type", "timepoint"])
 
-    g = sns.clustermap(d_h, col_cluster=False, row_cluster=True, vmin=-5, vmax=5, square=True)
+    g = sns.clustermap(p, col_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility"})
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
-    g.savefig(os.path.join("results", "fig2X.all_factor_binding.mean_patients.CLL_only.clustermap.svg".format(factor_name)), dpi=300, bbox_inches="tight")
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.sorted.svg"), dpi=300, bbox_inches="tight")
+    g = sns.clustermap(p, col_cluster=False, z_score=0, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.sorted.z_score.svg"), dpi=300, bbox_inches="tight")
+
+    g = sns.clustermap((p.T - p.mean(1)).T, col_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Accessibility\n(signal minus mean)"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.sorted.minus_mean.svg"), dpi=300, bbox_inches="tight")
+
+    g = sns.clustermap((p.T / p.mean(1)).T, col_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Accessibility\n(signal over mean)"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.sorted.over_mean.svg"), dpi=300, bbox_inches="tight")
+
+    p_z = p.copy()
+    for cell_type in p.columns.get_level_values("cell_type").unique():
+        p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type] = scipy.stats.zscore(
+            p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type], axis=1)
+
+    g = sns.clustermap(p_z, col_cluster=False, z_score=0, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.sorted.z_score_per_cell_type.svg"), dpi=300, bbox_inches="tight")
+
+    for cell_type in p.columns.get_level_values("cell_type").unique():
+        pp = p.loc[:, p.columns.get_level_values("cell_type") == cell_type]
+        g = sns.clustermap(pp, col_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility"})
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+        g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.{}_only.sorted.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+        g = sns.clustermap(pp, col_cluster=False, z_score=0, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, vmin=-5, vmax=5)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+        g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.{}_only.sorted.z_score.svg".format(cell_type)), dpi=300, bbox_inches="tight")
 
 
 def differentiation_assessment():
