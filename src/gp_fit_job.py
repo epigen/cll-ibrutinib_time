@@ -1,14 +1,60 @@
 #!/usr/bin/env python
 
 """
+Fit gaussian processes to a matrix of chromatin accessibility
+with samples collected at different timepoints.
 """
 
 import argparse
 import os
+import random
+import string
 import sys
 
+import GPy
 import numpy as np
 import pandas as pd
+import scipy
+from sklearn.preprocessing import LabelEncoder
+
+
+def set_seed():
+    # random seed
+    SEED = int("".join(
+        LabelEncoder()
+        .fit(list(string.ascii_uppercase))
+        .transform(list("BOCKLAB")).astype(str)))
+    random.seed(SEED)
+    np.random.seed(SEED)
+
+
+def main():
+    """
+    Script's entry point.
+    """
+    # Parse command-line arguments.
+    args = parse_arguments()
+
+    print("Starting.")
+    print("Arguments: {}.".format(args))
+
+    if not args.randomize:
+        set_seed()
+
+    # Read matrix
+    matrix = read_matrix(args.matrix_file, args.cell_type,
+                         args.matrix_header_range)
+    # Fit GPs for requested range
+    index_range = parse_range(args.data_range, delim=args.range_delim)
+    fits = fit_gaussian_process(
+        matrix.iloc[range(*index_range), :], library=args.library, x_log_transform=not args.linear, x_randomize=args.randomize)
+    print("Finished fitting.")
+
+    # Save fits
+    fits.to_csv(os.path.join(args.output_dir,
+                             args.output_prefix + ".csv"), index=True)
+
+    print("Done.")
 
 
 def parse_arguments():
@@ -17,51 +63,69 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-range", dest="data_range", type=str)
-    parser.add_argument("--range-delim", dest="range_delim", default="-", type=str)
-    parser.add_argument("--matrix-type", dest="matrix_type", default="deconv", choices=['deconv', 'sorted'], type=str)
-    parser.add_argument("--library", dest="library", default="GPy", choices=['GPy', 'sklearn'], type=str)
-    parser.add_argument("--cell-type", dest="cell_type", default="CLL", type=str)
-    parser.add_argument("--output-prefix", dest="output_prefix", default="gp_fit_job", type=str)
-    parser.add_argument("--output-dir", dest="output_dir", default="/scratch/users/arendeiro/gp_fit_job/output", type=str)
+    parser.add_argument("--matrix-file", dest="matrix_file", type=str)
+    parser.add_argument("--range-delim", dest="range_delim",
+                        default="-", type=str)
+    parser.add_argument("--matrix-header-range",
+                        dest="matrix_header_range", default=9, type=int)
+    parser.add_argument("--library", dest="library",
+                        default="GPy", choices=['GPy', 'sklearn'], type=str)
+    parser.add_argument("--cell-type", dest="cell_type",
+                        default="CLL", type=str)
+    parser.add_argument("--output-prefix", dest="output_prefix",
+                        default="mohgp_fit_job", type=str)
+    parser.add_argument("--output-dir", dest="output_dir",
+                        default="/scratch/users/arendeiro/cll-time_course/gp_fit_job/output", type=str)
+    parser.add_argument("--linear", dest="linear", action="store_true")
+    parser.add_argument("--randomize", dest="randomize", action="store_true")
 
     args = parser.parse_args()
 
     return args
 
 
-def read_matrix(matrix_type="deconv", cell_type="CLL"):
+def read_matrix(matrix_file, cell_type="CLL", header_range=9):
     """
+    Read matrix of (n_features, n_samples) and return samples from respective cell type
+    (sample annotation as column metadata) with length `header_range`.
     """
-    print("Reading matrix {} for cell type {}.".format(matrix_type, cell_type))
-    if matrix_type == "deconv":
-        matrix = pd.read_csv(os.path.join("/", "home", "arendeiro", "cll-time_course", "results_deconvolve", "coverage.cell_type_deconvoluted.qnorm.csv"), index_col=0, header=range(4))
-        matrix = np.log2(matrix)
-    elif matrix_type == "sorted":
-        matrix = pd.read_csv(os.path.join("/", "home", "arendeiro", "cll-time_course", "results", "cll-time_course" + "_peaks.coverage.joint_qnorm.pca_fix.power.csv"), index_col=0, header=range(8))
-    X = matrix.loc[:, ~matrix.columns.get_level_values("patient_id").isin(["KI"])]
-    X = X.loc[:, X.columns.get_level_values("cell_type").isin([cell_type])]
-    X = X.loc[:, ~X.columns.get_level_values("timepoint").isin(["240d"])]
+    print("Reading matrix {} for cell type {}.".format(matrix_file, cell_type))
+    matrix = pd.read_csv(matrix_file, index_col=0, header=range(header_range))
+    X = matrix.loc[:, matrix.columns.get_level_values("cell_type").isin([cell_type])]
 
-    print("Finished.")
+    t = ["240d", "280d"]
+    if cell_type in ["CD4", "CD8"]:
+        t += ["1d"]
+    elif cell_type in ["Bcell"]:
+        t += ["150d"]
+    X = X.loc[:, ~X.columns.get_level_values("timepoint").isin(t)]
+    X = X.astype(float).T.groupby(['patient_id', 'timepoint']).mean().T
+
+    print("Finished reading matrix with {} features and {} samples of '{}' cell type.".format(
+        X.shape[0], X.shape[1], cell_type))
 
     return X
 
 
 def parse_range(range_string, delim="-"):
     """
+    Given a string representing a numeric range and a delimiter,
+    return the start and end of range.
     """
     return tuple([int(x) for x in range_string.split(delim)])
 
 
-def fit_gaussian_process(matrix, library="GPy"):
+def fit_gaussian_process(matrix, library="GPy", x_log_transform=True, x_randomize=False):
     """
+    Given a matrix of (n_features, n_samples), fit Gaussian Process with
+    'timepoint' (from sample/column metadata) as x values and measurements as y
+    for each feature.
+    Will calculate log likelihoods and further statistics for two models.
     """
-    def gpy_fit_optimize(index, matrix):
-        import GPy
-        import scipy
-
-        y = matrix.loc[index, :].values[:, None]
-        x = np.log2(1 + matrix.columns.get_level_values('timepoint').str.replace("d", "").astype(int).values.reshape((y.shape[0], 1)))
+    def gpy_fit_optimize(x, y):
+        if x.shape[0] != 1:
+            x = x.reshape((x.size, 1))
+            y = y.reshape((y.size, 1))
 
         kernel = GPy.kern.RBF(input_dim=1) + GPy.kern.Bias(input_dim=1)
         white_kernel = GPy.kern.Bias(input_dim=1)
@@ -89,7 +153,8 @@ def fit_gaussian_process(matrix, library="GPy"):
         # the posterior mean values retrieved will also be duplicated
         # let's make sure our STD is computed on the unique values only
         mean_posterior_std = (
-            pd.DataFrame([x.squeeze(), m.posterior.mean.squeeze()], index=['x', 'posterior'])
+            pd.DataFrame([x.squeeze(), m.posterior.mean.squeeze()],
+                         index=['x', 'posterior'])
             .T
             .groupby('x')['posterior']
             .apply(lambda i: i.unique()[0])
@@ -104,13 +169,17 @@ def fit_gaussian_process(matrix, library="GPy"):
         from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
 
         y = matrix.loc[index, :].values
-        x = np.log2(1 + matrix.columns.get_level_values('timepoint').str.replace("d", "").astype(int).values.reshape((y.shape[0], 1)))
-
+        x = np.log2(1 +
+                    matrix
+                    .columns
+                    .get_level_values('timepoint')
+                    .str.replace("d", "")
+                    .astype(int).values.reshape((y.shape[0], 1)))
         kernel = 1 * (
-            RBF(length_scale=1.0, length_scale_bounds=(1e-05, 100000.0))) # +
-            # WhiteKernel(noise_level=1.0, noise_level_bounds=(1e-05, 100000.0)))# +
-            # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-05, 100000.0)))
-        white_kernel = 1 * (# WhiteKernel(noise_level=1.0, noise_level_bounds=(1e-05, 100000.0)) )# +
+            RBF(length_scale=1.0, length_scale_bounds=(1e-05, 100000.0)))  # +
+        # WhiteKernel(noise_level=1.0, noise_level_bounds=(1e-05, 100000.0)))# +
+        # ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-05, 100000.0)))
+        white_kernel = 1 * (  # WhiteKernel(noise_level=1.0, noise_level_bounds=(1e-05, 100000.0)) )# +
             ConstantKernel(constant_value=0., constant_value_bounds=(1e-05, 100000.0)))
         # white_kernel = ConstantKernel(constant_value=1.0, constant_value_bounds=(1e-05, 100000.0))
 
@@ -131,9 +200,14 @@ def fit_gaussian_process(matrix, library="GPy"):
         import scipy
 
         y = matrix.loc[index, :].values[:, None]
-        x = np.log2(1 + matrix.columns.get_level_values('timepoint').str.replace("d", "").astype(int).values.reshape((y.shape[0], 1)))
+        x = np.log2(1 +
+                    matrix
+                    .columns
+                    .get_level_values('timepoint')
+                    .str.replace("d", "")
+                    .astype(int).values.reshape((y.shape[0], 1)))
 
-        # construct a hierarchical GPy kernel. 
+        # construct a hierarchical GPy kernel.
         kern_upper = GPy.kern.RBF(input_dim=1, variance=1.0, name='upper')
         kern_lower = GPy.kern.RBF(input_dim=1, variance=0.1, name='lower')
         kernel = GPy.kern.Hierarchical(kernels=[kern_upper, kern_lower])
@@ -142,11 +216,14 @@ def fit_gaussian_process(matrix, library="GPy"):
         # the first column contains time (T). the second columns contains
         # zeros, ones and twos to represent three replications.
         from sklearn.preprocessing import LabelEncoder
-        t = np.log2(1 + matrix.columns.get_level_values("timepoint").str.replace("d", "").astype(int))
+        t = np.log2(
+            1 + matrix.columns.get_level_values("timepoint").str.replace("d", "").astype(int))
         patient_encoder = LabelEncoder()
         patient_encoder.fit(matrix.columns.get_level_values("patient_id"))
-        p = patient_encoder.transform(matrix.columns.get_level_values("patient_id"))
-        X = pd.DataFrame(np.concatenate([t.values.reshape(-1, 1), p.reshape(-1, 1)], 1), columns=['T', 'patient_id'])
+        p = patient_encoder.transform(
+            matrix.columns.get_level_values("patient_id"))
+        X = pd.DataFrame(np.concatenate(
+            [t.values.reshape(-1, 1), p.reshape(-1, 1)], 1), columns=['T', 'patient_id'])
         X['y'] = y
         X = X.sort_values('T')
 
@@ -157,11 +234,13 @@ def fit_gaussian_process(matrix, library="GPy"):
         m.likelihood.variance = 0.01
         m.optimize('bfgs', messages=1)
 
-        fig, axis = plt.subplots(1, len(patient_encoder.classes_), figsize=(20, 2), sharex=True, sharey=True)
+        fig, axis = plt.subplots(1, len(patient_encoder.classes_), figsize=(
+            20, 2), sharex=True, sharey=True)
         # axis[0].scatter(t, y)
         Xplot = X[['T']].values
         mu, var = m.predict(Xplot, kern=kern_upper)
-        GPy.plotting.matplot_dep.base_plots.gpplot(Xplot, mu, mu - 2 * np.sqrt(var), mu + 2 * np.sqrt(var), ax=axis[0], edgecol='r', fillcol='r')
+        GPy.plotting.matplot_dep.base_plots.gpplot(
+            Xplot, mu, mu - 2 * np.sqrt(var), mu + 2 * np.sqrt(var), ax=axis[0], edgecol='r', fillcol='r')
         # mu, var = m.predict(Xplot, kern=kern_lower)
         # GPy.plotting.matplot_dep.base_plots.gpplot(Xplot, mu, mu - 2 * np.sqrt(var), mu + 2 * np.sqrt(var), ax=axis[0], edgecol='b', fillcol='b')
         axis[0].set_title('Underlying\nfunction $f_{nr}(t)$')
@@ -169,13 +248,15 @@ def fit_gaussian_process(matrix, library="GPy"):
 
         # plot each of the functions f_{nr}(t)
         for patient in range(1, len(patient_encoder.classes_)):
-            m.plot(fixed_inputs=[(1, patient)], ax=axis[patient], which_data_rows=(X.loc[:, "patient_id"]==patient).values, legend=None)
-            axis[patient].set_title("Patient {}".format(patient_encoder.inverse_transform(patient)))
+            m.plot(fixed_inputs=[(1, patient)], ax=axis[patient], which_data_rows=(
+                X.loc[:, "patient_id"] == patient).values, legend=None)
+            axis[patient].set_title("Patient {}".format(
+                patient_encoder.inverse_transform(patient)))
             axis[patient].plot(Xplot, mu, 'r--', linewidth=1)
         for ax in axis:
             ax.set_xlabel('Time (log2)')
-        fig.savefig(os.path.join("results_deconvolve", ".".join([output_prefix, matrix_name, library, "hierarchy.top_variable.example.svg"])), dpi=300, bbox_inches="tight")
-
+        fig.savefig(os.path.join("results_deconvolve", ".".join(
+            [output_prefix, matrix_name, library, "hierarchy.top_variable.example.svg"])), dpi=300, bbox_inches="tight")
 
         white_kernel = GPy.kern.Bias(input_dim=1)
         try:
@@ -200,7 +281,8 @@ def fit_gaussian_process(matrix, library="GPy"):
         # the posterior mean values retrieved will also be duplicated
         # let's make sure our STD is computed on the unique values only
         mean_posterior_std = (
-            pd.DataFrame([x.squeeze(), m.posterior.mean.squeeze()], index=['x', 'posterior'])
+            pd.DataFrame([x.squeeze(), m.posterior.mean.squeeze()],
+                         index=['x', 'posterior'])
             .T
             .groupby('x')['posterior']
             .apply(lambda i: i.unique()[0])
@@ -211,45 +293,40 @@ def fit_gaussian_process(matrix, library="GPy"):
     print("Fitting with library {}.".format(library))
 
     if library == "GPy":
-        ll = [gpy_fit_optimize(i, matrix) for i in matrix.index]
-        print("Finished.")
-        return pd.DataFrame(ll, index=matrix.index, columns=
-                            ["D", "p_value", "mean_posterior_std"] +
-                            ['RBF'] + ['sum.rbf.variance', 'sum.rbf.lengthscale', 'sum.bias.variance', 'rbf.Gaussian_noise.variance'] +
-                            ['White'] + ['bias.variance', 'bias.Gaussian_noise.variance'])
+        x = pd.Series(
+            matrix
+            .columns
+            .get_level_values('timepoint')
+            .str.replace("d", "")
+            .astype(int))
+        # Make sure each timepoint is represented at least twice
+        x = x[x.isin(x.value_counts()[x.value_counts() > 1].index)]
+        y = matrix.iloc[i, x.index]
+
+        if x_log_transform:
+            x = np.log2(1 + x)
+
+        if x_randomize:
+            np.random.shuffle(x.values)
+
+        return pd.DataFrame(
+                [gpy_fit_optimize(x.values, y.values) for i in range(matrix.shape[0])],
+                index=matrix.index,
+                columns=["D", "p_value", "mean_posterior_std"] +
+                        ['RBF'] + ['sum.rbf.variance', 'sum.rbf.lengthscale', 'sum.bias.variance', 'rbf.Gaussian_noise.variance'] +
+                        ['White'] + ['bias.variance', 'bias.Gaussian_noise.variance'])
     elif library == "sklearn":
-        ll = [sklearn_fit_optimize(i, matrix) for i in matrix.index]
-        print("Finished.")
-        return pd.DataFrame(ll, index=matrix.index, columns=['RBF'] + ['White'])
+        return pd.DataFrame(
+            [sklearn_fit_optimize(i, matrix) for i in matrix.index],
+            index=matrix.index, columns=['RBF'] + ['White'])
 
     elif library == "GPy_hierarchical":
-        ll = [gpy_hierarchical_fit_optimize(i, matrix) for i in matrix.index]
-        print("Finished.")
-        return pd.DataFrame(ll, index=matrix.index, columns=
-                            ["D", "p_value", "mean_posterior_std"] +
-                            ['RBF'] + ['sum.rbf.variance', 'sum.rbf.lengthscale', 'sum.bias.variance', 'rbf.Gaussian_noise.variance'] +
-                            ['White'] + ['bias.variance', 'bias.Gaussian_noise.variance'])
-
-def main():
-    """
-    Program's main entry point.
-    """
-    # Parse command-line arguments.
-    args = parse_arguments()
-
-    print("Starting.")
-    print("Arguments: {}.".format(args))
-
-    # Do it.
-    matrix = read_matrix(args.matrix_type, args.cell_type)
-
-    index_range = parse_range(args.data_range, delim=args.range_delim)
-
-    fits = fit_gaussian_process(matrix.iloc[range(*index_range), :], library=args.library)
-
-    fits.to_csv(os.path.join(args.output_dir, args.output_prefix + ".csv"))
-
-    print("Done.")
+        return pd.DataFrame(
+            [gpy_hierarchical_fit_optimize(i, matrix) for i in matrix.index],
+            index=matrix.index,
+            columns=["D", "p_value", "mean_posterior_std"] +
+                    ['RBF'] + ['sum.rbf.variance', 'sum.rbf.lengthscale', 'sum.bias.variance', 'rbf.Gaussian_noise.variance'] +
+                    ['White'] + ['bias.variance', 'bias.Gaussian_noise.variance'])
 
 
 if __name__ == '__main__':
