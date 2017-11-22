@@ -287,9 +287,8 @@ for(cl.x in clusterings){
     # Plot for all clusters heatmap
     cllDiffSummary <- allClDiff[,.(minDiff = min(diff2),N=.N), by=c("up", "gene")][N == length(clusters)-1][,rank := rank(-minDiff), by="up"]
     try({
-      pdf(dirout(outS, "Cluster_HM_",x, ".pdf"), width=10, height=min(29, nrow(cllDiffSummary[rank < 20])/10))
-      DoHeatmap(pbmc, genes.use=cllDiffSummary[rank < 20][order(up)]$gene,order.by.ident=TRUE,slim.col.label=TRUE,remove.key=TRUE)
-      dev.off()
+      DoHeatmap(pbmc, genes.use=cllDiffSummary[rank < 20][order(up)]$gene,slim.col.label=TRUE,remove.key=TRUE)
+      ggsave(dirout(outS, "Cluster_HM_",x, ".jpg"), width=10, height=max(7,min(29, nrow(cllDiffSummary[rank < 20])/10)))
     }, silent=TRUE)
   }
 }

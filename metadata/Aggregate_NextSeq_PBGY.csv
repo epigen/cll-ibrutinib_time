@@ -1,0 +1,3 @@
+library_id,molecule_h5
+HiSeq,$PROCESSED/cll-time_course/results/cellranger_count/LiveBulk_PBGY_30d_10xTK118s/outs/molecule_info.h5
+NextSeq,$PROCESSED/cll-time_course/results/cellranger_count/LiveBulk_PBGY_30d_10xTK118s1/outs/molecule_info.h5

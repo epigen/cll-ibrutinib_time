@@ -31,3 +31,11 @@ sbatch --job-name="10x aggr cll_time_series" --ntasks=9 --mem=180000 --partition
 sbatch --job-name="10x aggr Day 30 dev" --ntasks=3 --mem=180000 --partition=develop \
     --wrap="cellranger aggr --id=inclDay30_2 --normalize=none --csv=$CODEBASE/cll-time_course/metadata/Aggregate_inclDay30.csv" \
     --output="inclDay30_2.log"
+
+sbatch --job-name="10x aggr NextSeq PT" --ntasks=3 --mem=180000 --partition=longq \
+    --wrap="cellranger aggr --id=NextSeq_PT --normalize=none --csv=$CODEBASE/cll-time_course/metadata/Aggregate_NextSeq_PT.csv" \
+    --output="NextSeq_PT.log"
+
+sbatch --job-name="10x aggr NextSeq PBGY" --ntasks=3 --mem=180000 --partition=longq \
+    --wrap="cellranger aggr --id=NextSeq_PBGY --normalize=none --csv=$CODEBASE/cll-time_course/metadata/Aggregate_NextSeq_PBGY.csv" \
+    --output="NextSeq_PBGY.log"

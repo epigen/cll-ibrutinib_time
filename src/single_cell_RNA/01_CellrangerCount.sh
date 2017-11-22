@@ -80,7 +80,7 @@ do
     echo $file
     sbatch --job-name="10X $file" --ntasks=12 --mem=180000 --partition=longq --time=3-00:00:00 \
       --wrap="cellranger count --id=$file --transcriptome=/home/nfortelny/resources_nfortelny/10X_Genomics/refdata-cellranger-GRCh38-1.2.0/ --fastqs=${inPath}/${file} --cells=10000 --localcores=12 --nopreflight" \
-          --output="$PROCESSED/10x_datasets/logs/${file}.log"    
+          --output="${file}.log"    
 done
 
 
@@ -99,5 +99,5 @@ do
     echo $file
     sbatch --job-name="10X $file" --ntasks=1 --mem=180000 --partition=longq --cpus-per-task=12 --time=7-00:00:00 \
       --wrap="cellranger count --id=$file --transcriptome=/home/nfortelny/resources_nfortelny/10X_Genomics/refdata-cellranger-GRCh38-1.2.0/ --fastqs=${inPath}/${file} --cells=10000 --localcores=12 --nopreflight" \
-          --output="$PROCESSED/10x_datasets/logs/${file}.log"    
+          --output="${file}.log"    
 done
