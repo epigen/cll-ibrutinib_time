@@ -1,6 +1,7 @@
 module unload R/3.2.3
 module unload R/3.3.2
 module unload gcc/4.8.2
+module unload gcc/6.1.0
 module load gcc/7.1.0
 module load R/3.4.0
 

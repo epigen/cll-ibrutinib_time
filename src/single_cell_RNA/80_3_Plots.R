@@ -166,6 +166,56 @@ ggplot(pDat, aes(x=factor(Timepoint), fill=Patient, y=nUMI)) + geom_boxplot(outl
 ggsave(dirout(out, "1_Umi_Count_AfterFiltering.pdf"), height=7, width=7)
 
 
+##########################
+# FIGURE 1_1 MARKER GENES #
+##########################
+
+# FIGURE S1A: FACS counts ------------------------------------------------
+pDat <- fread(dirout("14_scRNA_FACS_day30/FACS_Data.tsv"))
+pDat[,cellType := cleanCells(cellType)]
+(facsP <- ggplot(pDat, aes(x=count*100, y=value, color=cellType)) + geom_point(size=3) + ylab("FACS") + xlab("scRNA") +
+   scale_color_discrete(name="Cell type") + xlab("Single cell RNA percentage") + ylab("FACS percentage"))
+ggsave(dirout(out, "1_1_FACS.pdf"), width=8, height=7, plot= facsP + theme_bw(24))
+write.table(data.table(
+  Spearman = cor(pDat$count, pDat$value, method="spearman"),
+  Pearson = cor(pDat$count, pDat$value, method="pearson")
+), file=dirout(out, "1_1_Correlation.tsv"), sep="\t")
+
+
+# FIGURE S1B-D: SPECIFIC MARKER GENES ---------------------------------------------------
+gPlots <- list()
+for(gg in c("CD79A", "CD3D", "NKG7", "CD14", "FCGR3A")){
+  pDat <- data.table(pbmcFull@tsne.rot, Expression = pbmcFull@data[gg,])
+  gPlots[[gg]] <- ggplot(pDat, aes(x=tSNE_1, y=tSNE_2)) + 
+    geom_point(alpha = 0.5, aes(color=Expression)) +
+    #     geom_point(data=rbind(pDat[Expression == 0][1], pDat[Expression > 0]), aes(color=Expression)) +
+    scale_color_gradient(low="grey", high = "blue") +
+    theme_bw(12) + guides(color=F) + ggtitle(gg) + xlim(-40, 40) +
+    theme(plot.title=element_text(size=24)) +
+    xlab("t-SNE dimension 1") + ylab("t-SNE dimension 2")
+  ggsave(dirout(out, "1_1_",gg,".pdf"), height=7, width=7)
+  ggsave(dirout(out, "1_1_",gg,".jpg"), height=7, width=7)
+}
+gPlots[["FACS"]] <- facsP + theme_bw(12) + guides(color=F) + ggtitle("  ") + theme(plot.title=element_text(size=24))
+(p <- grid.arrange(grobs=gPlots, ncol=3))
+# ggsave(dirout(out, "1_Patient_Tsne2.pdf"), height=7, width=7, plot=p)
+ggsave(dirout(out, "1_1_Markers.jpg"), height=7, width=10, plot=p)
+
+
+pDat <- data.table(pbmcFull@data.info[,c("sample", "CellType")], as.matrix(t(pbmcFull@data[c("CD79A", "CD3D", "NKG7", "CD14", "FCGR3A"),])))
+pDat[,sample := gsub("30", "030", cleanPatients(sample))]
+pDat[,sample := gsub("d0$", "d000", cleanPatients(sample))]
+pDat[,CellType := cleanCells(CellType)]
+pDat <- pDat[!is.na(CellType)]
+pDat <- data.table(melt(pDat, id.vars=c("sample", "CellType")))
+pDat <- pDat[,.(Expression = mean(value)), by=c("sample", "CellType", "variable")]
+pDat[,Expression := Expression - min(Expression,na.rm=T), by=c("variable")]
+pDat[,Expression := Expression / max(Expression, na.rm=T), by=c("variable")]
+ggplot(pDat, aes(x=sample, y=variable, fill=Expression)) + geom_tile() + facet_grid(. ~ CellType,scales="free", space="free") + 
+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5, size=12)) + guides(fill=FALSE)
+ggsave(dirout(out, "1_1_MarkerMeans.pdf"), height=5, width=12)
+
+
 #############
 # 2. DIFF GENES
 #############
@@ -248,7 +298,7 @@ for(cell in celltypes){
       legend.text=element_text(size=18),
       legend.title=element_text(size=18)
       ) + 
-    scale_color_gradient(name=expression(log[10](q-value)), limits=c(-log10(qvalCutoff), 10), low="darkred", high="red", na.value="lightgrey") + 
+    scale_color_gradient(name=expression(log[10](q-value)), limits=c(-log10(qvalCutoff), 10), low="darkblue", high="limegreen", na.value="lightgrey") + 
     scale_size_continuous(name=expression(log[10](Oddsratio))) +
     facet_grid(. ~ Direction) + xlab("Comparison to day 0") + ylab("")
   ggsave(dirout(out, "3_",cell,"_PathEnr.pdf"), width=10, height=7)
@@ -269,7 +319,7 @@ for(cell in celltypes){
       legend.text=element_text(size=18),
       legend.title=element_text(size=18)
     ) + 
-    scale_color_gradient(name=expression(log[10](q-value)), limits=c(-log10(qvalCutoff), 10), low="darkred", high="red", na.value="lightgrey") + 
+    scale_color_gradient(name=expression(log[10](q-value)), limits=c(-log10(qvalCutoff), 10), low="darkblue", high="limegreen", na.value="lightgrey") + 
     scale_size_continuous(name=expression(log[10](Oddsratio))) +
     facet_grid(. ~ Direction, scales="free") +xlab("Comparison to day 0") + ylab("")
   ggsave(dirout(out, "3_",cell,"_TFEnr.pdf"), width=8, height=7)
@@ -416,42 +466,6 @@ overTime.sig[,CellType := cleanCells(CellType)]
    xlab("Comparison to time point 0") + ylab("Difference over time") + 
    theme(axis.text.x = element_text(angle = 90, hjust=1, vjust=0.5)))
 ggsave(dirout(out, "4_Random_Signatures_Patient_before.pdf"), height=7, width=7)
-
-
-#############
-# FIGURE S1 #
-#############
-
-# FIGURE S1A: FACS counts ------------------------------------------------
-pDat <- fread(dirout("14_scRNA_FACS_day30/FACS_Data.tsv"))
-pDat[,cellType := cleanCells(cellType)]
-(facsP <- ggplot(pDat, aes(x=count*100, y=value, color=cellType)) + geom_point(size=3) + ylab("FACS") + xlab("scRNA") +
-  scale_color_discrete(name="Cell type") + xlab("Single cell RNA percentage") + ylab("FACS percentage"))
-ggsave(dirout(out, "FigureS1A_FACS.pdf"), width=8, height=7, plot= facsP + theme_bw(24))
-write.table(data.table(
-  Spearman = cor(pDat$count, pDat$value, method="spearman"),
-  Pearson = cor(pDat$count, pDat$value, method="pearson")
-), file=dirout(out, "FigureS1A_Correlation.tsv"), sep="\t")
-
-
-# FIGURE S1B-D: SPECIFIC MARKER GENES ---------------------------------------------------
-gPlots <- list()
-for(gg in c("CD79A", "CD3D", "NKG7", "CD14", "FCGR3A")){
-  pDat <- data.table(pbmcFull@tsne.rot, Expression = pbmcFull@data[gg,])
-  gPlots[[gg]] <- ggplot(pDat, aes(x=tSNE_1, y=tSNE_2)) + 
-    geom_point(alpha = 0.5, aes(color=Expression)) +
-    #     geom_point(data=rbind(pDat[Expression == 0][1], pDat[Expression > 0]), aes(color=Expression)) +
-    scale_color_gradient(low="grey", high = "blue") +
-    theme_bw(12) + guides(color=F) + ggtitle(gg) + xlim(-40, 40) +
-    theme(plot.title=element_text(size=24)) +
-    xlab("t-SNE dimension 1") + ylab("t-SNE dimension 2")
-  ggsave(dirout(out, "FigureS1_",gg,".pdf"), height=7, width=7)
-  ggsave(dirout(out, "FigureS1_",gg,".jpg"), height=7, width=7)
-}
-gPlots[["FACS"]] <- facsP + theme_bw(12) + guides(color=F) + ggtitle("  ") + theme(plot.title=element_text(size=24))
-(p <- grid.arrange(grobs=gPlots, ncol=3))
-# ggsave(dirout(out, "1_Patient_Tsne2.pdf"), height=7, width=7, plot=p)
-ggsave(dirout(out, "FigureS1_Markers.jpg"), height=7, width=10, plot=p)
 
 
 #############

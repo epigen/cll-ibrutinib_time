@@ -18,7 +18,7 @@ out <- "11_2_3_CellTypes_UMI_Cutoff/"
 dir.create(dirout(out))
 
 
-cell = "Mono"
+cell = "NK"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 1) {
   stop("Need arguments: 1 - celltype")
@@ -97,9 +97,9 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   
   update <- FALSE
   for(x in clustering.precision){
-    if(is.null(pbmc@data.info[[paste0("ClusterNames_", x)]])){
+    if(is.null(pbmc@meta.data[[paste0("ClusterNames_", x)]])){
       update <- TRUE
-      pbmc <- FindClusters(pbmc, pc.use = 1:10, resolution = x, print.output = 0, save.SNN = T)
+      pbmc <- FindClusters(pbmc, reduction.type="pca", dims.use = 1:10, resolution = x, print.output = 0, save.SNN = T)
       pbmc <- StashIdent(pbmc, save.name = paste0("ClusterNames_", x))
     }
   }
@@ -123,9 +123,18 @@ if(!file.exists(dirout(outS, cell,".RData"))){
 #   ggsave(dirout(out, "PC_Distr_",cell,"_", pc,".pdf"), height=15, width=15)
 # }
 
+SLICE.cellIdentity <- factor(pbmc@meta.data$sample)
+
+
 pbmc@meta.data <- cbind(
   pbmc@meta.data[,grepl("pat_", colnames(pbmc@meta.data)), drop=F],
   pbmc@meta.data[,c("nGene", "nUMI")]
 )
+
+(load(paste(Sys.getenv("CODEBASE"), "slice/data/hs_km.Rda", sep="")))
+SLICE.km <- km
+source(paste0(Sys.getenv("CODEBASE"), "slice/slice.R"))
+source("~/code/10x_datasets/src/FUNC_SLICE.R", echo=TRUE)
+
 
 source("src/single_cell_RNA/FUNC_Seurat2.R", echo=TRUE)

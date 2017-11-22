@@ -234,14 +234,19 @@ for(cell in c("All", unique(res$cellType))){
 
 atac.signaling.genes <- fread(dirout("cll-time_course.ligand-receptor_repertoire.CLL.gene_level.sig_only.timepoint_mean.clustermap.csv"))$V1
 ramilowski.rec_lig <- fread("~/resources_nfortelny/PairsLigRec_Ramilowski_NatComm_2015.txt")
+
+outSig <- paste0(out, "Signaling/")
+dir.create(dirout(outSig))
+# ANALYSIS FOR EACH GENE SEPARATELY --------------------------------------
+
 signaling.genes <- unique(c(atac.signaling.genes, ramilowski.rec_lig$Ligand.ApprovedSymbol, ramilowski.rec_lig$Receptor.ApprovedSymbol)) 
 signaling.genes <- unique(c(signaling.genes, unique(res[grepl("NFK",gene) | grepl("^CC[LR]\\d+$", gene) | grepl("^CXC[RL]\\d+$", gene) | grepl("^CD\\d+\\w?$", gene)]$gene)))
-
 res.reclig <- res[gene %in% signaling.genes]
 res.reclig[, significant := any(qvalue < 0.05) | abs(logFC) > 0.5, by= "gene"]
 res.reclig[, significant2 := any(qvalue < 0.05) | abs(logFC) > 1, by= "gene"]
-
-res.reclig[,cellPat := gsub("d30", "d030", cellPat)]
+res.reclig[,patient := gsub("d30", "d030", patient)]
+res.reclig[,patient := gsub("d0$", "d000", patient)]
+write.table(res.reclig, file=dirout(outSig, "RecLig.tsv"), sep="\t", quote=F,row.names=F)
 
 # order groups by similarity (of OR)
 if(length(unique(res.reclig$gene)) >= 2){
@@ -252,28 +257,105 @@ if(length(unique(res.reclig$gene)) >= 2){
     res.reclig$gene <- factor(res.reclig$gene, levels=hclustObj$labels[hclustObj$order])
   }, silent=T)
 }
+ggplot(res.reclig[significant == TRUE], aes(x=patient, y=gene, color=logFC, size=logqval)) + geom_point() + 
+  theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue") +
+  facet_grid(. ~ cellType, scale="free", space="free")
+ggsave(dirout(outSig, "Receptor_Ligand_all.pdf"), height=29, width=15)
 
-  
-ggplot(res.reclig[significant == TRUE], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
-ggsave(dirout(out, "Receptor_Ligand_all.pdf"), height=29, width=15)
-
-ggplot(res.reclig[significant2 == TRUE], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
-ggsave(dirout(out, "Receptor_Ligand_Strict_all.pdf"), height=29, width=15)
+ggplot(res.reclig[significant2 == TRUE], aes(x=patient, y=gene, color=logFC, size=logqval)) + geom_point() + 
+  theme_bw(24) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue") +
+  facet_grid(. ~ cellType, scale="free", space="free")
+ggsave(dirout(outSig, "Receptor_Ligand_Strict_all.pdf"), height=29, width=15)
 
 for(ct in unique(res.reclig$cellType)){
   ggplot(res.reclig[significant == TRUE & cellType == ct], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
     theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
-  ggsave(dirout(out, "Receptor_Ligand_",ct,".pdf"), height=29, width=6)
+  ggsave(dirout(outSig, "Receptor_Ligand_",ct,".pdf"), height=29, width=6)
   
   ggplot(res.reclig[significant2 == TRUE & cellType == ct], aes(x=cellPat, y=gene, color=logFC, size=logqval)) + geom_point() + 
     theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_gradient2(high="red", mid="white", low="blue")
-  ggsave(dirout(out, "Receptor_Ligand_Strict_",ct,".pdf"), height=25, width=6)
+  ggsave(dirout(outSig, "Receptor_Ligand_Strict_",ct,".pdf"), height=25, width=6)
 }
 
 
-# ACTUALLY LOOK AT INTERACTIONS -------------------------------------------
+
+# Plot expression values of these genes -------------------------------------------
+
+genes <- levels(res.reclig[significant2 == TRUE][order(logFC)]$gene)
+(load(dirout("10_Seurat_raw/inclDay30_noIGHLK_negbinom/", "inclDay30_noIGHLK.RData")))
+metaDat <- data.table(pbmc@data.info, keep.rownames=T)[nUMI > 1000 & nUMI < 3000]
+metaDat[, sample := gsub("d0", "d000", sample)]
+metaDat[, sample := gsub("d30", "d030", sample)]
+dat2 <- pbmc@data[,metaDat$rn]
+dat2 <- cbind(metaDat[,c("sample", "CellType"), with=T], data.table(as.matrix(t(dat2[unique(genes),]))))
+dat3 <- melt(dat2, id.vars=c("sample", "CellType"))
+dat3 <- dat3[,mean(value), by=c("sample", "CellType", "variable")]
+dat3[, V1_norm := scale(V1), by="variable"]
+dat3$variable <- factor(dat3$variable, levels=genes)
+
+ggplot(dat3, aes(x=sample, y=variable, fill=V1)) + geom_tile() + facet_grid(. ~ CellType,scales="free", space="free") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5)) + theme(axis.text.y=element_text(size=9)) +
+  scale_fill_gradient2(low="blue", mid="white", high="red")
+ggsave(dirout(outSig, "Rec_Expr.pdf"), height=29, width=15)
+
+ggplot(dat3, aes(x=sample, y=variable, fill=V1_norm)) + geom_tile() + facet_grid(. ~ CellType,scales="free", space="free") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5)) + theme(axis.text.y=element_text(size=9)) +
+  scale_fill_gradient2(low="blue", mid="white", high="red")
+ggsave(dirout(outSig, "Rec_Expr_norm.pdf"), height=29, width=15)
+
+
+
+
+# Look at interactions ----------------------------------------------------
+dat2 <- pbmc@data[signaling.genes[signaling.genes %in% row.names(pbmc@data)],metaDat$rn]
+dat2 <- cbind(metaDat[,c("sample", "CellType"), with=T], data.table(as.matrix(t(dat2))))
+dat3 <- melt(dat2, id.vars=c("sample", "CellType"))
+dat3 <- dat3[,mean(value), by=c("sample", "CellType", "variable")]
+dat3 <- dat3[!is.na(CellType)]
+dat3 <- dat3[,V1 := V1-min(V1,na.rm=TRUE), by="variable"]
+dat3 <- dat3[,V1 := V1/max(V1,na.rm=TRUE), by="variable"]
+
+recHits <- res.reclig[significant == TRUE]
+i <- 1
+cellScores <- data.table()
+for(i in 1:nrow(recHits)){  
+  g <- recHits[i]$gene
+  int <- ramilowski.rec_lig[Receptor.ApprovedSymbol == g | Ligand.ApprovedSymbol == g]
+  int <- unique(union(int$Receptor.ApprovedSymbol, int$Ligand.ApprovedSymbol))
+  int <- int[!int == g]
+  int <- int[int %in% rownames(pbmc@data)]
+  if(length(int) > 0){
+    cellScores <- rbind(cellScores,data.table(
+      dat3[variable %in% int & sample == recHits[i]$patient][,mean(V1,na.rm=TRUE),by="CellType"]
+      , row=i))
+  } else {
+    cellScores <- rbind(cellScores,data.table(CellType = "Mono", V1=NA, row=i))
+  }
+}
+cellScores <- dcast.data.table(cellScores, row ~ CellType, value.var="V1")
+id.vars <- c("gene", "logFC", "patient", "cellType")
+recHits <- cbind(recHits[,id.vars, with=F], cellScores[,-"row",with=F])
+recHits <- melt(recHits, id.vars=id.vars)
+recHits <- recHits[!is.na(value)]
+recHits[, direction := ifelse(logFC > 0, "up", "down")]
+
+recSum <- recHits[,mean(value), by=c("patient", "cellType", "variable", "direction")]
+recSum[,pat := gsub("([A-Z]+)_d(\\d+)", "\\1", patient)]
+recSum[,timepoint := gsub("([A-Z]+)_d(\\d+)", "\\2", patient)]
+recSum[timepoint == "150", timepoint := "120"]
+
+cellTypes <- c("CD4", "CD8", "Mono", "CLL")
+recSum <- recSum[variable %in% cellTypes & cellType %in% cellTypes]
+
+ggplot(recSum[direction== "up"], aes(x=cellType, y=variable, fill=V1))+ 
+  geom_tile() + facet_grid(pat ~ timepoint) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
+ggsave(dirout(outSig, "SignalingNetwork_up.pdf"), height=7, width=7)
+
+ggplot(recSum[direction== "down"], aes(x=cellType, y=variable, fill=V1))+ 
+  geom_tile() + facet_grid(pat ~ timepoint) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
+ggsave(dirout(outSig, "SignalingNetwork_down.pdf"), height=7, width=7)
 
 # table(ramilowski.rec_lig$Pair.Evidence)
 # table(is.na(ramilowski.rec_lig$Pair.Evidence))
