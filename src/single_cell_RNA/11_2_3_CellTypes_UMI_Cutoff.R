@@ -134,7 +134,7 @@ pbmc@meta.data <- cbind(
 (load(paste(Sys.getenv("CODEBASE"), "slice/data/hs_km.Rda", sep="")))
 SLICE.km <- km
 source(paste0(Sys.getenv("CODEBASE"), "slice/slice.R"))
-source("~/code/10x_datasets/src/FUNC_SLICE.R", echo=TRUE)
+source("~/code/10x_datasets/src/FUNC_SLICE2.R", echo=TRUE)
 
 
 source("src/single_cell_RNA/FUNC_Seurat2.R", echo=TRUE)
