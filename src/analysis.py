@@ -1413,10 +1413,14 @@ def transcription_factor_accessibility(
 
     tfs = [
         "NFKB",
-        "PU1", "ATF2", "ATF3", "BATF", "NFIC", "IRF4", "RUNX3", "PAX5", "BCL11A", "JUN", "FOS", "IRF1", "IRF3",
-        "POL2", "CTCF", "SP1", "SP2", "ELK1", "ELK4", "STAT1", "STAT3", "STAT5",
+        "BATF", "PU1", "EBF1", "IKZF1", "PAX5", "ATF2", "ATF3", "POU2F2", "NFATC1", "FOXM1", "NFIC", "MTA3", "MEF2A", "MEF2C", "TCF3",
+        "RUNX3", "BCL11A", "BCL3", "JUN", "FOS", "IRF1", "IRF3", "IRF4",
+        "POL2", "CTCF", "SP1", "SP2", "ELK1", "ELK4", "STAT1", "STAT3", "STAT5A",
         "GATA1", # "REST",
         "NANOG", "POU5F", # "SOX2"
+
+        # from scRNA-seq
+        "GTF2B", "MBD4", "TAF1",
     ]
 
     all_res = pd.DataFrame()
@@ -1554,10 +1558,10 @@ def transcription_factor_accessibility(
         p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type] = scipy.stats.zscore(
             p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type], axis=1)
 
-    g = sns.clustermap(p_z, col_cluster=False, z_score=0, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"})
+    g = sns.clustermap(p_z - p_z.mean(0), col_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, robust=True)
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
-    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.sorted.z_score_per_cell_type.svg"), dpi=300, bbox_inches="tight")
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.sorted.z_score_per_cell_type.minus_mean.svg"), dpi=300, bbox_inches="tight")
 
     for cell_type in p.columns.get_level_values("cell_type").unique():
         pp = p.loc[:, p.columns.get_level_values("cell_type") == cell_type]
@@ -1569,6 +1573,56 @@ def transcription_factor_accessibility(
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
         g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
         g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.{}_only.sorted.z_score.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+        pp_z = p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type]
+        g2 = sns.clustermap(pp_z - pp_z.mean(0), col_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, robust=True, metric="correlation")
+        g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+        g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+        g2.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.{}_only.sorted.z_score.minus_mean.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+    # plot mean TF accesibility per cell type
+    tf_mean = p.T.groupby(['cell_type']).mean().T
+    g = sns.clustermap(tf_mean.iloc[g2.dendrogram_row.reordered_ind, :], col_cluster=False, row_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, robust=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.tf_global_accessibility_per_cell_type.svg"), dpi=300, bbox_inches="tight")
+    g = sns.clustermap(tf_mean.iloc[g2.dendrogram_row.reordered_ind, :],
+        col_cluster=False, row_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, robust=True, z_score=1, cmap="PuOr_r")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.tf_global_accessibility_per_cell_type.zscore.svg"), dpi=300, bbox_inches="tight")
+
+    # plot binding sites per TF
+    tf_n = all_res[['transcription_factor', "binding_sites"]].drop_duplicates().set_index('transcription_factor').drop('background', axis=0)
+    tf_n = tf_n.loc[tf_mean.iloc[g2.dendrogram_row.reordered_ind, :].index, :]
+
+    g = sns.clustermap(tf_n,
+        col_cluster=False, row_cluster=False, rasterized=False, square=True, cbar_kws={"label": "TFBS number per TF"}, cmap="Greens")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.tfbs_per_tf.svg"), dpi=300, bbox_inches="tight")
+
+
+    # investigate expression of TFs
+    # try to get it again based on cross-patient differences
+    expr = pd.read_csv(os.path.join(
+        "results", "single_cell_RNA", "13_4_Overtime_nUMI_Cutoff", "SigGenes_overTime.tsv"), sep="\t")
+    # expr2 = expr.loc[expr['qvalue'] < 0.05]
+
+    m_fc = expr.loc[(expr['gene'].isin(tfs)) & (expr['cellType'] == "CLL"), :].groupby('gene')['logFC'].apply(lambda x: max(abs(x)))
+    s = (expr.loc[(expr['gene'].isin(tfs)) & (expr['cellType'] == "CLL"), :].groupby('gene')['logFC'].mean() > 0).astype(int).replace(0, -1)
+    fc = (m_fc * s).sort_values()
+    p = expr.loc[(expr['gene'].isin(tfs)) & (expr['cellType'] == "CLL"), :].groupby('gene')['pvalue'].min().sort_values()
+
+    fig, axis = plt.subplots(1, 1, figsize=(3, 3))
+    axis.scatter(fc.loc[p.index], -np.log10(p), alpha=0.5)
+    for tf in p.index:
+        axis.text(fc.loc[tf], -np.log10(p.loc[tf]), tf, color="black")
+    axis.set_xlim(-fc.abs().max() - 1, fc.abs().max() + 1)
+    axis.set_xlabel("log2(fold-change)")
+    axis.set_ylabel("-log10(min(p-value))")
+    fig.savefig(os.path.join(output_dir, "scRNA-seq_expression.tfs.min_patients.signed_fold_change.svg"), dpi=300, bbox_inches="tight")
+
 
 
 def correlation_to_bcell(analysis):
@@ -2108,57 +2162,49 @@ def scrna_comparison(analysis):
 
     scrna_diff['intercept'] = 1
     analysis.expression = scrna_diff[['gene', 'intercept']].drop_duplicates().set_index("gene")
-    differential_enrichment(
-        analysis,
-        scrna_diff2.set_index("gene_name"),
-        data_type="RNA-seq",
-        output_dir=output_dir,
-        output_prefix="scrna_diff.cross_patient.enrichments",
-        genome="hg19",
-        directional=True,
-        max_diff=10000,
-        sort_var="pvalue",
-        as_jobs=True
-    )
-    differential_enrichment(
-        analysis,
-        scrna_diff2[~scrna_diff2['gene_name'].str.contains("RPL|RP-|RPS|MT-|HLA")].set_index("gene_name"),
-        data_type="RNA-seq",
-        output_dir=output_dir,
-        output_prefix="scrna_diff.cross_patient.enrichments.noRP",
-        genome="hg19",
-        directional=True,
-        max_diff=10000,
-        sort_var="pvalue",
-        as_jobs=True
-    )
-    differential_enrichment(
-        analysis,
-        scrna_diff2[~scrna_diff2['gene_name'].str.contains("RPL|RP-|RPS|MT-|HLA")].set_index("gene_name"),
-        data_type="RNA-seq",
-        output_dir=output_dir,
-        output_prefix="scrna_diff.cross_patient.enrichments.max200pvalue",
-        genome="hg19",
-        directional=True,
-        max_diff=200,
-        sort_var="pvalue",
-        as_jobs=True
-    )
-    differential_enrichment(
-        analysis,
-        scrna_diff2[~scrna_diff2['gene_name'].str.contains("RPL|RP-|RPS|MT-|HLA")].set_index("gene_name"),
-        data_type="RNA-seq",
-        output_dir=output_dir,
-        output_prefix="scrna_diff.cross_patient.enrichments.max200pvalue.noRP",
-        genome="hg19",
-        directional=True,
-        max_diff=200,
-        sort_var="pvalue",
-        as_jobs=True
-    )
 
+    for label1, index in [
+            # ("", scrna_diff2.index),
+            (".noRP", ~scrna_diff2['gene_name'].str.contains("RPL|RP-|RPS|MT-|HLA"))]:
+        for label2, max_diff in [
+                ("", 10000),
+                (".max200pvalue", 200)]:
 
+            prefix = "scrna_diff.cross_patient.enrichments{}{}".format(label1, label2)
 
+            # differential_enrichment(
+            #     analysis,
+            #     scrna_diff2.loc[index, :].set_index("gene_name"),
+            #     data_type="RNA-seq",
+            #     output_dir=output_dir,
+            #     output_prefix=prefix,
+            #     genome="hg19",
+            #     directional=True,
+            #     max_diff=max_diff,
+            #     sort_var="pvalue",
+            #     as_jobs=True)
+            # # wait for jobs to finish
+    
+            collect_differential_enrichment(
+                scrna_diff2.loc[index, :].set_index("gene_name"),
+                directional=True,
+                data_type="RNA-seq",
+                output_dir=output_dir,
+                output_prefix=prefix,
+                permissive=True)
+
+            enrichment_table = pd.read_csv(os.path.join(
+                output_dir, prefix + ".enrichr.csv"))
+
+            plot_differential_enrichment(
+                enrichment_table,
+                "enrichr",
+                data_type="RNA-seq",
+                direction_dependent=True,
+                output_dir=output_dir,
+                comp_variable="comparison_name",
+                output_prefix=prefix,
+                top_n=10)
 
     # try to match scRNA-seq and ATAC-seq
 
@@ -2234,6 +2280,114 @@ def scrna_comparison(analysis):
                 for i, ax in enumerate(axis[:, 0]):
                     ax.set_ylabel(groups.iloc[i])
                 fig.savefig(os.path.join(output_dir, "comparison.{}.{}.{}.scatter.svg".format(cell_type, gene_set_library, metric)), dpi=300, bbox_inches="tight")
+
+
+        # Highlight 1:
+        # TF binding loss in CLL
+
+        # get ATAC-seq LOLA enrichments
+        # curate to get per TF value across cell lines etc...
+        prefix = "accessibility.qnorm_pcafix_cuberoot.p=0.05"
+        lola = pd.read_csv(os.path.join(
+            analysis.results_dir, "cluster_enrichments", prefix + ".lola.csv"))
+        lola = lola[lola['collection'] == "encode_tfbs"]
+        lola['antibody'] = (
+            lola['antibody']
+            .str.replace("_\(.*", "").str.replace("\(.*", "")
+            .str.replace("eGFP-", "").str.replace("HA-", "")
+
+            .str.replace("-C20", "").str.replace("-N19", "")
+            .str.replace("_C9B9", "").str.replace("-4H8", "")
+            .str.replace("-110", "")
+
+            .str.replace("alpha", "").str.replace("gamma", "")
+
+            .str.replace("-", "")
+        ).str.upper()
+
+        # get maximum across ENCODE ChIP-seq sets
+        lola_red = lola.groupby(['comparison_name', 'direction', 'antibody'])['pValueLog', 'logOddsRatio'].mean()
+        lola_red['data_type'] = "ATAC-seq"
+        lola_red = lola_red.rename(columns={'pValueLog': 'log_p_value', 'logOddsRatio': 'combined_score'})
+
+        # get scRNA-seq Enrichr enrichments
+        label1 = ".noRP"
+        label2 = ""
+        prefix = "scrna_diff.cross_patient.enrichments{}{}".format(label1, label2)
+        enrichment_table = pd.read_csv(os.path.join(output_dir, prefix + ".enrichr.csv"))
+
+        # from ENCODE_ChIP-seq database
+        encode = enrichment_table[enrichment_table['gene_set_library'] == 'ENCODE_TF_ChIP-seq_2015']
+
+        # curate
+        encode['tf'] = (
+            encode['description']
+            .str.replace("_.*", "")
+            .str.replace("eGFP-", "")
+            .str.replace("HA-", "")
+            .str.replace("phospho.*", ""))
+        # get maximum across ENCODE ChIP-seq sets
+        encode['log_p_value'] = -np.log10(encode['p_value'])
+        encode_red = encode.groupby(['comparison_name', 'direction', 'tf'])['log_p_value', 'combined_score'].mean()
+        encode_red['data_type'] = "scRNA-seq"
+
+        # join and compare
+        joint = pd.concat([lola_red, encode_red])
+        for metric in ['log_p_value', 'combined_score']:
+            
+
+            # scatter
+            fig, axis = plt.subplots(1, 2, figsize=(4, 3))
+            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.CLL_down.scatter.svg"), dpi=300, bbox_inches="tight")
+            
+            # barplots
+            l = lola_red.loc[('CLL_down', 'all')].sort_values('log_p_value', ascending=False).head(20).reset_index()
+            e = encode_red.loc[('CLL', 'down')].sort_values('log_p_value', ascending=False).head(20).reset_index()
+            fig, axis = plt.subplots(1, 2, figsize=(4, 3))
+            sns.barplot(data=l, x="log_p_value", y="antibody", orient="horizontal", color=sns.color_palette("colorblind")[0], ax=axis[0])
+            sns.barplot(data=e, x="log_p_value", y="tf", orient="horizontal", color=sns.color_palette("colorblind")[0], ax=axis[1])
+            sns.despine(fig)
+            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.CLL_down.barplot.svg"), dpi=300, bbox_inches="tight")
+
+            # heatmaps
+            piv = pd.pivot_table(
+                data=joint.reset_index().dropna(),
+                index='antibody', columns=['data_type', 'comparison_name', 'direction'],
+                values=metric, fill_value=0).replace(np.inf, 600)
+
+            for label, z_score in [("", None), ("z0", 0)]:
+                g = sns.clustermap(piv, z_score=z_score, rasterized=True)
+                g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+                g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=3)
+                g.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.{}.heatmap.{}.svg".format(metric, label)), dpi=300, bbox_inches="tight")
+
+
+        # follow with ATAC-seq in-depth analysis
+
+
+
+        # Highlight 2:
+        # CD8 cells activation vs apoptosis reduction
+
+
+        # plot expression of some genes enriched
+        expr = scrna_diff2.loc[~scrna_diff2['gene_name'].str.contains("RPL|RP-|RPS|MT-|HLA"), :]
+
+
+
+
+        # Highlight 3:
+        # Cytokine/receptor repertoire changes across cell types
+
+        # include FACS
+
+
+        # Highlight 4:
+        # Within and between cell type temporal dynamics
+
+
+
+
 
 
 if __name__ == '__main__':
