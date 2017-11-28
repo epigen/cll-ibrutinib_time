@@ -105,7 +105,7 @@ def main():
 
 
     # Time Series Analysis
-    matrix_file = os.path.abspath(os.path.join("results", analysis.name + ".accessibility.annotated_metadata.csv")
+    matrix_file = os.path.abspath(os.path.join("results", analysis.name + ".accessibility.annotated_metadata.csv"))
     cell_types = ['Bcell', 'CD4', 'CD8', 'CLL', 'NK', 'Mono']
     gp_output_dir = os.path.join(analysis.results_dir, "gp_fits")
     mohgp_output_dir = os.path.join(analysis.results_dir, "mohgp_fits")
@@ -115,12 +115,12 @@ def main():
     fit_gaussian_processes(
         analysis.accessibility,
         cell_types=cell_types,
-        matrix_file=matrix_file),
+        matrix_file=matrix_file,
         prefix=prefix)  # wait for jobs to complete
 
     analysis.fits = gather_gaussian_processes(
         analysis.accessibility,
-        matrix_file=matrix_file),
+        matrix_file=matrix_file,
         prefix=prefix)
     analysis.fits.to_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index=True)
     analysis.fits = pd.read_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index_col=0)
@@ -853,7 +853,7 @@ def gp_linear(
         prefix=prefix)  # wait for jobs to complete
     fits = gather_gaussian_processes(
         analysis.accessibility,
-        matrix_file=matrix_file),
+        matrix_file=matrix_file,
         prefix=prefix)
     fits.to_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index=True)
     fits = pd.read_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index_col=0)
@@ -1907,13 +1907,13 @@ def cytokine_receptor_repertoire(
     for variable, label1 in [("full", "region_level"), ("red", "gene_level")]:
         for ext, label2 in [("", ""), ("_time", ".timepoint_mean")]:
             for z, label3 in [(None, ""), (1, ".zscore")]:
-            m = eval(variable + "_" + "acc" + ext + "_sig")
+                m = eval(variable + "_" + "acc" + ext + "_sig")
 
-            g = sns.clustermap(
-                m.T, col_cluster=True, row_cluster=True, z_score=z,
-                robust=True, xticklabels=False, rasterized=True)
-            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
-            g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
+                g = sns.clustermap(
+                    m.T, col_cluster=True, row_cluster=True, z_score=z,
+                    robust=True, xticklabels=False, rasterized=True)
+                g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+                g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
 
     # for each cell type
     for cell_type in acc.columns.levels[3]:
@@ -2628,7 +2628,6 @@ def scrna_comparison(analysis):
             x=0, y="description", orient="horizontal", palette="YlOrRd", ax=axis)
         sns.despine(fig)
         fig.savefig(os.path.join(output_dir, "atac_vs_rna_enrichr_enrichments.NCI-Nature.CD8_up.joint_zscores.mean_over_std.barplot.svg"), dpi=300, bbox_inches="tight")
-
 
         # plot expression of some genes enriched
         expr = scrna_diff2.loc[~scrna_diff2['gene_name'].str.contains("RPL|RP-|RPS|MT-|HLA"), :]
