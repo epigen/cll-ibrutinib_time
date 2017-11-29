@@ -15,10 +15,11 @@ seurat.thresh.use <- 0.1
 clustering.precision <- seq(0.5, 2.5, 0.4)
 
 out <- "25_Patient_CLL_nUMI_Cutoff/"
+# out <- "25_Patient_CLL/"
 dir.create(dirout(out))
 
 
-cell = "PBGY"
+cell = "PT"
 args = commandArgs(trailingOnly=TRUE)
 if (length(args) < 1) {
   stop("Need arguments: 1 - celltype")
@@ -45,6 +46,7 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   stopifnot(!is.na(cellToKeep.idx))
   str(cellToKeep <- rownames(pbmcOrig@meta.data)[cellToKeep.idx])
   pbmc <- SubsetData(pbmcOrig, cells.use = cellToKeep)
+  table(pbmc@meta.data$sample)
   
   pbmc@meta.data <- pbmc@meta.data[,!grepl("ClusterNames", colnames(pbmc@meta.data))]
   pbmc@meta.data <- pbmc@meta.data[,!grepl("res", colnames(pbmc@meta.data))]
@@ -69,11 +71,16 @@ if(!file.exists(dirout(outS, cell,".RData"))){
   ggsave(dirout(outS, "Cellcounts.pdf"), height=8, width=8)
   write.table(cellCounts, dirout(outS, "Cellcounts.tsv"), sep="\t", quote=F, row.names=F)
   
+  pbmc <- NormalizeData(object = pbmc, normalization.method = "LogNormalize", scale.factor = 10000)
+  
   # PREP DATASET ------------------------------------------------------------
   pbmc <- ScaleData(object = pbmc, vars.to.regress = c("nUMI", "percent.mito"))
-  pbmc <- FindVariableGenes(pbmc, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
+  pbmc <- FindVariableGenes(object = pbmc, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
   pbmc <- RunPCA(pbmc, pc.genes = pbmc@var.genes, do.print = TRUE, pcs.print = 5, genes.print = 5)
   pbmc <- RunTSNE(pbmc, dims.use = 1:10, do.fast = F)
+  
+  ggplot(data.table(pbmc@dr$tsne@cell.embeddings, sample=pbmc@meta.data$sample), aes(x=tSNE_1, y=tSNE_2, color=sample)) + geom_point()
+  table(pbmc@meta.data$sample)
   
   # Clustering
   for(x in clustering.precision){
@@ -117,6 +124,12 @@ if(!file.exists(dirout(outS, cell,".RData"))){
 #     theme(axis.text.x = element_text(angle = 90, hjust = 1))
 #   ggsave(dirout(out, "PC_Distr_",cell,"_", pc,".pdf"), height=15, width=15)
 # }
+
+SLICE.cellIdentity <- factor(pbmc@meta.data$sample)
+(load(paste(Sys.getenv("CODEBASE"), "slice/data/hs_km.Rda", sep="")))
+SLICE.km <- km
+source(paste0(Sys.getenv("CODEBASE"), "slice/slice.R"))
+source("~/code/10x_datasets/src/FUNC_SLICE2.R", echo=TRUE)
 
 
 write.table(data.table(pbmc@meta.data,keep.rownames=TRUE), file=dirout(outS, "MetaData.tsv"), sep="\t", quote=F, row.names=F)

@@ -20,7 +20,7 @@ if(!"pbmcFull" %in% ls()){
   (load(dirout("10_Seurat_raw/inclDay30_noIGHLK_negbinom/inclDay30_noIGHLK.RData")))
   pbmcFull <- pbmc
   rm(list="pbmc")
-  pbmcFull@scale.data <- NULL
+  #pbmcFull@scale.data <- NULL
   pbmcFull@raw.data <- NULL
 }
 
@@ -55,7 +55,6 @@ cleanPatients <- function(v){
 cleanCells <- function(v){
   return(gsub("Mono", "CD14", v))
 }
-
 
 #############
 # FIGURE CellTypes + COUNTS  #
@@ -202,19 +201,57 @@ gPlots[["FACS"]] <- facsP + theme_bw(12) + guides(color=F) + ggtitle("  ") + the
 ggsave(dirout(out, "1_1_Markers.jpg"), height=7, width=10, plot=p)
 
 
-pDat <- data.table(pbmcFull@data.info[,c("sample", "CellType")], as.matrix(t(pbmcFull@data[c("CD79A", "CD3D", "NKG7", "CD14", "FCGR3A"),])))
+
+# AVERAGES OF GENES -------------------------------------------------------
+markerGenes <- c("CD79A", "CD3D","CD3G","CD3A","CD3B","CD4", "CD8A","CD19","CD24","CD68","CST3","GZMB","IL32","TCL1A", "NKG7", "CD14", "FCGR3A", "NCR1", "TRDC","CCR7")
+markerGenes <- markerGenes[markerGenes %in% row.names(pbmcFull@data)]
+pDat <- data.table(pbmcFull@data.info[,c("sample", "CellType")], as.matrix(t(pbmcFull@data[markerGenes,])))
 pDat[,sample := gsub("30", "030", cleanPatients(sample))]
 pDat[,sample := gsub("d0$", "d000", cleanPatients(sample))]
+pDat[,CellType := cleanCells(CellType)]
+pDat[CellType == "NurseLikeCell",CellType := "Nurse"]
+pDat <- pDat[!is.na(CellType)]
+pDat <- data.table(melt(pDat, id.vars=c("sample", "CellType")))
+pDat <- pDat[,.(Expression = mean(value)), by=c("sample", "CellType", "variable")]
+pDat[,Expression := Expression - min(Expression,na.rm=T), by=c("variable")]
+pDat[,Expression := Expression / max(Expression, na.rm=T), by=c("variable")]
+orMT <- t(as.matrix(dcast.data.table(pDat, paste0(sample, CellType) ~ variable, value.var="Expression")[,-"sample",with=F]))
+orMT[is.na(orMT)] <- 1
+hclustObj <- hclust(dist(orMT))
+pDat$variable <- factor(pDat$variable, levels=hclustObj$labels[hclustObj$order])
+ggplot(pDat, aes(x=sample, y=variable, fill=Expression)) + geom_tile() + facet_grid(. ~ CellType,scales="free", space="free") +
+  theme(strip.background=element_rect(fill="grey")) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5, size=6)) + guides(fill=FALSE) + xlab("") + ylab("") +
+  scale_fill_gradient(low="lightgrey", high="blue")
+ggsave(dirout(out, "1_1_MarkerMeans.pdf"), height=7, width=7)
+
+
+# AVERAGES OF GENES (TFs) -------------------------------------------------------
+tfs <- fread(dirout("18_1_PlotSigGeneDetails/TFs.tsv"), header=F)$V1
+tfs <- tfs[tfs %in% row.names(pbmcFull@data)]
+pDat <- data.table(pbmcFull@data.info[,c("sample", "CellType")], as.matrix(t(pbmcFull@data[tfs,])))
+pDat[,sample := gsub("30", "030", cleanPatients(sample))]
+pDat[,sample := gsub("d0$", "d000", cleanPatients(sample))]
+pDat[,patient := gsub("_d\\d+", "", cleanPatients(sample))]
 pDat[,CellType := cleanCells(CellType)]
 pDat <- pDat[!is.na(CellType)]
 pDat <- data.table(melt(pDat, id.vars=c("sample", "CellType")))
 pDat <- pDat[,.(Expression = mean(value)), by=c("sample", "CellType", "variable")]
 pDat[,Expression := Expression - min(Expression,na.rm=T), by=c("variable")]
 pDat[,Expression := Expression / max(Expression, na.rm=T), by=c("variable")]
-ggplot(pDat, aes(x=sample, y=variable, fill=Expression)) + geom_tile() + facet_grid(. ~ CellType,scales="free", space="free") + 
-theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5, size=12)) + guides(fill=FALSE)
-ggsave(dirout(out, "1_1_MarkerMeans.pdf"), height=5, width=12)
+ggplot(pDat[CellType == "CLL"], aes(x=sample, y=variable, fill=Expression)) + geom_tile() + facet_grid(. ~ patient,scales="free", space="free") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5, size=12)) + guides(fill=FALSE)
+ggsave(dirout(out, "1_1_TFs_HM.pdf"), height=5, width=10)
 
+
+# PLOT SPECIFIC TFs -------------------------------------------------------
+pDat <- data.table(pbmcFull@data.info[,c("sample", "CellType")], as.matrix(t(pbmcFull@data[c("NFATC1", "IKZF1"),])))
+pDat[,sample := gsub("30", "030", sample)]
+pDat <- pDat[CellType == "CLL" & grepl("PT", sample)][,-"CellType",with=F]
+(pDat <- melt(pDat,id.vars=c("sample")))
+ggplot(pDat, aes(x=sample, y=value)) + geom_jitter(width=0.1, height=0,alpha=0.2) + geom_violin(aes(fill=sample),alpha=0.5) + facet_grid(.~variable)
+# ggsave(dirout(out, "1_1_Tf_Expression_Scaled.pdf"), height=5, width=10)
+ggsave(dirout(out, "1_1_Tf_Expression_Unscaled.pdf"), height=5, width=10)
 
 #############
 # 2. DIFF GENES
@@ -271,6 +308,7 @@ for(cell in celltypes){
   cll.enr$Direction <- cll.enr[,gsub(".+?0_([up|down])", "\\1",grp)]
   cll.enr[,Direction := paste0(toupper(substr(Direction, 0,1)), substr(Direction, 2, 10))]
   cll.enr[, mLog10Q := pmin(-log10(qval),10)]
+  cll.enr[,patient := gsub("_d\\d+", "", Comparison)]
   qvalCutoff <- 0.05
   
   if(length(unique(cll.enr$Term)) >= 2){
@@ -284,12 +322,13 @@ for(cell in celltypes){
   
   # Figure D: Paths
   cll.enr.path <- cll.enr[database %in% c("NCI-Nature_2016", "Human_Gene_Atlas", "WikiPathways_2016")]
-  cll.enr.path.i <- cll.enr.path[qval < qvalCutoff,.N, by=c("Term", "Direction")]
+  #cll.enr.path.i <- cll.enr.path[qval < qvalCutoff,.N, by=c("Term", "Direction")]
+  cll.enr.path.i <- cll.enr.path[qval < qvalCutoff,.(N=length(unique(patient))), by=c("Term", "Direction")]
   cll.enr.path.i <- dcast.data.table(cll.enr.path.i, Term ~ Direction, value.var="N")
   cll.enr.path.i[is.na(Down), Down := 0]
   cll.enr.path.i[is.na(Up), Up := 0]
   cll.enr.path.i[,diff := Up - Down]
-  ggplot(cll.enr.path[Term %in% tail(cll.enr.path.i[order(abs(diff))], 20)$Term], 
+  ggplot(cll.enr.path[Term %in% tail(cll.enr.path.i[order(abs(diff))], 30)$Term], 
          aes(x=Comparison, y=Term, size=log10(oddsRatio), color=mLog10Q)) + 
     geom_point() + theme_bw(24) + 
     theme(
@@ -301,16 +340,17 @@ for(cell in celltypes){
     scale_color_gradient(name=expression(log[10](q-value)), limits=c(-log10(qvalCutoff), 10), low="darkblue", high="limegreen", na.value="lightgrey") + 
     scale_size_continuous(name=expression(log[10](Oddsratio))) +
     facet_grid(. ~ Direction) + xlab("Comparison to day 0") + ylab("")
-  ggsave(dirout(out, "3_",cell,"_PathEnr.pdf"), width=10, height=7)
+  ggsave(dirout(out, "3_",cell,"_PathEnr.pdf"), width=10, height=10)
   
   # Figure 4D: TFs
   cll.enr.path <- cll.enr[database %in% c("ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X", "Transcription_Factor_PPIs")]
-  cll.enr.path.i <- cll.enr.path[qval < qvalCutoff,.N, by=c("Term", "Direction")]
+  #cll.enr.path.i <- cll.enr.path[qval < qvalCutoff,.N, by=c("Term", "Direction")]
+  cll.enr.path.i <- cll.enr.path[qval < qvalCutoff,.(N=length(unique(patient))), by=c("Term", "Direction")]
   cll.enr.path.i <- dcast.data.table(cll.enr.path.i, Term ~ Direction, value.var="N")
   cll.enr.path.i[is.na(Down), Down := 0]
   cll.enr.path.i[is.na(Up), Up := 0]
   cll.enr.path.i[,diff := Up - Down]
-  ggplot(cll.enr.path[Term %in% tail(cll.enr.path.i[order(abs(diff))], 20)$Term], 
+  ggplot(cll.enr.path[Term %in% tail(cll.enr.path.i[order(abs(diff))], 30)$Term], 
          aes(x=Comparison, y=Term, size=log10(oddsRatio), color=mLog10Q)) + 
     geom_point() + theme_bw(24) + 
     theme(
@@ -322,7 +362,7 @@ for(cell in celltypes){
     scale_color_gradient(name=expression(log[10](q-value)), limits=c(-log10(qvalCutoff), 10), low="darkblue", high="limegreen", na.value="lightgrey") + 
     scale_size_continuous(name=expression(log[10](Oddsratio))) +
     facet_grid(. ~ Direction, scales="free") +xlab("Comparison to day 0") + ylab("")
-  ggsave(dirout(out, "3_",cell,"_TFEnr.pdf"), width=8, height=7)
+  ggsave(dirout(out, "3_",cell,"_TFEnr.pdf"), width=8, height=10)
 }
 
 
@@ -359,6 +399,26 @@ ggplot(otsig,
   theme(axis.text.x = element_text(angle = 90, hjust=1, vjust=0.5, size=12), axis.text.y=element_text(size=12)) + 
   facet_grid(. ~ CellType, scales="free", space="free") 
 ggsave(dirout(out, "4_CLL_Signatures2_All.pdf"),height=15, width=13)
+
+
+# BCELL SIGNATURE ---------------------------------------------------------
+pDat <- sigs.cells
+ggplot(pDat[grepl("PT", sample) & CellType == "CLL"], 
+       aes(x=Bcells_Human_Gene_Atlas, Bcells_NCI.Nature_2016, color=sample)) + 
+  stat_ellipse(alpha=0.5, aes(fill=sample), geom="polygon") +geom_point(alpha=0.5)
+ggsave(dirout(out, "4_B_CellSignature.pdf"))
+
+
+pDat <- sigs.cells[grepl("PT", sample) & CellType == "CLL"][,c("sample", "Bcells_NCI.Nature_2016", "Bcells_WikiPathways_2016", "Bcells_Human_Gene_Atlas")]
+pDat[,sample := gsub("PT_d", "day ", sample)]
+pDat <- melt(pDat, id.vars="sample")
+pDat[,variable := gsub("WikiPathways", "Wiki", gsub("Human ", "", gsub("(\\.|_)", " ", gsub("_20\\d\\d", "", gsub("Bcells_", "", variable)))))]
+pDat[,score := scale(value), by="variable"]
+(p <- ggplot(pDat,aes(x=score, color=sample,group=sample)) + geom_density(size=1) + facet_grid(variable ~ .) + xlim(-4,4) +
+  xlab("Signature") + ylab("Density") + theme_bw(24) + labs(color="P5, CLL"))
+ggsave(dirout(out, "4_B_CellSignature2.pdf"),width=8, height=7, plot=p)
+ggsave(dirout(out, "4_B_CellSignature2_noGuide.pdf"),width=8, height=7, plot=p + guides(color=FALSE))
+
 
 # FIGURE 4F: Ibrutinib signature ------------------------------------------
 sigs.cells[,Timepoint := as.numeric(gsub("d", "", timepoint))]
@@ -526,15 +586,15 @@ ggsave(dirout(out, "7_Clone_Signatures_All.pdf"),height=15, width=13)
 # PT Data
 pbmcPTs <- list()
 pList <- list()
-for(pt in c("PT", "FE", "PBGY", "VZS")){
+for(pt in c("PT", "PBGY")){ #"FE", "PBGY", "VZS")){
   pt2 <- cleanPatients(pt)
   if(is.null(pbmcPTs[[pt]])){
-    (load(dirout("25_Patient_CLL/",pt,"/",pt,".RData")))
+    (load(dirout("25_Patient_CLL_nUMI_Cutoff/",pt,"/",pt,".RData")))
     pbmcPTs[[pt]] <- pbmc
   } else {
     pbmc <- pbmcPTs[[pt]]
   }
-  pDat <- data.table(pbmc@tsne.rot, Timepoint = as.numeric(gsub("\\w+_d(\\d+)", "\\1", pbmc@data.info$sample)))
+  pDat <- data.table(pbmc@dr$tsne@cell.embeddings, Timepoint = as.numeric(gsub("\\w+_d(\\d+)", "\\1", pbmc@meta.data$sample)))
   pList[[pt2]] <- ggplot(pDat, aes(x=tSNE_1, y=tSNE_2, color=factor(Timepoint))) + geom_point(alpha=0.5) +
     scale_color_manual(name="Time point", values=coll.TIME) +
     xlab("t-SNE dimension 1") + ylab("t-SNE dimension 2") 
@@ -542,8 +602,8 @@ for(pt in c("PT", "FE", "PBGY", "VZS")){
 }
 pList <- lapply(pList[sort(names(pList))], function(p) p + guides(color=FALSE) + theme_bw(12))
 pList2 <- lapply(names(pList), function(pn) pList[[pn]] + ggtitle(paste("Patient", pn)) + theme(plot.title=element_text(size=24)))
-(p <- grid.arrange(grobs=pList2, ncol=2))
-ggsave(dirout(out, "7_Clones_All.jpg"), height=7, width=7, plot=p)
+(p <- grid.arrange(grobs=pList2, ncol=1))
+ggsave(dirout(out, "7_Clones_All.jpg"), height=7, width=3.5, plot=p)
 
 # ggplot(otsig[patient %in% c("P1", "P4", "P7") & geneset %in% otsig[, sum(abs(Diff) > 1), by="geneset"][V1 >= 2]$geneset], 
 #        aes(x=paste0(timepoint, "_", CellType), y=geneset, color=Diff, size=pvalue2)) + 

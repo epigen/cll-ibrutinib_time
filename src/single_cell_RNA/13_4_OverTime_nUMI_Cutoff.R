@@ -304,8 +304,6 @@ ggplot(dat3, aes(x=sample, y=variable, fill=V1_norm)) + geom_tile() + facet_grid
 ggsave(dirout(outSig, "Rec_Expr_norm.pdf"), height=29, width=15)
 
 
-
-
 # Look at interactions ----------------------------------------------------
 dat2 <- pbmc@data[signaling.genes[signaling.genes %in% row.names(pbmc@data)],metaDat$rn]
 dat2 <- cbind(metaDat[,c("sample", "CellType"), with=T], data.table(as.matrix(t(dat2))))
@@ -356,6 +354,21 @@ ggplot(recSum[direction== "down"], aes(x=cellType, y=variable, fill=V1))+
   geom_tile() + facet_grid(pat ~ timepoint) + 
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
 ggsave(dirout(outSig, "SignalingNetwork_down.pdf"), height=7, width=7)
+
+
+
+# EXPORT MATRIX OF MEANS --------------------------------------------------
+
+metaDat <- data.table(pbmc@data.info, keep.rownames=T)[nUMI > 1000 & nUMI < 3000]
+dat2 <- pbmc@data[,metaDat$rn]
+dat2 <- cbind(metaDat[,c("sample", "CellType"), with=T], data.table(as.matrix(t(dat2))))
+dat3 <- melt(dat2, id.vars=c("sample", "CellType"))
+dat3 <- dat3[,mean(value), by=c("sample", "CellType", "variable")]
+dat3[, sampleCell := paste0(sample, "_", CellType)]
+dat4 <- dcast.data.table(dat3, variable ~ sampleCell, value.var="V1")
+dMT <- as.matrix(dat4[,-"variable",with=F])
+row.names(dMT) <- dat4$variable
+write.csv(dMT, dirout("MeanMatrix.csv"))
 
 # table(ramilowski.rec_lig$Pair.Evidence)
 # table(is.na(ramilowski.rec_lig$Pair.Evidence))
