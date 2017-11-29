@@ -105,7 +105,7 @@ def main():
 
 
     # Time Series Analysis
-    matrix_file = os.path.abspath(os.path.join("results", analysis.name + ".accessibility.annotated_metadata.csv")
+    matrix_file = os.path.abspath(os.path.join("results", analysis.name + ".accessibility.annotated_metadata.csv"))
     cell_types = ['Bcell', 'CD4', 'CD8', 'CLL', 'NK', 'Mono']
     gp_output_dir = os.path.join(analysis.results_dir, "gp_fits")
     mohgp_output_dir = os.path.join(analysis.results_dir, "mohgp_fits")
@@ -115,12 +115,12 @@ def main():
     fit_gaussian_processes(
         analysis.accessibility,
         cell_types=cell_types,
-        matrix_file=matrix_file),
+        matrix_file=matrix_file,
         prefix=prefix)  # wait for jobs to complete
 
     analysis.fits = gather_gaussian_processes(
         analysis.accessibility,
-        matrix_file=matrix_file),
+        matrix_file=matrix_file,
         prefix=prefix)
     analysis.fits.to_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index=True)
     analysis.fits = pd.read_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index_col=0)
@@ -151,6 +151,9 @@ def main():
         visualize_clustering_assignments(
             analysis.accessibility, analysis.assignments, prefix=clust_prefix,
             output_dir=mohgp_output_dir)
+
+        # export clusters at gene level
+        clusters_to_signatures(assignments)
 
 
     # Linear time
@@ -273,13 +276,13 @@ def main():
     enrichment_table = pd.read_csv(os.path.join(enrichments_dir, prefix + ".lola.csv"))
     plot_lola_enrichments(
         enrichment_table[enrichment_table['comparison_name'].str.contains("_")],
-        top_n=20, comp_variable='comparison_name')
+        top_n=5, comp_variable='comparison_name')
 
     # Figure 2d, 3d-e
     enrichment_table = pd.read_csv(os.path.join(enrichments_dir, prefix + ".enrichr.csv"))
     plot_enrichments(
         enrichment_table[enrichment_table['comparison_name'].str.contains("_")],
-        top_n=10, comp_variable='comparison_name')
+        top_n=5, comp_variable='comparison_name')
 
     # TF analysis
     transcription_factor_accessibility(analysis)
@@ -649,6 +652,7 @@ def visualize_clustering_assignments(
     Visualize discovered feature clusters and observe their temporal dynamics across samples.
     """
 
+    all_signal = pd.DataFrame()
     for cell_type in matrix.columns.get_level_values("cell_type").drop_duplicates():
         print(cell_type)
 
@@ -661,6 +665,12 @@ def visualize_clustering_assignments(
         matrix2 = matrix2.T.groupby(['patient_id', "timepoint"]).mean().T
         tp = pd.Series(matrix2.columns.get_level_values("timepoint").str.replace(
             "d", "").astype(int), index=matrix2.columns).sort_values()
+
+
+        background = matrix.loc[:, matrix.columns.get_level_values(
+            "cell_type") == cell_type].astype(float)
+        background = background.T.groupby(['patient_id', "timepoint"]).mean().T
+
 
         sample_display_names = cell_type + " - " + matrix2.loc[:, tp.index].columns.get_level_values(
             'patient_id') + ", " + matrix2.loc[:, tp.index].columns.get_level_values('timepoint')
@@ -705,6 +715,8 @@ def visualize_clustering_assignments(
             # only variable and with assignments above threshold: mean per timepoint
             matrix_mean = matrix2.loc[regions_assigned.index,
                                     tp.index].T.groupby(level="timepoint").mean()
+            background_mean = background.loc[:,
+                                    tp.index].T.groupby(level="timepoint").mean()
             g = sns.clustermap(
                 matrix_mean,
                 col_colors=[plt.get_cmap("Paired")(i)
@@ -721,10 +733,15 @@ def visualize_clustering_assignments(
 
             # only variable and with assignments above threshold: mean per timepoint, mean per cluster
             cluster_matrix_mean = matrix_mean.T.join(regions_assigned[['cluster_assignment']]).groupby('cluster_assignment').mean().T
+            cluster_background_mean = background_mean.mean(axis=1)
+            cluster_matrix_mean_norm = cluster_matrix_mean.copy()
+            for i in cluster_matrix_mean.columns:
+                cluster_matrix_mean_norm.loc[:, i] = cluster_matrix_mean.loc[:, i] / cluster_background_mean
+
             for z_score, label2, cbar_label in [(None, "", "Mean accessibility"), (1, "z_score.", "Mean accessibility\n(Z-score)")]:
                 g = sns.clustermap(
                     cluster_matrix_mean,
-                    row_cluster=False, col_cluster=col_cluster, z_score=z_score, xticklabels=False, yticklabels=True,
+                    row_cluster=False, col_cluster=col_cluster, z_score=z_score, xticklabels=True, yticklabels=True,
                     rasterized=True, square=True, metric="correlation", robust=True, cbar_kws={"label": cbar_label})
                 g.ax_heatmap.set_xticklabels(
                     g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
@@ -733,6 +750,21 @@ def visualize_clustering_assignments(
                 g.ax_col_dendrogram.set_rasterized(True)
                 g.savefig(os.path.join(output_dir, prefix + "." + cell_type +
                                     ".mohgp.fitted_model.mean_acc.clustermap.cluster_labels.{}.{}only_posterior_above_threshold.svg".format(label, label2)), dpi=300, bbox_inches="tight")
+
+                g = sns.clustermap(
+                    cluster_matrix_mean_norm,
+                    row_cluster=False, col_cluster=col_cluster, z_score=z_score, xticklabels=True, yticklabels=True,
+                    rasterized=True, square=True, metric="correlation", robust=True, cbar_kws={"label": cbar_label})
+                g.ax_heatmap.set_xticklabels(
+                    g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+                g.ax_heatmap.set_yticklabels(
+                    g.ax_heatmap.get_yticklabels(), rotation=0)
+                g.ax_col_dendrogram.set_rasterized(True)
+                g.savefig(os.path.join(output_dir, prefix + "." + cell_type +
+                                    ".mohgp.fitted_model.mean_acc.clustermap.cluster_labels.total_norm{}.{}only_posterior_above_threshold.svg".format(label, label2)), dpi=300, bbox_inches="tight")
+
+        cluster_matrix_mean_norm['cell_type'] = cell_type
+        all_signal = all_signal.append(cluster_matrix_mean_norm)
 
         # Cluster patterns
         # this is a mock of the MOHGP underlying posterior.
@@ -771,6 +803,32 @@ def visualize_clustering_assignments(
                 "only_posterior_above_threshold", "variable", "cluster_means.svg"])), dpi=300, bbox_inches="tight")
 
 
+def clusters_to_signatures(assignments):
+    """
+    Save gene sets in ATAC-seq dynamic clusters to disk to use with scRNA-seq data.
+    """
+
+    for i, cell_type in enumerate(assignments['cell_type'].drop_duplicates()):
+        for cluster in range(5):
+            ass = assignments.loc[
+                (assignments['cell_type'] == cell_type) &
+                (assignments['cluster_assignment'] == cluster), :].sort_values("p_value")
+            if ass.empty:
+                continue
+            print(cell_type, cluster)
+
+            # get genes in cluster
+            all_g = analysis.coverage_annotated.loc[ass.index, "gene_name"].str.split(",").apply(pd.Series).stack().drop_duplicates()
+            top_g = analysis.coverage_annotated.loc[ass.head(200).index, "gene_name"].str.split(",").apply(pd.Series).stack().drop_duplicates()
+            all_g_coding = all_g[(~all_g.str.startswith("LINC")) & (~all_g.str.startswith("LOC")) & (~all_g.str.startswith("MIR"))].str.replace("-AS1", "")
+            top_g_coding = top_g[(~top_g.str.startswith("LINC")) & (~top_g.str.startswith("LOC")) & (~top_g.str.startswith("MIR"))].str.replace("-AS1", "")
+
+            all_g.to_csv(os.path.join("results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_level.csv".format(cell_type, cluster)), index=False)
+            top_g.to_csv(os.path.join("results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_level.top200.csv".format(cell_type, cluster)), index=False)
+            all_g_coding.to_csv(os.path.join("results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_level.only_coding.csv".format(cell_type, cluster)), index=False)
+            top_g_coding.to_csv(os.path.join("results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_leveltop200.only_coding.csv".format(cell_type, cluster)), index=False)
+
+
 def gp_linear(
         analysis,
         prefix="accessibility.qnorm_pcafix_cuberoot.linear_time",
@@ -795,7 +853,7 @@ def gp_linear(
         prefix=prefix)  # wait for jobs to complete
     fits = gather_gaussian_processes(
         analysis.accessibility,
-        matrix_file=matrix_file),
+        matrix_file=matrix_file,
         prefix=prefix)
     fits.to_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index=True)
     fits = pd.read_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index_col=0)
@@ -1054,7 +1112,6 @@ def plot_lola_enrichments(
 
 
     # All cell types and clusters together
-    top_n = 20
     all_samples = enrichment_table.index
     no_cll = enrichment_table[~enrichment_table[comp_variable].str.contains("CLL")].index
 
@@ -1109,7 +1166,7 @@ def plot_lola_enrichments(
             cbar_kws={"label": "-log10(p-value) of enrichment\nof differential regions"}, metric="correlation")
         g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.{}".format(label) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
+        g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.{}.top{}".format(label, top_n) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
 
         # plot sorted heatmap
         g = sns.clustermap(
@@ -1117,7 +1174,7 @@ def plot_lola_enrichments(
             cbar_kws={"label": "-log10(p-value) of enrichment\nof differential regions"}, metric="correlation", col_cluster=False)
         g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.{}.sorted".format(label) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
+        g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.{}.top{}.sorted".format(label, top_n) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
 
         # plot correlation
         g = sns.clustermap(
@@ -1125,7 +1182,7 @@ def plot_lola_enrichments(
             cbar_kws={"label": "-log10(p-value) of enrichment\nof differential regions"})
         g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.{}.corr".format(label) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
+        g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.{}.top{}.corr".format(label, top_n) + ".lola.cluster_specific.svg"), bbox_inches="tight", dpi=300)
 
 
 def plot_enrichments(
@@ -1143,6 +1200,47 @@ def plot_enrichments(
     # enrichment_table["description"] = enrichment_table["description"].str.decode("utf-8")
     enrichment_table["log_p_value"] = (-np.log10(enrichment_table["p_value"])).replace({np.inf: 300})
 
+    # Cell types separately
+    for cell_type in enrichment_table[comp_variable].str.split("_").apply(lambda x: x[0]).unique():
+        for gene_set_library in enrichment_table["gene_set_library"].unique():
+            print(cell_type, gene_set_library)
+            if gene_set_library == "Epigenomics_Roadmap_HM_ChIP-seq":
+                continue
+
+            enr = enrichment_table[
+                (enrichment_table['gene_set_library'] == gene_set_library) &
+                (enrichment_table[comp_variable].str.contains(cell_type))]
+
+            # Normalize enrichments per dataset with Z-score prior to comparing various region sets
+            for comparison_name in enr[comp_variable].drop_duplicates():
+                mask = enr[comp_variable] == comparison_name
+                enr.loc[mask, "z_log_p_value"] = scipy.stats.zscore(enr.loc[mask, "log_p_value"])
+
+            # Plot top_n terms of each comparison in barplots
+            top_data = (
+                enr[enr["gene_set_library"] == gene_set_library]
+                .set_index("description")
+                .groupby(comp_variable)
+                ["log_p_value"]
+                .nlargest(top_n)
+                .reset_index())
+
+            # pivot table
+            enrichr_pivot = pd.pivot_table(
+                enr[enr["gene_set_library"] == gene_set_library],
+                values="z_log_p_value", columns="description", index=comp_variable).fillna(0)
+
+            top = enr[enr["gene_set_library"] == gene_set_library].set_index('description').groupby(comp_variable)['z_log_p_value'].nlargest(top_n)
+            top_terms = top.index.get_level_values('description').unique()
+
+            # plot sorted heatmap
+            g = sns.clustermap(enrichr_pivot[list(set(top_terms))].T, figsize=(max(6, 0.12 * shape[0]), max(6, 0.12 * shape[1])),
+                cbar_kws={"label": "-log10(p-value) of enrichment\nof differential genes"}, metric="correlation", square=True, col_cluster=False)
+            g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+            g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.enrichr.{}.{}.cluster_specific.sorted.svg".format(cell_type, gene_set_library)), bbox_inches="tight", dpi=300)
+
+    # All cell types and clusters together
     for gene_set_library in enrichment_table["gene_set_library"].unique():
         print(gene_set_library)
         if gene_set_library == "Epigenomics_Roadmap_HM_ChIP-seq":
@@ -1150,42 +1248,51 @@ def plot_enrichments(
 
         enr = enrichment_table[enrichment_table['gene_set_library'] == gene_set_library]
 
-        # Normalize enrichments per dataset with Z-score prior to comparing various region sets
-        for comparison_name in enr['comparison_name'].drop_duplicates():
-            mask = enr['comparison_name'] == comparison_name
-            enr.loc[mask, "z_log_p_value"] = scipy.stats.zscore(enr.loc[mask, "log_p_value"])
+        all_samples = enrichment_table.index
+        no_cll = enrichment_table[~enrichment_table[comp_variable].str.contains("CLL")].index
 
-        # Plot top_n terms of each comparison in barplots
-        top_data = (
-            enr[enr["gene_set_library"] == gene_set_library]
-            .set_index("description")
-            .groupby(comp_variable)
-            ["log_p_value"]
-            .nlargest(top_n)
-            .reset_index())
+        for mask, label in [
+            (all_samples, "all_samples"),
+            (no_cll, "no_cll")
+        ]:
+            enr2 = enrichment_table.copy().loc[mask]
 
-        # pivot table
-        enrichr_pivot = pd.pivot_table(
-            enr[enr["gene_set_library"] == gene_set_library],
-            values="z_log_p_value", columns="description", index=comp_variable).fillna(0)
+            # Normalize enrichments per dataset with Z-score prior to comparing various region sets
+            for comparison_name in enr2['comparison_name'].drop_duplicates():
+                mask = enr2['comparison_name'] == comparison_name
+                enr2.loc[mask, "z_log_p_value"] = scipy.stats.zscore(enr2.loc[mask, "log_p_value"])
 
-        top = enr[enr["gene_set_library"] == gene_set_library].set_index('description').groupby(comp_variable)['z_log_p_value'].nlargest(top_n)
-        top_terms = top.index.get_level_values('description').unique()
+            # Plot top_n terms of each comparison in barplots
+            top_data = (
+                enr2[enr2["gene_set_library"] == gene_set_library]
+                .set_index("description")
+                .groupby(comp_variable)
+                ["log_p_value"]
+                .nlargest(top_n)
+                .reset_index())
 
-        # plot clustered heatmap
-        shape = enrichr_pivot[list(set(top_terms))].shape
-        g = sns.clustermap(enrichr_pivot[list(set(top_terms))].T, figsize=(max(6, 0.12 * shape[0]), max(6, 0.12 * shape[1])),
-            cbar_kws={"label": "-log10(p-value) of enrichment\nof differential genes"}, metric="correlation", square=True)
-        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.all_cell_types_clusters" + ".enrichr.{}.cluster_specific.svg".format(gene_set_library)), bbox_inches="tight", dpi=300)
+            # pivot table
+            enrichr_pivot = pd.pivot_table(
+                enr2[enr2["gene_set_library"] == gene_set_library],
+                values="z_log_p_value", columns="description", index=comp_variable).fillna(0)
 
-        # plot sorted heatmap
-        g = sns.clustermap(enrichr_pivot[list(set(top_terms))].T, figsize=(max(6, 0.12 * shape[0]), max(6, 0.12 * shape[1])),
-            cbar_kws={"label": "-log10(p-value) of enrichment\nof differential genes"}, metric="correlation", square=True, col_cluster=False)
-        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.all_cell_types_clusters" + ".sorted.enrichr.{}.cluster_specific.svg".format(gene_set_library)), bbox_inches="tight", dpi=300)
+            top = enr2[enr2["gene_set_library"] == gene_set_library].set_index('description').groupby(comp_variable)['z_log_p_value'].nlargest(top_n)
+            top_terms = top.index.get_level_values('description').unique()
+
+            # plot clustered heatmap
+            shape = enrichr_pivot[list(set(top_terms))].shape
+            g = sns.clustermap(enrichr_pivot[list(set(top_terms))].T, figsize=(max(6, 0.12 * shape[0]), max(6, 0.12 * shape[1])),
+                cbar_kws={"label": "-log10(p-value) of enrichment\nof differential genes"}, metric="correlation", square=True)
+            g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+            g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.all_cell_types_clusters" + ".enrichr.{}.{}.top{}.cluster_specific.svg".format(gene_set_library, label, top_n)), bbox_inches="tight", dpi=300)
+
+            # plot sorted heatmap
+            g = sns.clustermap(enrichr_pivot[list(set(top_terms))].T, figsize=(max(6, 0.12 * shape[0]), max(6, 0.12 * shape[1])),
+                cbar_kws={"label": "-log10(p-value) of enrichment\nof differential genes"}, metric="correlation", square=True, col_cluster=False)
+            g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+            g.fig.savefig(os.path.join(output_dir, "cluster_enrichments.all_cell_types_clusters" + ".sorted.enrichr.{}.{}.top{}.cluster_specific.svg".format(gene_set_library, label, top_n)), bbox_inches="tight", dpi=300)
 
 
     # pivot table
@@ -1214,9 +1321,9 @@ def plot_enrichments(
     top_terms = top.index.get_level_values('description').unique()
 
     # plot correlation
-    shape = enrichr_pivot[list(set(top_terms))].shape
+    shape = enrichr_pivot.shape
     g = sns.clustermap(
-        enrichr_pivot[list(set(top_terms))].T.corr(), square=True,
+        enrichr_pivot.T.corr(), square=True,
         cbar_kws={"label": "Correlation in enrichment\nof differential regions"})
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="right", fontsize="xx-small")
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
@@ -1335,10 +1442,14 @@ def transcription_factor_accessibility(
 
     tfs = [
         "NFKB",
-        "PU1", "ATF2", "ATF3", "BATF", "NFIC", "IRF4", "RUNX3", "BCL11A", "JUN", "FOS", "IRF1", "IRF3",
-        "POL2", "CTCF", "SP1", "SP2", "ELK1", "ELK4", "STAT1", "STAT3", "STAT5",
+        "BATF", "PU1", "EBF1", "IKZF1", "PAX5", "ATF2", "ATF3", "POU2F2", "NFATC1", "FOXM1", "NFIC", "MTA3", "MEF2A", "MEF2C", "TCF3",
+        "RUNX3", "BCL11A", "BCL3", "JUN", "FOS", "IRF1", "IRF3", "IRF4",
+        "POL2", "CTCF", "SP1", "SP2", "ELK1", "ELK4", "STAT1", "STAT3", "STAT5A",
         "GATA1", # "REST",
         "NANOG", "POU5F", # "SOX2"
+
+        # from scRNA-seq
+        "GTF2B", "MBD4", "TAF1",
     ]
 
     all_res = pd.DataFrame()
@@ -1438,6 +1549,7 @@ def transcription_factor_accessibility(
             all_res.loc[(all_res['cell_type'] == cell_type) & (all_res['transcription_factor'] == tf), 'norm_accessibility'] = ((s - b) / b.std()).values
 
     all_res.to_csv(os.path.join(output_dir, "all_factor_binding.normalized.csv"), index=False)
+    all_res = pd.read_csv(os.path.join(output_dir, "all_factor_binding.normalized.csv"))
 
     # Plot
     g = sns.factorplot(data=all_res[all_res['transcription_factor'] == "background"], x="timepoint", y="accessibility", hue="cell_type")
@@ -1476,10 +1588,10 @@ def transcription_factor_accessibility(
         p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type] = scipy.stats.zscore(
             p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type], axis=1)
 
-    g = sns.clustermap(p_z, col_cluster=False, z_score=0, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"})
+    g = sns.clustermap(p_z - p_z.mean(0), col_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, robust=True)
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
-    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.sorted.z_score_per_cell_type.svg"), dpi=300, bbox_inches="tight")
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.sorted.z_score_per_cell_type.minus_mean.svg"), dpi=300, bbox_inches="tight")
 
     for cell_type in p.columns.get_level_values("cell_type").unique():
         pp = p.loc[:, p.columns.get_level_values("cell_type") == cell_type]
@@ -1491,6 +1603,56 @@ def transcription_factor_accessibility(
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
         g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
         g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.{}_only.sorted.z_score.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+        pp_z = p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type]
+        g2 = sns.clustermap(pp_z - pp_z.mean(0), col_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, robust=True, metric="correlation")
+        g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+        g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+        g2.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.{}_only.sorted.z_score.minus_mean.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+    # plot mean TF accesibility per cell type
+    tf_mean = p.T.groupby(['cell_type']).mean().T
+    g = sns.clustermap(tf_mean.iloc[g2.dendrogram_row.reordered_ind, :], col_cluster=False, row_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, robust=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.tf_global_accessibility_per_cell_type.svg"), dpi=300, bbox_inches="tight")
+    g = sns.clustermap(tf_mean.iloc[g2.dendrogram_row.reordered_ind, :],
+        col_cluster=False, row_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, robust=True, z_score=1, cmap="PuOr_r")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.tf_global_accessibility_per_cell_type.zscore.svg"), dpi=300, bbox_inches="tight")
+
+    # plot binding sites per TF
+    tf_n = all_res[['transcription_factor', "binding_sites"]].drop_duplicates().set_index('transcription_factor').drop('background', axis=0)
+    tf_n = tf_n.loc[tf_mean.iloc[g2.dendrogram_row.reordered_ind, :].index, :]
+
+    g = sns.clustermap(tf_n,
+        col_cluster=False, row_cluster=False, rasterized=False, square=True, cbar_kws={"label": "TFBS number per TF"}, cmap="Greens")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.tfbs_per_tf.svg"), dpi=300, bbox_inches="tight")
+
+
+    # investigate expression of TFs
+    # try to get it again based on cross-patient differences
+    expr = pd.read_csv(os.path.join(
+        "results", "single_cell_RNA", "13_4_Overtime_nUMI_Cutoff", "SigGenes_overTime.tsv"), sep="\t")
+    # expr2 = expr.loc[expr['qvalue'] < 0.05]
+
+    m_fc = expr.loc[(expr['gene'].isin(tfs)) & (expr['cellType'] == "CLL"), :].groupby('gene')['logFC'].apply(lambda x: max(abs(x)))
+    s = (expr.loc[(expr['gene'].isin(tfs)) & (expr['cellType'] == "CLL"), :].groupby('gene')['logFC'].mean() > 0).astype(int).replace(0, -1)
+    fc = (m_fc * s).sort_values()
+    p = expr.loc[(expr['gene'].isin(tfs)) & (expr['cellType'] == "CLL"), :].groupby('gene')['pvalue'].min().sort_values()
+
+    fig, axis = plt.subplots(1, 1, figsize=(3, 3))
+    axis.scatter(fc.loc[p.index], -np.log10(p), alpha=0.5)
+    for tf in p.index:
+        axis.text(fc.loc[tf], -np.log10(p.loc[tf]), tf, color="black")
+    axis.set_xlim(-fc.abs().max() - 1, fc.abs().max() + 1)
+    axis.set_xlabel("log2(fold-change)")
+    axis.set_ylabel("-log10(min(p-value))")
+    fig.savefig(os.path.join(output_dir, "scRNA-seq_expression.tfs.min_patients.signed_fold_change.svg"), dpi=300, bbox_inches="tight")
+
 
 
 def correlation_to_bcell(analysis):
@@ -1564,18 +1726,18 @@ def differentiation_assessment(analysis):
         prj = Project(new_config)
         for sample in prj.samples:
             sample.filtered = os.path.join(sample.paths.sample_root, "mapped", sample.name + ".trimmed.bowtie2.filtered.bam")
-        analysis = ATACSeqAnalysis(name="cll-time_course.{}_samples".format(sample_set), prj=prj, samples=prj.samples)
-        # Get consensus peak set from major analysis
-        analysis.set_consensus_sites(os.path.join("results", "cll-time_course_peak_set.bed"))
+        tmp_analysis = ATACSeqAnalysis(name="cll-time_course.{}_samples".format(sample_set), prj=prj, samples=prj.samples)
+        # Get consensus peak set from major tmp_analysis
+        tmp_analysis.set_consensus_sites(os.path.join("results", "cll-time_course_peak_set.bed"))
         # Get coverage values for each peak in each sample
-        analysis.measure_coverage(analysis.samples)
-        analysis.coverage = analysis.coverage.loc[:, ~analysis.coverage.columns.str.contains("D199")]
+        tmp_analysis.measure_coverage(tmp_analysis.samples)
+        tmp_analysis.coverage = tmp_analysis.coverage.loc[:, ~tmp_analysis.coverage.columns.str.contains("D199")]
         # Normalize cell types jointly (quantile normalization)
-        analysis.normalize_coverage_quantiles(samples=[s for s in analysis.samples if "D199" not in s.name])
-        analysis.to_pickle()
+        tmp_analysis.normalize_coverage_quantiles(samples=[s for s in tmp_analysis.samples if "D199" not in s.name])
+        tmp_analysis.to_pickle()
 
-        # Join matrix with CLL samples from major analysis
-        q = accessibility.join(analysis.coverage_qnorm).drop(['chrom', 'start', 'end'], axis=1)
+        # Join matrix with CLL samples from major tmp_analysis
+        q = accessibility.join(tmp_analysis.coverage_qnorm).drop(['chrom', 'start', 'end'], axis=1)
         # Compute correlation
 
         c = q.corr()
@@ -1588,7 +1750,7 @@ def differentiation_assessment(analysis):
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
         g.savefig(os.path.join("results", "differentiation_assessment.{}_together.map.svg".format(sample_set)), dpi=200)
 
-        mask = c.index.str.contains("CLL") | (c.index.str.contains("CB") & c.index.str.contains("NaiveBcell|chedBcell"))
+        mask = c.index.str.contains("d_CLL") | (c.index.str.contains("CB") & c.index.str.contains("NaiveBcell|chedBcell|Tcell"))
         g = sns.clustermap(c.loc[mask, mask], xticklabels=False, figsize=(8 ,8), rasterized=True)
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
         g.savefig(os.path.join("results", "differentiation_assessment.{}_together.relevant.map.svg".format(sample_set)), dpi=200)
@@ -1603,8 +1765,17 @@ def differentiation_assessment(analysis):
         g = sns.factorplot(data=c3.reset_index(), x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False)
         g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.svg".format(sample_set)), dpi=300)
 
+        g = sns.factorplot(data=c3.reset_index(), x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False, sharex=False)
+        g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.svg".format(sample_set)), dpi=300)
 
         data = pd.pivot_table(data=c3.reset_index(), index=['patient_id', 'timepoint', 'cell_type'], columns='healty_subset', values="value")
+        data_z = pd.DataFrame(zscore(data, axis=0), index=data.index, columns=data.columns)
+        data_z = (data - data.mean(0)) / data.std(0)
+
+        g = sns.factorplot(
+            data=pd.melt(data_z.reset_index(), id_vars=['patient_id', 'timepoint', 'cell_type'], var_name="healty_subset"),
+            x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False, sharex=False)
+        g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.zscore.svg".format(sample_set)), dpi=300)
 
 
         from ngs_toolkit.graphics import radar_plot
@@ -1652,6 +1823,10 @@ def cytokine_receptor_repertoire(
         output_dir="{results_dir}/cytokine_receptor"):
     """
     """
+    from bioservices.kegg import KEGG
+    import requests
+    from ngs_toolkit.graphics import barmap
+
     assert hasattr(analysis, "gene_annotation")
 
     if "{results_dir}" in output_dir:
@@ -1669,9 +1844,6 @@ def cytokine_receptor_repertoire(
     lr_genes = lr['ligand'].unique().tolist() + lr['receptor'].unique().tolist()
 
     # Get cell adhesion molecules (CAMs)
-    from bioservices.kegg import KEGG
-    import requests
-
     # Get HGNC id to gene symbol mapping
     url_query = "".join([
         """http://grch37.ensembl.org/biomart/martservice?query=""",
@@ -1735,13 +1907,13 @@ def cytokine_receptor_repertoire(
     for variable, label1 in [("full", "region_level"), ("red", "gene_level")]:
         for ext, label2 in [("", ""), ("_time", ".timepoint_mean")]:
             for z, label3 in [(None, ""), (1, ".zscore")]:
-            m = eval(variable + "_" + "acc" + ext + "_sig")
+                m = eval(variable + "_" + "acc" + ext + "_sig")
 
-            g = sns.clustermap(
-                m.T, col_cluster=True, row_cluster=True, z_score=z,
-                robust=True, xticklabels=False, rasterized=True)
-            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
-            g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
+                g = sns.clustermap(
+                    m.T, col_cluster=True, row_cluster=True, z_score=z,
+                    robust=True, xticklabels=False, rasterized=True)
+                g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+                g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
 
     # for each cell type
     for cell_type in acc.columns.levels[3]:
@@ -1780,51 +1952,81 @@ def cytokine_receptor_repertoire(
 
 
     # Only genes belonging to CAM pathway
-    if cell_type == "CLL":
-        red_acc_time_sig_specific = red_acc_time_sig.loc[
-            (red_acc_time_sig.index.isin(cam_genes)) |
-            (red_acc_time_sig.index.str.startswith("VEG"))]
-        w, h = red_acc_time_sig_specific.shape[0] * 0.12, red_acc_time_sig_specific.shape[1] * 0.12
-        g = sns.clustermap(
-            red_acc_time_sig_specific.T, col_cluster=True, row_cluster=False, z_score=1,
-            figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
-        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
-        g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.gene_level.sig_only.cam_pathway.timepoint_mean.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+    red_acc_time_sig_specific = red_acc_time_sig.loc[
+        (red_acc_time_sig.index.isin(cam_genes)) |
+        (red_acc_time_sig.index.str.startswith("VEG"))]
+    w, h = red_acc_time_sig_specific.shape[0] * 0.12, red_acc_time_sig_specific.shape[1] * 0.12
+    g = sns.clustermap(
+        red_acc_time_sig_specific.T, col_cluster=True, row_cluster=False, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.all_cell_types.gene_level.sig_only.cam_pathway.timepoint_mean.clustermap.svg"), dpi=300, bbox_inches="tight")
 
-        red_acc_time_sig_specific = red_acc_time_sig.loc[
-            (red_acc_time_sig.index.str.startswith("TGF")) |
-            (red_acc_time_sig.index.str.startswith("WNT")) |
-            (red_acc_time_sig.index.str.startswith("NOTCH")) |
-            (red_acc_time_sig.index.str.startswith("NOTCH")) |
-            (red_acc_time_sig.index.str.startswith("TNF")) |
-            (red_acc_time_sig.index.str.startswith("TLR"))]
-        w, h = red_acc_time_sig_specific.shape[0] * 0.12, red_acc_time_sig_specific.shape[1] * 0.12
-        g = sns.clustermap(
-            red_acc_time_sig_specific.T, col_cluster=True, row_cluster=False, z_score=1,
-            figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
-        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
-        g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.gene_level.sig_only.pathways.timepoint_mean.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+    red_acc_time_sig_specific = red_acc_time_sig.loc[
+        (red_acc_time_sig.index.str.startswith("TGF")) |
+        (red_acc_time_sig.index.str.startswith("WNT")) |
+        (red_acc_time_sig.index.str.startswith("NOTCH")) |
+        (red_acc_time_sig.index.str.startswith("NOTCH")) |
+        (red_acc_time_sig.index.str.startswith("TNF")) |
+        (red_acc_time_sig.index.str.startswith("IL")) |
+        (red_acc_time_sig.index.str.startswith("TLR"))]
+    w, h = red_acc_time_sig_specific.shape[0] * 0.12, red_acc_time_sig_specific.shape[1] * 0.12
+    g = sns.clustermap(
+        red_acc_time_sig_specific.T, col_cluster=True, row_cluster=False, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.all_cell_types.gene_level.sig_only.pathways.timepoint_mean.clustermap.svg"), dpi=300, bbox_inches="tight")
 
-        red_acc_time_sig_specific = red_acc_time_sig.loc[
-            (red_acc_time_sig.index.str.startswith("SLC")) |
-            (red_acc_time_sig.index.str.startswith("CD")) |
-            (red_acc_time_sig.index.str.startswith("IL")) |
-            (red_acc_time_sig.index.str.startswith("CXC")) |
-            (red_acc_time_sig.index.str.startswith("CC")) |
-            (red_acc_time_sig.index.str.startswith("CCL"))]
-        w, h = red_acc_time_sig_specific.shape[0] * 0.12, red_acc_time_sig_specific.shape[1] * 0.12
-        g = sns.clustermap(
-            red_acc_time_sig_specific.T, col_cluster=True, row_cluster=False, z_score=1,
-            figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
-        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
-        g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.gene_level.sig_only.cytokine-receptors.timepoint_mean.clustermap.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+    red_acc_time_sig_specific = red_acc_time_sig.loc[
+        (red_acc_time_sig.index.str.startswith("SLC")) |
+        (red_acc_time_sig.index.str.startswith("CD")) |
+        (red_acc_time_sig.index.str.startswith("IL")) |
+        (red_acc_time_sig.index.str.startswith("CXC")) |
+        (red_acc_time_sig.index.str.startswith("CC")) |
+        (red_acc_time_sig.index.str.startswith("CCL"))]
+    w, h = red_acc_time_sig_specific.shape[0] * 0.12, red_acc_time_sig_specific.shape[1] * 0.12
+    g = sns.clustermap(
+        red_acc_time_sig_specific.T, col_cluster=True, row_cluster=False, z_score=1,
+        figsize=(w, h), robust=True, xticklabels=True, rasterized=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="left", fontsize="xx-small")
+    g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.all_cell_types.gene_level.sig_only.cytokine-receptors.timepoint_mean.clustermap.svg"), dpi=300, bbox_inches="tight")
 
 
 
-    variable = fits[(fits['p_value'] < alpha)].index.drop_duplicates()
+    red_acc_time_sig_specific = red_acc_time_sig.loc[
+        (red_acc_time_sig.index.str.startswith("TGF")) |
+        (red_acc_time_sig.index.str.startswith("WNT")) |
+        (red_acc_time_sig.index.str.startswith("NOTCH")) |
+        (red_acc_time_sig.index.str.startswith("NOTCH")) |
+        (red_acc_time_sig.index.str.startswith("TNF")) |
+        (red_acc_time_sig.index.str.startswith("IL")) |
+        (red_acc_time_sig.index.str.startswith("TLR")) |
+        (red_acc_time_sig.index.str.startswith("SLC")) |
+        (red_acc_time_sig.index.str.startswith("CD")) |
+        (red_acc_time_sig.index.str.startswith("IL")) |
+        (red_acc_time_sig.index.str.startswith("CXC")) |
+        (red_acc_time_sig.index.str.startswith("CC")) |
+        (red_acc_time_sig.index.str.startswith("CCL"))]
+
+    m = red_acc_time_sig_specific.loc[:, red_acc_time_sig_specific.columns.get_level_values("cell_type") == "CLL"]
+    g = sns.clustermap(
+        red_acc_time_sig_specific.T, col_cluster=True, row_cluster=False, z_score=1,
+        robust=True, xticklabels=True, rasterized=True)
+
+    for cell_type in acc.columns.levels[3]:
+        m = red_acc_time_sig_specific.loc[:, red_acc_time_sig_specific.columns.get_level_values("cell_type") == cell_type]
+        # w, h = m.shape[0] * 0.3, m.shape[1] * 0.12
+        fig = barmap(
+            m.T.iloc[:, g.dendrogram_col.reordered_ind], z_score=0,
+            figsize=(4, 4), ylims=(-3, 3))
+        fig.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.gene_level.sig_only.all_molecules.timepoint_mean.barmap.allclust.svg".format(cell_type)), dpi=300, bbox_inches="tight")
+
+
+
+    variable = analysis.assignments.index
 
     full_acc_sig = full_acc.loc[
         full_acc.index.get_level_values("index").isin(variable.tolist()),
@@ -1886,7 +2088,6 @@ def cytokine_interplay(analysis):
     acc.index = analysis.accessibility.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
 
     acc_mean_gene = get_gene_level_accessibility(analysis)
-    acc_mean_gene = acc_mean_gene.loc[:, (acc_mean_gene.columns.get_level_values("patient_id") != "KI")]
     acc_mean_gene = acc_mean_gene.T.groupby(['cell_type', 'timepoint']).mean().T
 
     expression_threshold = 0.5
@@ -1946,6 +2147,526 @@ def cytokine_interplay(analysis):
 
     axis[0, 0].set_title("Ligands")
     axis[0, 1].set_title("Receptors")
+
+
+def scrna_comparison(analysis):
+    output_dir = os.path.join("results", "atac_scrna_comparison")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    prefix = "accessibility.qnorm_pcafix_cuberoot.p=0.05"
+
+
+    # Gene expression level
+    # check signatures in scRNA-seq data
+    # get scRNA-seq data grouped by cell type, patient, timepoint
+    df = pd.read_csv("results/single_cell_RNA/MeanMatrix.csv", index_col=0)
+    df.columns = pd.MultiIndex.from_arrays(pd.Series(df.columns).str.split("_").apply(pd.Series).values.T, names=['patient_id', 'timepoint', 'cell_type'])
+    df2 = df.T.groupby(['cell_type', 'timepoint']).mean().T
+    df2 = df2.loc[:,
+        (~df2.columns.get_level_values("cell_type").isin(["NurseLikeCell", "NA"])) &
+        (df2.columns.get_level_values("timepoint").isin(["d0", "d30"]))]
+    df2 = df2.loc[~(df2.sum(axis=1) == 0), :]
+
+    mean_signatures = pd.DataFrame()
+    for i, cell_type in enumerate(assignments['cell_type'].drop_duplicates()):
+        for cluster in range(5):
+            ass = assignments.loc[
+                (assignments['cell_type'] == cell_type) &
+                (assignments['cluster_assignment'] == cluster), :].sort_values("p_value")
+            if ass.empty:
+                continue
+
+            # get genes in cluster
+            top_g = analysis.coverage_annotated.loc[ass.head(200).index, "gene_name"].str.split(",").apply(pd.Series).stack().drop_duplicates()
+            top_g_coding = top_g[(~top_g.str.startswith("LINC")) & (~top_g.str.startswith("LOC")) & (~top_g.str.startswith("MIR"))].str.replace("-AS1", "")
+
+            sig = df2.loc[top_g_coding].mean()
+            sig = sig.reset_index()
+            sig['ATAC-seq_cell_type'] = cell_type
+            sig['cluster'] = cluster
+            mean_signatures = mean_signatures.append(sig, ignore_index=True)
+
+    mean_signatures.to_csv(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.mean_expression.csv"), index=False)
+
+    # Plot signature change with time within cell types for each ATAC-seq cluster
+    piv = pd.pivot_table(data=mean_signatures, index=['cell_type', 'timepoint'], columns=['ATAC-seq_cell_type', 'cluster'])
+
+    # remove effect of different expression mean per timepoint/cell type
+    piv2 = (piv.T / df2.mean()).T
+    # remove effect of different signatures having more/less expressed genes
+    piv3 = (piv2 / piv2.mean(0)) ** 2
+
+    piv3.to_csv(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.mean_expression.normalized.csv"), index=True)
+
+    fig, axis = plt.subplots(1, 5, figsize=(6, 3), sharey=False, gridspec_kw={'width_ratios': [5, 4, 4, 3, 2]})
+    for i, cell_type in enumerate(piv3.index.levels[0]):
+        p = piv3.loc[piv3.index.get_level_values("cell_type") == cell_type, piv3.columns.get_level_values("ATAC-seq_cell_type") == cell_type]
+        p.columns = p.columns.droplevel(0)
+        p = pd.melt(p.reset_index(), id_vars=['cell_type', 'timepoint'])
+        sns.barplot(data=p, x='cluster', y='value', hue='timepoint', ax=axis[i])
+        axis[i].set_ylim((0.5, p['value'].max()))
+        axis[i].set_title(cell_type)
+    fig.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.mean_expression.normalized.barplot.svg"), bbox_inches="tight")
+
+    # get measurements per patient
+    df2 = df.loc[:,
+        (~df.columns.get_level_values("cell_type").isin(["NurseLikeCell", "NA"])) &
+        (df.columns.get_level_values("timepoint").isin(["d0", "d30"]))]
+    df2 = df2.loc[~(df2.sum(axis=1) == 0), :]
+
+
+    # try to get it again based on cross-patient differences
+    scrna_diff = pd.read_csv(os.path.join(
+        "results", "single_cell_RNA", "13_4_Overtime_nUMI_Cutoff", "SigGenes_overTime.tsv"), sep="\t")
+    scrna_diff2 = scrna_diff.loc[scrna_diff['qvalue'] < 0.05]
+    scrna_diff2.groupby('cellType')['gene'].nunique()
+    scrna_diff2['log_pvalue'] = -np.log10(scrna_diff2['pvalue'])
+    scrna_diff2 = scrna_diff2.rename(
+        columns={"logFC": "log2FoldChange", "cellType": "comparison_name", "gene": "gene_name"})
+
+
+
+    # observe some ATAC-seq signatures at the RNA level
+    for i, cell_type in enumerate(["CD4", "CD8", "CLL", "Mono", "NK"]):
+        for cluster in range(5):
+            ass = assignments.loc[
+                (assignments['cell_type'] == cell_type) &
+                (assignments['cluster_assignment'] == cluster), :].sort_values("p_value")
+            if ass.empty:
+                continue
+
+            print(cell_type, cluster)
+
+            # get genes in cluster
+            top_g = analysis.coverage_annotated.loc[ass.head(200).index, "gene_name"].str.split(",").apply(pd.Series).stack().drop_duplicates()
+            top_g_coding = top_g[(~top_g.str.startswith("LINC")) & (~top_g.str.startswith("LOC")) & (~top_g.str.startswith("MIR"))].str.replace("-AS1", "").drop_duplicates()
+
+            # # get respective cell type values
+            # p = df2.loc[top_g_coding, df2.columns.get_level_values("cell_type") == cell_type].dropna().T
+            # # keep only patients with two timepoints
+            # p = p[p.groupby(level=['patient_id']).count() > 1].dropna()
+            # # remove genes with no variation
+            # p = p.loc[:, p.sum(0) != 0]
+            # p = p.loc[:, p.std(0) > 0]
+
+            # g = sns.clustermap(p, xticklabels=True, metric="correlation", rasterized=True, row_cluster=False, figsize=(p.shape[1] * 0.05, p.shape[0] * 0.12))
+            # g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+            # g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=3)
+            # g.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.{}.cluster_{}.clustermap.svg".format(cell_type, cluster)), bbox_inches="tight", dpi=300)
+
+            # g = sns.clustermap(p, z_score=1, xticklabels=True, metric="correlation", rasterized=True, row_cluster=False, figsize=(p.shape[1] * 0.05, p.shape[0] * 0.12), robust=True)
+            # g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+            # g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=3)
+            # g.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.{}.cluster_{}.clustermap.zscore.svg".format(cell_type, cluster)), bbox_inches="tight", dpi=300)
+
+
+            # intersect with differential expressed
+            diff_genes = scrna_diff2.loc[(scrna_diff2['comparison_name'] == cell_type) & (scrna_diff2['qvalue'] < 0.05), 'gene_name']
+            top_g_coding = top_g_coding[top_g_coding.isin(diff_genes)]
+            # get respective cell type values
+            p = df2.loc[top_g_coding, df2.columns.get_level_values("cell_type") == cell_type].dropna().T
+            # keep only patients with two timepoints
+            p = p[p.groupby(level=['patient_id']).count() > 1].dropna()
+            # remove genes with no variation
+            p = p.loc[:, p.sum(0) != 0]
+            p = p.loc[:, p.std(0) > 0]
+
+            if p.empty or p.shape[1] < 2:
+                continue
+
+            g = sns.clustermap(p, xticklabels=True, metric="correlation", rasterized=True, row_cluster=False, figsize=(p.shape[1] * 0.05, p.shape[0] * 0.12))
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+            g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=3)
+            g.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.{}.cluster_{}.diff_rna.clustermap.svg".format(cell_type, cluster)), bbox_inches="tight", dpi=300)
+
+            g = sns.clustermap(p, z_score=1, xticklabels=True, metric="correlation", rasterized=True, row_cluster=False, figsize=(p.shape[1] * 0.05, p.shape[0] * 0.12), robust=True)
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+            g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=3)
+            g.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.{}.cluster_{}.diff_rna.clustermap.zscore.svg".format(cell_type, cluster)), bbox_inches="tight", dpi=300)
+
+
+
+    # Get enrichments of ATAC-seq region clusters
+    atac_enr = pd.read_csv(os.path.join(
+        analysis.results_dir, "cluster_enrichments", prefix + ".enrichr.csv"))
+    atac_enr['data_type'] = "ATAC-seq"
+    atac_enr.loc[~atac_enr['comparison_name'].str.contains("_"), 'comparison_name'] = atac_enr.loc[~atac_enr['comparison_name'].str.contains("_"), 'comparison_name'] + "_all"
+    atac_enr['cell_type'] = atac_enr['comparison_name'].str.split("_").apply(lambda x: x[0])
+    atac_enr['cluster'] = atac_enr['comparison_name'].str.split("_").apply(lambda x: x[1])
+
+
+    # Get enrichments of scRNA-seq over time
+    scrna_enr = pd.read_csv(os.path.join(
+        "results", "single_cell_RNA", "13_4_Overtime_nUMI_Cutoff", "All_Enrich_.tsv"), sep="\t")
+    scrna_enr['data_type'] = "scRNA-seq"
+    scrna_enr = scrna_enr.rename(columns={
+        "database": "gene_set_library", "category": "description",
+        "grp": "comparison_name",
+        "pval": "p_value", "zScore": "z_score", 'combinedScore': "combined_score"})
+    scrna_enr['cell_type'] = scrna_enr['comparison_name'].str.split("_").apply(lambda x: x[0])
+    scrna_enr['patient'] = scrna_enr['comparison_name'].str.split("_").apply(lambda x: x[1])
+    scrna_enr['timepoint'] = scrna_enr['comparison_name'].str.split("_").apply(lambda x: x[2])
+    scrna_enr['direction'] = scrna_enr['comparison_name'].str.split("_").apply(lambda x: x[3])
+    scrna_enr['cell_type'] = scrna_enr['cell_type'].replace("NK", "NKcell")
+
+    # see the enrichemnts
+    plot_differential_enrichment(
+        scrna_enr,
+        "enrichr",
+        data_type="RNA-seq",
+        direction_dependent=True,
+        output_dir=output_dir,
+        comp_variable="comparison_name",
+        output_prefix="scRNA-seq.differential_enrichment",
+        top_n=5)
+
+
+    # try to get it again based on cross-patient differences
+    scrna_diff = pd.read_csv(os.path.join(
+        "results", "single_cell_RNA", "13_4_Overtime_nUMI_Cutoff", "SigGenes_overTime.tsv"), sep="\t")
+    scrna_diff2 = scrna_diff.loc[scrna_diff['qvalue'] < 0.05]
+    scrna_diff2.groupby('cellType')['gene'].nunique()
+    scrna_diff2['log_pvalue'] = -np.log10(scrna_diff2['pvalue'])
+    scrna_diff2 = scrna_diff2.rename(
+        columns={"logFC": "log2FoldChange", "cellType": "comparison_name", "gene": "gene_name"})
+
+    scrna_diff['intercept'] = 1
+    analysis.expression = scrna_diff[['gene', 'intercept']].drop_duplicates().set_index("gene")
+
+    for label1, index in [
+            # ("", scrna_diff2.index),
+            (".noRP", ~scrna_diff2['gene_name'].str.contains("RPL|RP-|RPS|MT-|HLA"))]:
+        for label2, max_diff in [
+                ("", 10000),
+                (".max200pvalue", 200)]:
+
+            prefix = "scrna_diff.cross_patient.enrichments{}{}".format(label1, label2)
+
+            # differential_enrichment(
+            #     analysis,
+            #     scrna_diff2.loc[index, :].set_index("gene_name"),
+            #     data_type="RNA-seq",
+            #     output_dir=output_dir,
+            #     output_prefix=prefix,
+            #     genome="hg19",
+            #     directional=True,
+            #     max_diff=max_diff,
+            #     sort_var="pvalue",
+            #     as_jobs=True)
+            # # wait for jobs to finish
+    
+            collect_differential_enrichment(
+                scrna_diff2.loc[index, :].set_index("gene_name"),
+                directional=True,
+                data_type="RNA-seq",
+                output_dir=output_dir,
+                output_prefix=prefix,
+                permissive=True)
+
+            enrichment_table = pd.read_csv(os.path.join(
+                output_dir, prefix + ".enrichr.csv"))
+
+            plot_differential_enrichment(
+                enrichment_table,
+                "enrichr",
+                data_type="RNA-seq",
+                direction_dependent=True,
+                output_dir=output_dir,
+                comp_variable="comparison_name",
+                output_prefix=prefix,
+                top_n=10)
+
+    # try to match scRNA-seq and ATAC-seq
+
+    atac_enr['p_value'] = -np.log10(atac_enr['p_value'])
+    scrna_enr['p_value'] = -np.log10(scrna_enr['p_value'])
+
+    cell_types = (atac_enr['cell_type'].drop_duplicates()[atac_enr['cell_type'].drop_duplicates().isin(scrna_enr['cell_type'].unique().tolist())])
+    gene_set_libraries = (atac_enr['gene_set_library'].drop_duplicates()[atac_enr['gene_set_library'].drop_duplicates().isin(scrna_enr['gene_set_library'].unique().tolist())])
+    for cell_type in cell_types:
+        at = atac_enr[atac_enr['cell_type'] == cell_type]
+        sc = scrna_enr[scrna_enr['cell_type'] == cell_type]
+
+        for gene_set_library in gene_set_libraries:
+            print((cell_type, gene_set_library))
+            a = at.loc[at['gene_set_library'] == gene_set_library, :]
+            s = sc.loc[sc['gene_set_library'] == gene_set_library, :]
+
+            g_s = (
+                s.groupby(['description', 'timepoint', 'direction'])
+                [['combined_score', 'p_value']]
+                .apply(max).reset_index())
+            g_s['data_type'] = "scRNA-seq"
+            g_s['comparison_name'] = "all " + g_s['timepoint'] + " " + g_s['direction']
+            g_s.columns = g_s.columns.get_level_values(0)
+
+            q = pd.concat([
+                a[['data_type', 'comparison_name', 'description', 'combined_score', 'p_value']],
+                s[['data_type', 'comparison_name', 'description', 'combined_score', 'p_value']],
+                g_s[['data_type', 'comparison_name', 'description', 'combined_score', 'p_value']]])
+            
+            for metric in ['p_value', 'combined_score']:
+                p = pd.pivot_table(data=q, index="description", columns=['data_type', 'comparison_name'], values=metric)
+
+                g = sns.clustermap(p.fillna(0).T, z_score=0, xticklabels=True, metric="correlation", rasterized=True)
+                g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+                g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=3)
+                g.savefig(os.path.join(output_dir, "comparison.{}.{}.{}.clustermap.z_score.svg".format(cell_type, gene_set_library, metric)), dpi=300, bbox_inches="tight")
+
+                # Only scRNA-seq grouped
+                p = pd.pivot_table(data=q.loc[(q['comparison_name'].str.contains("all")) | (q['data_type'] == "ATAC-seq"), :], index="description", columns=['data_type', 'comparison_name'], values=metric)
+
+                g = sns.clustermap(p.fillna(0).T, z_score=0, xticklabels=True, metric="correlation", rasterized=True)
+                g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+                g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=3)
+                g.savefig(os.path.join(output_dir, "comparison.{}.{}.{}.clustermap.z_score.only_atac_scrnamean.svg".format(cell_type, gene_set_library, metric)), dpi=300, bbox_inches="tight")
+
+                comparisons = q.loc[q['data_type'] == "ATAC-seq", "comparison_name"].drop_duplicates().sort_values()
+                groups = q.loc[q['data_type'] == "scRNA-seq", "comparison_name"].drop_duplicates().sort_values()
+                groups = groups[groups.str.contains("all")]
+
+                keywords = ["BCR", "AP-1", "NFKB", "IL-", "CXCR", "p38", "TGF", "WNT"]
+                n_top = 10
+
+                fig, axis = plt.subplots(len(groups), len(comparisons), figsize=(3 * len(comparisons), 3 * len(groups)))
+                for i, comparison_name in enumerate(comparisons):
+                    a = q.loc[(q['data_type'] == "ATAC-seq") & (q['comparison_name'] == comparison_name)].rename(columns={metric: "ATAC-seq"})
+
+                    for j, group in enumerate(groups):
+                        b = q.loc[(q['data_type'] == "scRNA-seq") & (q['comparison_name'] == group)].rename(columns={metric: "scRNA-seq"})
+                        joint = a.set_index("description")[["ATAC-seq"]].join(b.set_index("description")[["scRNA-seq"]]).dropna()
+                        joint.index = joint.index.str.replace("_Homo.*", "")
+                        axis[j, i].scatter(joint["ATAC-seq"], joint['scRNA-seq'], alpha=0.7)
+
+                        j2 = joint[joint.index.str.contains("|".join(keywords))].dropna()
+                        for k, row in j2.iterrows():
+                            axis[j, i].text(row["ATAC-seq"], row['scRNA-seq'], row.name, fontsize="small")
+                        j3 = (joint['ATAC-seq'] + joint['scRNA-seq']).sort_values().tail(n_top).index
+                        for k, row in joint.loc[j3, :].iterrows():
+                            axis[j, i].text(row["ATAC-seq"], row['scRNA-seq'], row.name, fontsize="small")
+
+                for i, ax in enumerate(axis[0, :]):
+                    ax.set_title(comparisons.iloc[i])
+                for i, ax in enumerate(axis[:, 0]):
+                    ax.set_ylabel(groups.iloc[i])
+                fig.savefig(os.path.join(output_dir, "comparison.{}.{}.{}.scatter.svg".format(cell_type, gene_set_library, metric)), dpi=300, bbox_inches="tight")
+
+
+        # Highlight 1:
+        # TF binding loss in CLL
+
+        # get ATAC-seq LOLA enrichments
+        # curate to get per TF value across cell lines etc...
+        prefix = "accessibility.qnorm_pcafix_cuberoot.p=0.05"
+        lola = pd.read_csv(os.path.join(
+            analysis.results_dir, "cluster_enrichments", prefix + ".lola.csv"))
+        lola = lola[lola['collection'] == "encode_tfbs"]
+        lola['antibody'] = (
+            lola['antibody']
+            .str.replace("_\(.*", "").str.replace("\(.*", "")
+            .str.replace("eGFP-", "").str.replace("HA-", "")
+
+            .str.replace("-C20", "").str.replace("-N19", "")
+            .str.replace("_C9B9", "").str.replace("-4H8", "")
+            .str.replace("-110", "")
+
+            .str.replace("alpha", "").str.replace("gamma", "")
+
+            .str.replace("-", "")
+        ).str.upper()
+
+        # get maximum across ENCODE ChIP-seq sets
+        lola_red = lola.groupby(['comparison_name', 'direction', 'antibody'])['pValueLog', 'logOddsRatio'].mean()
+        lola_red['data_type'] = "ATAC-seq"
+        lola_red = lola_red.rename(columns={'pValueLog': 'log_p_value', 'logOddsRatio': 'combined_score'})
+
+        # get scRNA-seq Enrichr enrichments
+        label1 = ".noRP"
+        label2 = ""
+        prefix = "scrna_diff.cross_patient.enrichments{}{}".format(label1, label2)
+        enrichment_table = pd.read_csv(os.path.join(output_dir, prefix + ".enrichr.csv"))
+
+        # from ENCODE_ChIP-seq database
+        encode = enrichment_table[enrichment_table['gene_set_library'] == 'ENCODE_TF_ChIP-seq_2015']
+
+        # curate
+        encode['tf'] = (
+            encode['description']
+            .str.replace("_.*", "")
+            .str.replace("eGFP-", "")
+            .str.replace("HA-", "")
+            .str.replace("phospho.*", ""))
+        # get maximum across ENCODE ChIP-seq sets
+        encode['log_p_value'] = -np.log10(encode['p_value'])
+        encode_red = encode.groupby(['comparison_name', 'direction', 'tf'])['log_p_value', 'combined_score'].mean()
+        encode_red['data_type'] = "scRNA-seq"
+
+        # join and compare
+        joint = pd.concat([lola_red, encode_red])
+        for metric in ['log_p_value', 'combined_score']:
+            
+
+            # scatter
+            fig, axis = plt.subplots(1, 2, figsize=(4, 3))
+            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.CLL_down.scatter.svg"), dpi=300, bbox_inches="tight")
+            
+            # barplots
+            l = lola_red.loc[('CLL_down', 'all')].sort_values('log_p_value', ascending=False).head(20).reset_index()
+            e = encode_red.loc[('CLL', 'down')].sort_values('log_p_value', ascending=False).head(20).reset_index()
+            fig, axis = plt.subplots(1, 2, figsize=(4, 3))
+            sns.barplot(data=l, x="log_p_value", y="antibody", orient="horizontal", color=sns.color_palette("colorblind")[0], ax=axis[0])
+            sns.barplot(data=e, x="log_p_value", y="tf", orient="horizontal", color=sns.color_palette("colorblind")[0], ax=axis[1])
+            sns.despine(fig)
+            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.CLL_down.barplot.svg"), dpi=300, bbox_inches="tight")
+
+            # heatmaps
+            piv = pd.pivot_table(
+                data=joint.reset_index().dropna(),
+                index='antibody', columns=['data_type', 'comparison_name', 'direction'],
+                values=metric, fill_value=0).replace(np.inf, 600)
+
+            for label, z_score in [("", None), ("z0", 0)]:
+                g = sns.clustermap(piv, z_score=z_score, rasterized=True)
+                g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
+                g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=3)
+                g.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.{}.heatmap.{}.svg".format(metric, label)), dpi=300, bbox_inches="tight")
+
+
+        # follow with ATAC-seq in-depth analysis
+        tfs = g2.data2d.index # tf_m.iloc[g2.dendrogram_row.reordered_ind].index
+        cell_type = "CLL"
+        c = df2.loc[tfs, df2.columns.get_level_values("cell_type") == cell_type]
+        c = c.loc[:, c.columns.get_level_values("patient_id") != "FE"]
+
+        # expression of TFs in aggregated scRNA-seq data
+        fig, axis = plt.subplots(1, 2, figsize=(2 * (c.shape[1] * 0.05), c.shape[0] * 0.12))
+        sns.heatmap(c,
+            xticklabels=True, rasterized=True, square=True, ax=axis[0])
+        sns.heatmap(
+            pd.DataFrame(scipy.stats.zscore(c, 1), index=c.index, columns=c.columns),
+            xticklabels=True, yticklabels=False, rasterized=False, square=True, ax=axis[1])
+        for ax in axis:
+            ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize="xx-small")
+            ax.set_xticklabels(ax.get_xticklabels(), rotation=90, fontsize="xx-small")
+        fig.savefig(os.path.join(output_dir, "scRNA-seq.TF_expression.sorted_like_ATAC-seq.clustermap.svg"), bbox_inches="tight", dpi=300)
+
+        c = c.sort_index(level='timepoint', axis=1)
+
+        fig, axis = plt.subplots(1, 2, figsize=(2 * (c.shape[1] * 0.05), c.shape[0] * 0.12))
+        sns.heatmap(c,
+            xticklabels=True, rasterized=True, square=True, ax=axis[0])
+        sns.heatmap(
+            pd.DataFrame(scipy.stats.zscore(c, 1), index=c.index, columns=c.columns),
+            xticklabels=True, yticklabels=False, rasterized=False, square=True, ax=axis[1])
+        for ax in axis:
+            ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize="xx-small")
+            ax.set_xticklabels(ax.get_xticklabels(), rotation=90, fontsize="xx-small")
+        fig.savefig(os.path.join(output_dir, "scRNA-seq.TF_expression.sorted_like_ATAC-seq.clustermap.sorted_timepoint.svg"), bbox_inches="tight", dpi=300)
+
+        fig, axis = plt.subplots(1, 1, figsize=(1 * (c.shape[1] * 0.05), c.shape[0] * 0.12))
+        sns.heatmap(c.mean(1).to_frame(),
+            xticklabels=True, rasterized=True, square=True, ax=axis)
+        axis.set_yticklabels(axis.get_yticklabels(), rotation=0, fontsize="xx-small")
+        axis.set_xticklabels(axis.get_xticklabels(), rotation=90, fontsize="xx-small")
+        fig.savefig(os.path.join(output_dir, "scRNA-seq.TF_expression.sorted_like_ATAC-seq.clustermap.mean_timepoints_patients.svg"), bbox_inches="tight", dpi=300)
+
+
+
+        # Highlight 2:
+        # CD8 cells activation vs apoptosis reduction
+
+        # from WikiPathways_2016 database
+        # get ATAC enrichments
+        prefix = "accessibility.qnorm_pcafix_cuberoot.p=0.05"
+        atac = pd.read_csv(os.path.join(analysis.results_dir, "cluster_enrichments", prefix + ".enrichr.csv"))
+        atac = atac[atac['gene_set_library'] == "NCI-Nature_2016"]
+        atac['log_p_value'] = -np.log10(atac['p_value'])
+        atac['description'] = atac['description'].str.replace("_Homo .*", "").str.replace("_Mus .*", "")
+        atac['data_type'] = "ATAC-seq"
+
+        # get scRNA-seq Enrichr enrichments
+        label1 = ".noRP"
+        label2 = ""
+        prefix = "scrna_diff.cross_patient.enrichments{}{}".format(label1, label2)
+        enrichment_table = pd.read_csv(os.path.join(output_dir, prefix + ".enrichr.csv"))
+        rna = enrichment_table[enrichment_table['gene_set_library'] == 'NCI-Nature_2016']
+        rna['log_p_value'] = -np.log10(rna['p_value'])
+        rna['description'] = rna['description'].str.replace("_Homo .*", "").str.replace("_Mus .*", "")
+        rna['data_type'] = "scRNA-seq"
+
+        # barplots
+        a = atac.loc[atac['comparison_name'] == 'CD8_up', :].reset_index().sort_values('log_p_value', ascending=False).head(20)
+        r = rna.loc[(rna['comparison_name'] == 'CD8') & (rna['direction'] == 'up'), :].reset_index().sort_values('log_p_value', ascending=False).head(20)
+
+        fig, axis = plt.subplots(1, 2, figsize=(4, 3))
+        sns.barplot(data=a, x="log_p_value", y="description", orient="horizontal", color=sns.color_palette("colorblind")[0], ax=axis[0])
+        sns.barplot(data=r, x="log_p_value", y="description", orient="horizontal", color=sns.color_palette("colorblind")[0], ax=axis[1])
+        sns.despine(fig)
+        fig.savefig(os.path.join(output_dir, "atac_vs_rna_enrichr_enrichments.NCI-Nature.CD8_up.barplot.svg"), dpi=300, bbox_inches="tight")
+
+        # scatter
+        joint = atac.loc[atac['comparison_name'] == 'CD8_up', :].rename(columns={'log_p_value': 'ATAC-seq'}).groupby('description')[['ATAC-seq']].mean()
+        joint = joint.join(rna.loc[(rna['comparison_name'] == 'CD8') & (rna['direction'] == 'up'), :].rename(columns={'log_p_value': 'scRNA-seq'}).groupby('description')[['scRNA-seq']].mean())
+
+        fig, axis = plt.subplots(1, figsize=(3, 3))
+        axis.scatter(joint['ATAC-seq'], joint['scRNA-seq'], alpha=0.5, s=10, color=plt.get_cmap("YlOrRd")(joint.dropna().mean(1)))
+        for term in joint.dropna().mean(1).sort_values().tail(20).index:
+            axis.text(joint['ATAC-seq'].loc[term].mean(), joint['scRNA-seq'].loc[term].mean(), term)
+        sns.despine(fig)
+        fig.savefig(os.path.join(output_dir, "atac_vs_rna_enrichr_enrichments.NCI-Nature.CD8_up.scatter.svg"), dpi=300, bbox_inches="tight")
+
+        fig, axis = plt.subplots(1, figsize=(1, 2))
+        sns.barplot(
+            data=(joint.dropna().apply(scipy.stats.zscore, 0).mean(1)).sort_values(ascending=True).tail(10).reset_index(),
+            x=0, y="description", orient="horizontal", palette="YlOrRd", ax=axis)
+        sns.despine(fig)
+        fig.savefig(os.path.join(output_dir, "atac_vs_rna_enrichr_enrichments.NCI-Nature.CD8_up.joint_zscores.mean.barplot.svg"), dpi=300, bbox_inches="tight")
+
+        fig, axis = plt.subplots(1, figsize=(1, 2))
+        sns.barplot(
+            data=(joint.dropna().apply(scipy.stats.zscore, 0).mean(1) / joint.dropna().apply(scipy.stats.zscore, 0).std(1)).sort_values(ascending=True).tail(10).reset_index(),
+            x=0, y="description", orient="horizontal", palette="YlOrRd", ax=axis)
+        sns.despine(fig)
+        fig.savefig(os.path.join(output_dir, "atac_vs_rna_enrichr_enrichments.NCI-Nature.CD8_up.joint_zscores.mean_over_std.barplot.svg"), dpi=300, bbox_inches="tight")
+
+        # plot expression of some genes enriched
+        expr = scrna_diff2.loc[~scrna_diff2['gene_name'].str.contains("RPL|RP-|RPS|MT-|HLA"), :]
+
+
+        # Highlight 3:
+        # Cytokine/receptor repertoire changes across cell types
+
+        df = pd.read_csv("results/single_cell_RNA/MeanMatrix.csv", index_col=0)
+        df.columns = pd.MultiIndex.from_arrays(pd.Series(df.columns).str.split("_").apply(pd.Series).values.T, names=['patient_id', 'timepoint', 'cell_type'])
+        df2 = df.T.groupby(['cell_type', 'timepoint']).mean().T
+
+        df2 = df2.loc[:,
+            (~df2.columns.get_level_values("cell_type").isin(["NurseLikeCell", "NA"])) &
+            (df2.columns.get_level_values("timepoint").isin(["d0", "d30"]))]
+        df2 = df2.loc[~(df2.sum(axis=1) == 0), :]
+
+        g = sns.clustermap(
+            df2.loc[tfs, :].dropna().T,
+            metric="correlation", z_score=1, row_cluster=False,
+            col_colors=[
+                plt.get_cmap("summer")(np.log10(1 + df.loc[tfs, :].dropna().T.min())),
+                plt.get_cmap("summer")(np.log10(1 + df.loc[tfs, :].dropna().T.mean())),
+                plt.get_cmap("summer")(np.log10(1 + df.loc[tfs, :].dropna().T.max()))])
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+
+
+
+
+        # include FACS
+
+
+        # Highlight 4:
+        # Within and between cell type temporal dynamics
+
+
+
+
 
 
 if __name__ == '__main__':
