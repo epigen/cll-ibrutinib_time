@@ -1546,7 +1546,7 @@ def transcription_factor_accessibility(
         for tf in all_res['transcription_factor'].drop_duplicates():
             s = all_res.loc[(all_res['cell_type'] == cell_type) & (all_res['transcription_factor'] == tf)].set_index(['cell_type', 'timepoint'])['accessibility']
             b = all_res.loc[(all_res['cell_type'] == cell_type) & (all_res['transcription_factor'] == "background")].set_index(['cell_type', 'timepoint'])['accessibility']
-            all_res.loc[(all_res['cell_type'] == cell_type) & (all_res['transcription_factor'] == tf), 'norm_accessibility'] = ((s - b) / b.std()).values
+            all_res.loc[(all_res['cell_type'] == cell_type) & (all_res['transcription_factor'] == tf), 'norm_accessibility'] = (s - b).values  # ((s - b) / b.std()).values
 
     all_res.to_csv(os.path.join(output_dir, "all_factor_binding.normalized.csv"), index=False)
     all_res = pd.read_csv(os.path.join(output_dir, "all_factor_binding.normalized.csv"))
@@ -1585,8 +1585,14 @@ def transcription_factor_accessibility(
 
     p_z = p.copy()
     for cell_type in p.columns.get_level_values("cell_type").unique():
-        p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type] = scipy.stats.zscore(
-            p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type], axis=1)
+        # p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type] = scipy.stats.zscore(
+        #    p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type], axis=1)
+        p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type] = p_z.loc[:, p_z.columns.get_level_values("cell_type") == cell_type].apply(scipy.stats.zscore, axis=1)
+
+    g = sns.clustermap(p_z, col_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, robust=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.clustermap.sorted.z_score_per_cell_type.svg"), dpi=300, bbox_inches="tight")
 
     g = sns.clustermap(p_z - p_z.mean(0), col_cluster=False, rasterized=False, square=True, cbar_kws={"label": "Mean accessibility\n(Z-score)"}, robust=True)
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
@@ -1652,6 +1658,13 @@ def transcription_factor_accessibility(
     axis.set_xlabel("log2(fold-change)")
     axis.set_ylabel("-log10(min(p-value))")
     fig.savefig(os.path.join(output_dir, "scRNA-seq_expression.tfs.min_patients.signed_fold_change.svg"), dpi=300, bbox_inches="tight")
+
+
+    
+    fig, axis = plt.subplots(1)
+    sns.heatmap(expr.loc[["RELB", "REL", "NFKB1", "NFKB2"]].T.groupby(['cell_type', 'timepoint']).mean(), ax=axis)
+    axis.set_yticklabels(axis.get_yticklabels(), rotation=0)
+    axis.set_xticklabels(axis.get_xticklabels(), rotation=90)
 
 
 
@@ -1742,7 +1755,7 @@ def differentiation_assessment(analysis):
 
         c = q.corr()
 
-        g = sns.clustermap(analysis.coverage_qnorm.drop(['chrom', 'start', 'end'], axis=1).corr(), xticklabels=False, figsize=(8 ,8), rasterized=True)
+        g = sns.clustermap(tmp_analysis.coverage_qnorm.drop(['chrom', 'start', 'end'], axis=1).corr(), xticklabels=False, figsize=(8 ,8), rasterized=True)
         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
         g.savefig(os.path.join("results", "differentiation_assessment.{}_only.map.svg".format(sample_set)), dpi=200)
 
@@ -1776,6 +1789,29 @@ def differentiation_assessment(analysis):
             data=pd.melt(data_z.reset_index(), id_vars=['patient_id', 'timepoint', 'cell_type'], var_name="healty_subset"),
             x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False, sharex=False)
         g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.zscore.svg".format(sample_set)), dpi=300)
+
+
+        # Get ratios along time for each patient
+        data['switched_to_naive'] = np.log2(data['SwitchedBcell'] / data['NaiveBcell'])
+        data['switched_to_unswitched'] = np.log2(data['SwitchedBcell'] / data['UnswitchedBcell'])
+        data['unswitched_to_naive'] = np.log2(data['UnswitchedBcell'] / data['NaiveBcell'])
+        data['Bcell_mean'] = data[['SwitchedBcell', 'UnswitchedBcell', 'NaiveBcell']].mean(axis=1)
+        data['b_to_t'] = np.log2(data['Bcell_mean'] / data['Tcell'])
+        data['cd8_to_cd4'] = np.log2(data['CD8Tcell'] / data['CD4Tcell'])
+
+        g = sns.factorplot(
+            data=pd.melt(data.loc[:, data.columns.str.contains("_to_")].reset_index(), id_vars=['patient_id', 'timepoint', 'cell_type'], var_name="healty_subset"),
+            x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=True, sharex=False)
+        for ax in g.axes.flatten():
+            ax.axhline(0, linestyle="--", color="black")
+        g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.ratios.fold_change.svg".format(sample_set)), dpi=300)
+
+        g = sns.factorplot(
+            data=pd.melt(data.loc[:, data.columns.str.contains("_to_")].reset_index(), id_vars=['patient_id', 'timepoint', 'cell_type'], var_name="healty_subset"),
+            x="timepoint", y="value", hue="healty_subset", sharey=True, sharex=False)
+        for ax in g.axes.flatten():
+            ax.axhline(0, linestyle="--", color="black")
+        g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.ratios.fold_change.mean_patients.svg".format(sample_set)), dpi=300)
 
 
         from ngs_toolkit.graphics import radar_plot
@@ -2268,6 +2304,8 @@ def scrna_comparison(analysis):
 
 
     # observe some ATAC-seq signatures at the RNA level
+    fig, axis = plt.subplots(1, 5, figsize=(3 * 5, 3 * 1))
+    axis = axis.flatten()
     for i, cell_type in enumerate(["CD4", "CD8", "CLL", "Mono", "NK"]):
         for cluster in range(5):
             ass = assignments.loc[
@@ -2312,18 +2350,29 @@ def scrna_comparison(analysis):
             p = p.loc[:, p.sum(0) != 0]
             p = p.loc[:, p.std(0) > 0]
 
+            # sort by timepoint
+            p = p.sort_index(level="timepoint", axis=0)
+
             if p.empty or p.shape[1] < 2:
                 continue
 
-            g = sns.clustermap(p, xticklabels=True, metric="correlation", rasterized=True, row_cluster=False, figsize=(p.shape[1] * 0.05, p.shape[0] * 0.12))
+            g = sns.clustermap(p, xticklabels=True, metric="correlation", rasterized=False, row_cluster=False, figsize=(p.shape[1] * 0.05, p.shape[0] * 0.12))
             g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
             g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=3)
             g.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.{}.cluster_{}.diff_rna.clustermap.svg".format(cell_type, cluster)), bbox_inches="tight", dpi=300)
 
-            g = sns.clustermap(p, z_score=1, xticklabels=True, metric="correlation", rasterized=True, row_cluster=False, figsize=(p.shape[1] * 0.05, p.shape[0] * 0.12), robust=True)
+            g = sns.clustermap(p, z_score=1, xticklabels=True, metric="correlation", rasterized=False, row_cluster=False, figsize=(p.shape[1] * 0.05, p.shape[0] * 0.12), robust=True)
             g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
             g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=3)
             g.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.{}.cluster_{}.diff_rna.clustermap.zscore.svg".format(cell_type, cluster)), bbox_inches="tight", dpi=300)
+
+            fc = np.log2(p.groupby('timepoint').mean().iloc[1] / p.groupby('timepoint').mean().iloc[0])
+
+            axis[i].scatter(fc.rank() / fc.shape[0], fc, label=cluster, alpha=0.8)
+            # sns.distplot(fc, ax=axis[i])
+            axis[i].set_title(cell_type)
+            axis[i].legend()
+    fig.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.diff_rna.rank_fold-change.scatter.svg"), bbox_inches="tight", dpi=300)
 
 
 
@@ -2548,9 +2597,22 @@ def scrna_comparison(analysis):
             
 
             # scatter
-            fig, axis = plt.subplots(1, 2, figsize=(4, 3))
+            fig, axis = plt.subplots(1, 1, figsize=(4, 4))
+            piv = pd.pivot_table(data=joint, index="antibody", columns=['data_type', 'comparison_name', 'direction'], values=metric)
+            top = piv[[('ATAC-seq', "CLL_down", "all"), ('scRNA-seq', "CLL", "down")]].dropna().apply(zscore, axis=0).mean(axis=1)
+            axis.scatter(piv[('ATAC-seq', "CLL_down", "all")], piv[('scRNA-seq', "CLL", "down")], alpha=0.5, color=plt.get_cmap("YlGnBu")(top))
+            for i in top.sort_values().tail(20).index:
+                axis.text(piv.loc[i, ('ATAC-seq', "CLL_down", "all")], piv.loc[i, ('scRNA-seq', "CLL", "down")], i)
             fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.CLL_down.scatter.svg"), dpi=300, bbox_inches="tight")
-            
+
+            fig, axis = plt.subplots(1, 1, figsize=(4, 4))
+            piv = pd.pivot_table(data=joint, index="antibody", columns=['data_type', 'comparison_name', 'direction'], values=metric)
+            top = piv[[('ATAC-seq', "CLL_up", "all"), ('scRNA-seq', "CLL", "up")]].dropna().apply(zscore, axis=0).mean(axis=1)
+            axis.scatter(piv[('ATAC-seq', "CLL_up", "all")], piv[('scRNA-seq', "CLL", "up")], alpha=0.5, color=plt.get_cmap("YlOrRd")(top))
+            for i in top.sort_values().tail(20).index:
+                axis.text(piv.loc[i, ('ATAC-seq', "CLL_up", "all")], piv.loc[i, ('scRNA-seq', "CLL", "up")], i)
+            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.CLL_up.scatter.svg"), dpi=300, bbox_inches="tight")
+
             # barplots
             l = lola_red.loc[('CLL_down', 'all')].sort_values('log_p_value', ascending=False).head(20).reset_index()
             e = encode_red.loc[('CLL', 'down')].sort_values('log_p_value', ascending=False).head(20).reset_index()
@@ -2725,6 +2787,7 @@ def scrna_comparison(analysis):
 def off_target_signature():
     import itertools
     from scipy.stats import pearsonr
+    import scipy
 
     def overlap((a, b), func=max):
         """
@@ -2767,7 +2830,7 @@ def off_target_signature():
 
 
     # plot scatter of fold changes across cell types
-    expr_diff_red = expr_diff[expr_diff['patient_id'].str.contains("d30")].reset_index().groupby(['cell_type', 'gene'])['log_fold_change'].mean().reset_index(level="cell_type")
+    expr_diff_red = expr_diff[expr_diff['timepoint'] == 30].reset_index().groupby(['cell_type', 'gene'])['log_fold_change'].mean().reset_index(level="cell_type")
     combs = list(itertools.combinations(expr_diff_red['cell_type'].unique(), 2))
     n = int(np.ceil(np.sqrt(len(combs))))
     fig, axis = plt.subplots(n, n, figsize=(n * 3, n * 3), sharex=True, sharey=True)
@@ -2784,6 +2847,19 @@ def off_target_signature():
         r = pearsonr(j.dropna()[c1], j.dropna()[c2])[0]
         axis[i].text(1, -1, "r = {0:.3f}".format(r))
     fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.fold_change.scatter.svg"), dpi=300, bbox_inches="tight")
+
+    # Fold change correlations at day 30
+    combs = list(itertools.permutations(expr_diff_red['cell_type'].unique(), 2))
+    corrs = list()
+    for i, (c1, c2) in enumerate(combs):
+        j = expr_diff_red.loc[expr_diff_red['cell_type'] == c1, "log_fold_change"].to_frame(name=c1)
+        j = j.join(expr_diff_red.loc[expr_diff_red['cell_type'] == c2, "log_fold_change"].to_frame(name=c2))
+        r = pearsonr(j.dropna()[c1], j.dropna()[c2])[0]
+        corrs.append([c1, c2, r])
+
+    fig, axis = plt.subplots(1, 1, figsize=(4 * 1, 4), tight_layout=True)
+    sns.heatmap(pd.pivot_table(data=pd.DataFrame(corrs), index=0, columns=1), cmap="PuOr_r", vmin=0, vmax=0.5, ax=axis, square=True)
+    fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.fold_change.correlation.heatmap.svg"), dpi=300)
 
     # plot number of shared genes across cell types
     piv = pd.pivot_table(data=expr_diff2, index='gene', columns='cell_type', values='direction')
@@ -2893,6 +2969,102 @@ def off_target_signature():
         xticklabels=True, z_score=None, rasterized=False, row_cluster=False, metric="correlation", square=True)
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=3)
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+
+
+
+    df = pd.read_csv(os.path.join("results", "offtarget_signature.enrichment.WikiPathways.tsv"), sep='\t')
+    df["Term"] = df["Term"].str.replace("_.*", "")
+    df2 = df.sort_values('Adjusted P-value').head(20)
+
+    fig, axis = plt.subplots(1)
+    sns.barplot(x=-np.log10(df2['Adjusted P-value']), y=df2['Term'], ax=axis, orient="horizontal", estimator=max)
+    fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.enrichment.WikiPathways.barplot.svg"), dpi=300, bbox_inches="tight")
+
+    # Get a cell type mixture for each patient, timepoint
+    mix = e.groupby(['patient_id', 'timepoint']).mean().T
+
+    a = (mix.loc[up, mix.columns.get_level_values("timepoint") == 0].mean() /
+            mix.loc[down, mix.columns.get_level_values("timepoint") == 0].mean())
+    b = (mix.loc[up, mix.columns.get_level_values("timepoint").isin([30, 120])].mean() /
+            mix.loc[down, mix.columns.get_level_values("timepoint").isin([30, 120])].mean())
+    # select earliest timepoint per patient
+    q = b.reset_index().groupby('patient_id').apply(lambda x: x['timepoint'].min())
+    b = b.loc[zip(q.index, q)]
+    t, p = scipy.stats.ttest_rel(b, a)
+
+
+    # Get validation cohort
+    akh = pd.read_csv(
+        os.path.join("..", "cll-ibrutinib", "results", "cll-ibrutinib_AKH-RNA.expression_counts.gene_level.quantile_normalized.log2_tpm.annotated_metadata.csv"),
+        header=range(22), index_col=0).sort_index(level=['patient_id', 'timepoint_name'], axis=1)
+
+
+    a = (akh.loc[up, akh.columns.get_level_values("timepoint_name") == "before_Ibrutinib"].mean() /
+            akh.loc[down, akh.columns.get_level_values("timepoint_name") == "before_Ibrutinib"].mean())
+    b = (akh.loc[up, akh.columns.get_level_values("timepoint_name") == "after_Ibrutinib"].mean() /
+            akh.loc[down, akh.columns.get_level_values("timepoint_name") == "after_Ibrutinib"].mean())
+    t, p = scipy.stats.ttest_rel(b, a)
+
+    data = a.reset_index()[['patient_id', 'timepoint_name', 0]].append(b.reset_index()[['patient_id', 'timepoint_name', 0]])
+    fig, axis = plt.subplots(1, 1, figsize=(3, 3))
+    sns.pointplot(x="timepoint_name", y=0, hue="patient_id", data=data, axis=axis)
+    axis.text(0.9, 0.9, "t = {:3f}\np = {:3f}".format(t, p))
+    fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.akh.validation.paired_pointplot.svg"), dpi=300, bbox_inches="tight")
+
+
+    data.sort_values(0)
+
+    tp = (data.loc[:, 'timepoint_name'] == 'before_Ibrutinib').sum()
+    tn = (data.loc[:, 'timepoint_name'] == 'after_Ibrutinib').sum()
+    tpr = list()
+    fpr = list()
+    for threshold in np.linspace(data[0].min(), data[0].max(), 20):
+        p = (data.loc[data[0] <= threshold, 'timepoint_name'] == 'before_Ibrutinib').sum()
+        f = (data.loc[data[0] <= threshold, 'timepoint_name'] == 'after_Ibrutinib').sum()
+        tpr.append(float(p) / tp)
+        fpr.append(float(f) / tn)
+    from sklearn import metrics
+    auc = metrics.auc(fpr, tpr)
+
+    fig, axis = plt.subplots(1, figsize=(3, 3))
+    axis.plot(fpr, tpr)
+    axis.plot((0, 1), (0, 1), linestyle="--", color="black", alpha=0.5)
+    axis.text(0.7, 0.3, "AUC = {:3f}".format(auc))
+    axis.set_xlabel("FPR")
+    axis.set_ylabel("TPR")
+    fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.akh.validation.roc_auc.svg"), dpi=300, bbox_inches="tight")
+
+
+    g2 = sns.clustermap(
+        akh.sort_index(level='time_since_treatment', axis=1).loc[diff.index].dropna(), xticklabels=True, z_score=0,
+        rasterized=True, col_cluster=True, metric="correlation", row_cluster=True)
+    g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+    g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.akh.svg"), dpi=300, bbox_inches="tight")
+    g2 = sns.clustermap(
+        akh.sort_index(level='time_since_treatment', axis=1).loc[diff[g.dendrogram_col.reordered_ind].index].dropna(), xticklabels=True, z_score=0,
+        rasterized=True, col_cluster=False, metric="correlation", row_cluster=False)
+    g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+    g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.akh.sorted_time.svg"), dpi=300, bbox_inches="tight")
+    g2 = sns.clustermap(
+        akh.sort_index(level='time_since_treatment', axis=1).loc[diff[g.dendrogram_col.reordered_ind].index].dropna(), xticklabels=True, z_score=0,
+        rasterized=True, col_cluster=True, metric="correlation", row_cluster=False)
+    g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+    g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.akh.clustered.svg"), dpi=300, bbox_inches="tight")
+    g2 = sns.clustermap(
+        akh.sort_index(level=['patient_id', 'timepoint_name'], axis=1).loc[diff[g.dendrogram_col.reordered_ind].index].dropna(), xticklabels=True, z_score=0,
+        rasterized=True, col_cluster=False, metric="correlation", row_cluster=False)
+    g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+    g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.akh.sorted_patient.svg"), dpi=300, bbox_inches="tight")
+    g2 = sns.clustermap(
+        akh.sort_index(level='timepoint_name', axis=1).loc[diff[g.dendrogram_col.reordered_ind].index].dropna(), xticklabels=True, z_score=0,
+        rasterized=True, col_cluster=False, metric="correlation", row_cluster=False)
+    g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+    g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.akh.sorted_timepoint.svg"), dpi=300, bbox_inches="tight")
 
 
 if __name__ == '__main__':
