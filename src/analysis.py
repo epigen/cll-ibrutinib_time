@@ -2161,11 +2161,52 @@ def scrna_comparison(analysis):
     # get scRNA-seq data grouped by cell type, patient, timepoint
     df = pd.read_csv("results/single_cell_RNA/MeanMatrix.csv", index_col=0)
     df.columns = pd.MultiIndex.from_arrays(pd.Series(df.columns).str.split("_").apply(pd.Series).values.T, names=['patient_id', 'timepoint', 'cell_type'])
+
     df2 = df.T.groupby(['cell_type', 'timepoint']).mean().T
     df2 = df2.loc[:,
         (~df2.columns.get_level_values("cell_type").isin(["NurseLikeCell", "NA"])) &
         (df2.columns.get_level_values("timepoint").isin(["d0", "d30"]))]
     df2 = df2.loc[~(df2.sum(axis=1) == 0), :]
+
+    # try quantile normalization
+    to_norm = df.loc[:, ~df.columns.get_level_values("cell_type").isin(["NurseLikeCell", "NA"])]
+    tpm_qnorm = pd.DataFrame(
+        normalize_quantiles_r(to_norm.values),
+        index=to_norm.index,
+        columns=to_norm.columns
+    )
+    analysis.scrna_cell_mean = to_norm
+    analysis.scrna_cell_mean_qnorm = tpm_qnorm
+    from ngs_toolkit.general import unsupervised_analysis
+
+
+    # Pairwise correlations
+    g = sns.clustermap(
+        to_norm.corr(), xticklabels=False, annot=True,  # yticklabels=sample_display_names,
+        cmap="Spectral_r", figsize=(0.2 * to_norm.shape[1], 0.2 * to_norm.shape[1]), cbar_kws={"label": "Pearson correlation"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize='xx-small')
+    g.ax_heatmap.set_xlabel(None, visible=False)
+    g.ax_heatmap.set_ylabel(None, visible=False)
+
+    # Pairwise correlations
+    g = sns.clustermap(
+        tpm_qnorm.corr(), xticklabels=False, annot=True,  # yticklabels=sample_display_names,
+        cmap="Spectral_r", figsize=(0.2 * tpm_qnorm.shape[1], 0.2 * tpm_qnorm.shape[1]), cbar_kws={"label": "Pearson correlation"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize='xx-small')
+    g.ax_heatmap.set_xlabel(None, visible=False)
+    g.ax_heatmap.set_ylabel(None, visible=False)
+
+
+    g = sns.clustermap(tpm_qnorm.loc[['IKZF1', 'NFATC1', 'PAX5']])
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+
+    p = tpm_qnorm.loc[:, tpm_qnorm.columns.get_level_values("cell_type") == "CLL"]
+    sns.swarmplot(
+        data=pd.melt(p.loc[['IKZF1', 'NFATC1', 'PAX5']].T.reset_index(),
+        id_vars=['patient_id', 'timepoint', 'cell_type']), x='variable', y='value', hue="timepoint")
+
+    # 
 
     mean_signatures = pd.DataFrame()
     for i, cell_type in enumerate(assignments['cell_type'].drop_duplicates()):
@@ -2630,7 +2671,22 @@ def scrna_comparison(analysis):
         fig.savefig(os.path.join(output_dir, "atac_vs_rna_enrichr_enrichments.NCI-Nature.CD8_up.joint_zscores.mean_over_std.barplot.svg"), dpi=300, bbox_inches="tight")
 
         # plot expression of some genes enriched
-        expr = scrna_diff2.loc[~scrna_diff2['gene_name'].str.contains("RPL|RP-|RPS|MT-|HLA"), :]
+
+        df = pd.read_csv("results/single_cell_RNA/MeanMatrix.csv", index_col=0)
+        df.columns = pd.MultiIndex.from_arrays(pd.Series(df.columns).str.split("_").apply(pd.Series).values.T, names=['patient_id', 'timepoint', 'cell_type'])
+        # take genes of top 20 pathways together
+        diff_path_genes = set(r['genes'].sum().replace('][', ', ').replace('[', '').replace(']', '').split(', '))
+        # expr = scrna_diff2.loc[~scrna_diff2['gene_name'].str.contains("RPL|RP-|RPS|MT-|HLA"), :]
+
+        diff_path_genes_expr = df.loc[
+            diff_path_genes,
+            (df.columns.get_level_values("cell_type") == "CD8") &
+            (df.columns.get_level_values("timepoint").isin(["d0", "d30"]))].T.sort_index(level="timepoint", axis=0)
+        w, h = (diff_path_genes_expr.shape[1]) * 0.05, (diff_path_genes_expr.shape[0]) * 0.12,
+        g = sns.clustermap(diff_path_genes_expr, figsize=(w, h), square=True, row_cluster=False, z_score=None, metric="correlation")
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+
 
 
         # Highlight 3:
@@ -2666,7 +2722,177 @@ def scrna_comparison(analysis):
 
 
 
+def off_target_signature():
+    import itertools
+    from scipy.stats import pearsonr
 
+    def overlap((a, b), func=max):
+        """
+        Return overlap of A and B sets as the {maximum} of either intersection (percentage).
+        """
+        a = set(a)
+        b = set(b)
+        return (
+            func(
+                len(a.intersection(b)),
+                len(b.intersection(a)))
+            /
+            float(func(len(a), len(b)))
+        ) * 100
+
+    # Gene expression
+    expr = pd.read_csv("results/single_cell_RNA/MeanMatrix.csv", index_col=0)
+    c = pd.Series(expr.columns).str.split("_").apply(pd.Series)
+    c[1] = c[1].str.replace('d', '').astype(int)
+    c = c[[1, 2, 0]]
+    expr.columns = pd.MultiIndex.from_arrays(c.values.T, names=['timepoint', 'cell_type', 'patient_id'])
+    expr = expr.sort_index(level=['timepoint', 'cell_type'], axis=1)
+
+    # Z-score values within each cell type
+    expr_z = expr.copy()
+    for cell_type in expr.columns.levels[1]:
+        expr_z.loc[:, expr_z.columns.get_level_values("cell_type") == cell_type] = scipy.stats.zscore(
+            expr_z.loc[:, expr_z.columns.get_level_values("cell_type") == cell_type], axis=1)
+
+    # Gene expression diff
+    expr_diff = pd.read_csv(os.path.join(
+        "results", "single_cell_RNA", "13_4_Overtime_nUMI_Cutoff", "SigGenes_overTime.tsv"), sep="\t").rename(
+            columns={"cellType": "cell_type", "logFC": "log_fold_change"}).set_index("gene")
+    expr_diff['intercept'] = 1
+    expr_diff['patient_id'] = expr_diff['patient'].str.split("_").apply(lambda x: x[0])
+    expr_diff['timepoint'] = expr_diff['patient'].str.split("_").apply(lambda x: x[1]).str.replace("d", "").astype(int)
+    expr_diff['direction'] = (expr_diff['log_fold_change'] > 0).astype(int).replace(0, -1)
+
+    expr_diff2 = expr_diff.loc[expr_diff['qvalue'] < 0.05]
+
+
+    # plot scatter of fold changes across cell types
+    expr_diff_red = expr_diff[expr_diff['patient_id'].str.contains("d30")].reset_index().groupby(['cell_type', 'gene'])['log_fold_change'].mean().reset_index(level="cell_type")
+    combs = list(itertools.combinations(expr_diff_red['cell_type'].unique(), 2))
+    n = int(np.ceil(np.sqrt(len(combs))))
+    fig, axis = plt.subplots(n, n, figsize=(n * 3, n * 3), sharex=True, sharey=True)
+    axis = axis.flatten()
+    for i, (c1, c2) in enumerate(combs):
+        j = expr_diff_red.loc[expr_diff_red['cell_type'] == c1, "log_fold_change"].to_frame(name=c1)
+        j = j.join(expr_diff_red.loc[expr_diff_red['cell_type'] == c2, "log_fold_change"].to_frame(name=c2))
+        axis[i].scatter(j[c1], j[c2], alpha=0.3, s=2, rasterized=True)
+        axis[i].set_xlabel(c1)
+        axis[i].set_ylabel(c2)
+        axis[i].axhline(0, linestyle="--", color="black", alpha=0.75, zorder=-20)
+        axis[i].axvline(0, linestyle="--", color="black", alpha=0.75, zorder=-20)
+
+        r = pearsonr(j.dropna()[c1], j.dropna()[c2])[0]
+        axis[i].text(1, -1, "r = {0:.3f}".format(r))
+    fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.fold_change.scatter.svg"), dpi=300, bbox_inches="tight")
+
+    # plot number of shared genes across cell types
+    piv = pd.pivot_table(data=expr_diff2, index='gene', columns='cell_type', values='direction')
+
+    a = expr_diff2.sort_values(['cell_type', 'direction'])
+    g = a.groupby(['cell_type', 'direction']).groups.values()
+    n = map(lambda x: "_".join([str(i) for i in x]), a.groupby(['cell_type', 'direction']).groups.keys())
+    l = len(n)
+    comb = pd.DataFrame(np.array(map(overlap, itertools.product(g, repeat=2))).reshape((l, l)))
+    ns = pd.DataFrame(np.array(map(lambda x: ":".join(x), itertools.product(n, repeat=2))).reshape((l, l)))
+    comb.index = [x[0] for x in ns[0].str.split(":")]
+    comb.columns = [x[1] for x in ns.loc[0].str.split(":")]
+    comb = comb.sort_index(axis=0).sort_index(axis=1)
+
+    fig, axis = plt.subplots(1, 2, figsize=(4 * 2, 4), tight_layout=True)
+    sns.heatmap(data=comb, cmap="inferno", cbar_kws={"label": "Percentage overlap"}, square=True, ax=axis[0])
+    axis[0].set_xticklabels(axis[0].get_xticklabels(), rotation=90, fontsize="x-small", ha="center", va="top")
+    axis[0].set_yticklabels(axis[0].get_yticklabels(), rotation=0, fontsize="x-small", ha="right", va="center")
+    comb2 = comb.copy()
+    np.fill_diagonal(comb2.values, np.nan)
+    sns.heatmap(data=comb2, cmap="inferno", cbar_kws={"label": "Percentage overlap (no diagonal)"}, square=True, ax=axis[1])
+    axis[1].set_xticklabels(axis[1].get_xticklabels(), rotation=90, fontsize="x-small", ha="center", va="top")
+    axis[1].set_yticklabels(axis[1].get_yticklabels(), rotation=0, fontsize="x-small", ha="right", va="center")
+    fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.fold_change.overlap.heatmap.svg"), dpi=300)
+
+
+    # get genes which are diff acrross patietns and cell types
+    piv = pd.pivot_table(data=expr_diff2, index='gene', columns='cell_type', values='direction')
+    common = piv.loc[(piv['CLL'] == 1) & (piv.sum(1) > 3)]
+    common = piv[piv.sum(axis=1) > 1]
+    common = piv[piv.sum(axis=1) < -1]
+    common = piv[piv.sum(axis=1).abs() > 2]
+
+
+    piv = pd.pivot_table(data=expr_diff, index='gene', columns=['cell_type', 'patient_id', 'timepoint'], values='direction')
+    # filter on agreement across patients
+    piv2 = piv.T.groupby(['cell_type', 'timepoint']).sum().abs()
+    piv3 = piv[(piv2 > 1).any()]
+    s = piv3.sum(1).sort_values()
+    common = s[s.abs() > 10]
+
+    plt.scatter(s.rank(), s, alpha=0.1, s=5)
+
+
+    g = sns.clustermap(expr.loc[common.index].T, xticklabels=False, z_score=1, rasterized=True, row_cluster=False)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=5)
+    # g.savefig(os.path.join(analysis.results_dir, "offtarget_signature.svg"), dpi=300, bbox_inches="tight")
+
+    # get patients which have at least two timepoints per cell type
+    f = expr_z.columns.to_frame()
+    f['intercept'] = 1
+    c = pd.pivot_table(f, index=['cell_type', 'patient_id'], columns='timepoint')
+    i = pd.melt(c[c.sum(1) > 1].reset_index(), id_vars=['cell_type', 'patient_id']).dropna()[['cell_type', 'timepoint', 'patient_id']]
+    expr_z = expr_z.loc[:, pd.MultiIndex.from_arrays(i.values.T, names=['cell_type', 'timepoint', 'patient_id'])]
+
+    g = sns.clustermap(
+        expr_z.loc[common.index, ~expr_z.columns.get_level_values("cell_type").isin(["NA", "NurseLikeCell"])].dropna().T,
+        xticklabels=False, z_score=None, rasterized=True, row_cluster=True, metric="correlation")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=5)
+
+    g = sns.clustermap(
+        expr_z.loc[common.index, ~expr_z.columns.get_level_values("cell_type").isin(["NA", "NurseLikeCell"])].dropna().T.sort_index(axis=0, level=['timepoint', 'cell_type']),
+        xticklabels=False, z_score=None, rasterized=True, row_cluster=False, metric="correlation")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=5)
+
+    g = sns.clustermap(
+        expr_z.loc[common.index, ~expr_z.columns.get_level_values("cell_type").isin(["NA", "NurseLikeCell"])].dropna().T.sort_index(axis=0, level=['timepoint', 'cell_type']),
+        xticklabels=False, z_score=None, rasterized=True, row_cluster=False, metric="correlation")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=5)
+
+
+    g = sns.clustermap(
+        expr_z.loc[common.index, expr_z.columns.get_level_values("cell_type").isin(["CLL", "CD4", "CD8", "Mono"])].dropna().T.sort_index(axis=0, level=['cell_type', 'timepoint']),
+        xticklabels=False, z_score=None, rasterized=True, row_cluster=False, metric="correlation")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=5)
+
+
+    e = expr_z.loc[common.index, expr_z.columns.get_level_values("cell_type").isin(["CLL", "CD4", "CD8", "Mono"])].dropna().T.sort_index(axis=0, level=['timepoint', 'cell_type'])
+    diff = e[e.index.get_level_values('timepoint') >= 120].mean() - e[e.index.get_level_values('timepoint') == 0].mean()
+    norm = matplotlib.colors.Normalize(vmin=-diff.abs().max(), vmax=diff.abs().max())
+    g = sns.clustermap(
+        e, xticklabels=True, z_score=None, rasterized=False, row_cluster=False, metric="correlation", square=True,
+        col_colors=[plt.get_cmap("PuOr_r")(norm(diff))])
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=3)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+    g.savefig(os.path.join(analysis.results_dir, "offtarget_signature.svg"), dpi=300, bbox_inches="tight")
+
+
+    g = sns.clustermap(
+        e.groupby(['cell_type', 'timepoint']).mean(), xticklabels=True, z_score=None, rasterized=False, row_cluster=False, metric="correlation", square=True,
+        col_colors=[plt.get_cmap("PuOr_r")(norm(diff))])
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=3)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+    g.savefig(os.path.join(analysis.results_dir, "offtarget_signature.mean.svg"), dpi=300, bbox_inches="tight")
+
+
+    # come up with a ibrutinib signature score
+    diff = e[e.index.get_level_values('timepoint') >= 120].mean() - e[e.index.get_level_values('timepoint') == 0].mean()
+    up = diff[diff > 0].index
+    down = diff[diff <= 0].index
+
+    sig = e.loc[:, up].mean(axis=1) / e.loc[:, down].mean(axis=1)
+
+    g = sns.clustermap(
+        e.groupby(['cell_type', 'timepoint']).mean(),
+        col_colors=[plt.get_cmap("RdBu_r")(diff)],
+        xticklabels=True, z_score=None, rasterized=False, row_cluster=False, metric="correlation", square=True)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=3)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
 
 
 if __name__ == '__main__':
