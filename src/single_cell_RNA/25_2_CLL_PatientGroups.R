@@ -131,10 +131,13 @@ SLICE.km <- km
 source(paste0(Sys.getenv("CODEBASE"), "slice/slice.R"))
 source("~/code/10x_datasets/src/FUNC_SLICE2.R", echo=TRUE)
 
+Monocle.metadata.fields <- c("Slice2")
+source("~/code/10x_datasets/src/FUNC_Monocle.R", echo=TRUE)
+
 
 write.table(data.table(pbmc@meta.data,keep.rownames=TRUE), file=dirout(outS, "MetaData.tsv"), sep="\t", quote=F, row.names=F)
 
-pbmc@meta.data <- pbmc@meta.data[,c("ClusterNames_0.5", "ClusterNames_0.9", "sample", "nUMI", "nGene")]
+# pbmc@meta.data <- pbmc@meta.data[,c("ClusterNames_0.5", "ClusterNames_0.9", "sample", "nUMI", "nGene")]
 #
 # # Cluster analysis
-source("src/single_cell_RNA/FUNC_Seurat2.R", echo=TRUE)
+source("~/code/10x_datasets/src/FUNC_Seurat2.R", echo=TRUE)

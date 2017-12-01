@@ -20,8 +20,8 @@ if(!"pbmcFull" %in% ls()){
   (load(dirout("10_Seurat_raw/inclDay30_noIGHLK_negbinom/inclDay30_noIGHLK.RData")))
   pbmcFull <- pbmc
   rm(list="pbmc")
-  #pbmcFull@scale.data <- NULL
-  pbmcFull@raw.data <- NULL
+  pbmcFull@scale.data <- NULL
+  #pbmcFull@raw.data <- NULL
 }
 
 # Load CLL single cells
@@ -30,7 +30,7 @@ if(FALSE){
   pbmcCLL <- pbmc
   rm(list="pbmc")
   pbmcCLL@scale.data <- NULL
-  pbmcCLL@raw.data <- NULL
+  #pbmcCLL@raw.data <- NULL
 }
 
 
@@ -252,6 +252,28 @@ pDat <- pDat[CellType == "CLL" & grepl("PT", sample)][,-"CellType",with=F]
 ggplot(pDat, aes(x=sample, y=value)) + geom_jitter(width=0.1, height=0,alpha=0.2) + geom_violin(aes(fill=sample),alpha=0.5) + facet_grid(.~variable)
 # ggsave(dirout(out, "1_1_Tf_Expression_Scaled.pdf"), height=5, width=10)
 ggsave(dirout(out, "1_1_Tf_Expression_Unscaled.pdf"), height=5, width=10)
+
+
+metaDatx <- subset(pbmcFull@data.info, CellType == "CLL" & grepl("PT", sample))
+pDat <- data.table(metaDatx, t(as.matrix(pbmcFull@raw.data[c("NFATC1", "IKZF1"),row.names(metaDatx)])))
+pDat[,sample := gsub("30", "030", sample)]
+pDat <- pDat[,c("sample", "NFATC1", "IKZF1"),with=F]
+(pDat <- melt(pDat,id.vars=c("sample")))
+ggplot(pDat, aes(x=sample, y=value)) + geom_jitter(width=0.2, height=0,alpha=0.2) + geom_violin(aes(fill=sample),alpha=0.5) + facet_grid(.~variable)
+ggsave(dirout(out, "1_1_Tf_Expression_Raw.pdf"), height=5, width=10)
+
+normDatOrig <- as.matrix(pbmcFull@data[,row.names(metaDatx)])
+rm(list="pbmcFull")
+normDat <- normDatOrig
+for(col in 1:ncol(normDat)){
+  normDat[,col] <- rank(normDat[,col])
+}
+pDat <- data.table(metaDatx, t(normDat[c("NFATC1", "IKZF1"),]))
+pDat[,sample := gsub("30", "030", sample)]
+pDat <- pDat[,c("sample", "NFATC1", "IKZF1"),with=F]
+(pDat <- melt(pDat,id.vars=c("sample")))
+ggplot(pDat, aes(x=sample, y=value)) + geom_jitter(width=0.2, height=0,alpha=0.2) + geom_violin(aes(fill=sample),alpha=0.5) + facet_grid(.~variable)
+ggsave(dirout(out, "1_1_Tf_Expression_Ranks.pdf"), height=5, width=10)
 
 #############
 # 2. DIFF GENES
@@ -605,12 +627,22 @@ pList2 <- lapply(names(pList), function(pn) pList[[pn]] + ggtitle(paste("Patient
 (p <- grid.arrange(grobs=pList2, ncol=1))
 ggsave(dirout(out, "7_Clones_All.jpg"), height=7, width=3.5, plot=p)
 
-# ggplot(otsig[patient %in% c("P1", "P4", "P7") & geneset %in% otsig[, sum(abs(Diff) > 1), by="geneset"][V1 >= 2]$geneset], 
-#        aes(x=paste0(timepoint, "_", CellType), y=geneset, color=Diff, size=pvalue2)) + 
-#   geom_point() +
-#   ylab("") + xlab("") + theme_bw(24) +  
-#   scale_color_gradient2(name="Effect size", high="red", mid="white", low="blue") +
-#   scale_size_continuous(name=expression(log[10](q-value))) +
-#   theme(axis.text.x = element_text(angle = 90, hjust=1, vjust=0.5, size=12), axis.text.y=element_text(size=12)) + 
-#   facet_grid(. ~ patient, scales="free", space="free")
-# ggsave(dirout(out, "7_Clone_Signatures_Supp.pdf"),height=7, width=10)
+pbmc <- pbmcPTs[["PT"]]
+tfs <- c("NFATC1", "IKZF1")
+pDat <- data.table(pbmc@dr$tsne@cell.embeddings, t(as.matrix(pbmc@data[tfs,])), sample=pbmc@meta.data$sample)
+pDat[,sample := gsub("30", "030", sample)]
+tfsx <- tfs[1]
+for(tfsx in tfs){
+  ggplot(pDat, aes_string(x="tSNE_1", y="tSNE_2", color=tfsx)) + geom_point() + facet_grid(. ~ sample) + 
+    scale_color_gradient(low="lightgrey", high="blue")
+  ggsave(dirout(out, "7_",tfsx, ".pdf"), height=7, width=21)
+}
+
+for(tfsx in tfs){
+  pDat2 <- list()
+  for(x in unique(pDat$sample)){
+    pDat2[[x]] <- sapply(1:200, function(i) mean(sample(pDat[sample == x][[tfsx]], 30)))
+  }
+  ggplot(melt(pDat2), aes(x=L1, y=value, fill=L1)) + geom_violin(alpha=0.5) + geom_jitter(width=0.1, height=0, alpha=0.5)
+  ggsave(dirout(out, "7_Bootstrap_",tfsx, ".pdf"), height=7, width=7)
+}
