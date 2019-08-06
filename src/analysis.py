@@ -8,33 +8,27 @@ if __name__ == '__main__':
     import matplotlib
     matplotlib.use('Agg')
 
-import multiprocessing
 import os
 import random
 import string
-import time
 
 import GPy
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import parmap
-import pybedtools
 import seaborn as sns
-import tqdm
-from scipy.cluster.hierarchy import fcluster
-from scipy.stats import pearsonr, spearmanr, zscore
-from sklearn.decomposition import PCA
+from tqdm import tqdm
+from scipy.stats import zscore
 from sklearn.preprocessing import LabelEncoder
 from statsmodels.stats.multitest import multipletests
 
-from looper.models import Project, Sample
+from peppy import Project
 from ngs_toolkit.atacseq import ATACSeqAnalysis
-from ngs_toolkit.general import (collect_differential_enrichment,
+from ngs_toolkit.general import (unsupervised_analysis,
+                                 collect_differential_enrichment,
                                  differential_enrichment,
                                  normalize_quantiles_r,
-                                 plot_differential_enrichment,
-                                 subtract_principal_component)
+                                 plot_differential_enrichment)
 
 # graphics settings
 sns.set_style("white")
@@ -52,10 +46,11 @@ np.random.seed(SEED)
 def main():
     # Start project and analysis objects
     prj = Project(os.path.join("metadata", "project_config.yaml"))
-    prj.samples = [sample for sample in prj.samples if sample.library == "ATAC-seq"]
+    prj._samples = [sample for sample in prj.samples if sample.library == "ATAC-seq"]
     for sample in prj.samples:
         sample.filtered = os.path.join(sample.paths.sample_root, "mapped", sample.name + ".trimmed.bowtie2.filtered.bam")
         sample.peaks = os.path.join(sample.paths.sample_root, "peaks", sample.name + "_peaks.narrowPeak")
+        sample.bigwig = os.path.join(prj.trackhubs.trackhub_dir, sample.name + "_peaks.narrowPeak")
 
         for attr in sample.__dict__.keys():
             if type(getattr(sample, attr)) is str:
@@ -65,11 +60,20 @@ def main():
     analysis = ATACSeqAnalysis(name="cll-time_course", prj=prj, samples=prj.samples)
 
     # Sample's attributes
-    sample_attributes = ["sample_name", "patient_id", "timepoint", "cell_type", "compartment", "response", "cell_number", "batch"]
-    numerical_attributes = ["cell_number"]
-    plotting_attributes = ["patient_id", "timepoint", "cell_type", "compartment", "batch"]
+    sample_attributes = [
+        "sample_name", "patient_id", "timepoint", "cell_type", "compartment", 'sex',
+        'ighv_mutation', 'ighv_homology', 'p53_mutation', 'cd38_expression',
+        'binet_stage', 'number_of_prior_treatments', 'ttft',
+        "response_at_120", "response", "cell_number", "batch", "good_batch"]
+    numerical_attributes = [
+        'ighv_homology', 'number_of_prior_treatments',
+        'ttft', 'response_at_120']
+    plotting_attributes = [
+        "patient_id", "timepoint", "cell_type", "compartment", 'sex',
+        'ighv_mutation', 'ighv_homology', 'p53_mutation', 'cd38_expression',
+        'binet_stage', 'number_of_prior_treatments', 'ttft',
+        'response_at_120', "batch", "good_batch"]
     cell_types = list(set([sample.cell_type for sample in analysis.samples]))
-
 
     # Get accessibility matrix with normalization
     # generate consensus peak set from all samples, cell types together
@@ -78,7 +82,8 @@ def main():
     # annotate consensus peak set
     analysis.get_peak_gene_annotation()
     analysis.get_peak_genomic_location()
-    analysis.get_peak_chromatin_state(chrom_state_file=os.path.join("data", "external", "E032_15_coreMarks_mnemonics.bed"))
+    analysis.get_peak_chromatin_state(
+        chrom_state_file=os.path.join("data", "external", "E032_15_coreMarks_mnemonics.bed"))
     analysis.calculate_peak_support(region_type="summits")
 
     # get coverage values for each region in each sample
@@ -89,7 +94,10 @@ def main():
     analysis.accessibility = data_normalization(analysis)
 
     # annotate matrix with sample metadata and save
-    analysis.accessibility = analysis.annotate_with_sample_metadata(quant_matrix="accessibility", attributes=sample_attributes + ["good_batch"], save=True, assign=False)
+    analysis.accessibility = analysis.annotate_with_sample_metadata(
+        quant_matrix="accessibility", attributes=sample_attributes,
+        numerical_attributes=numerical_attributes,
+        save=True, assign=False)
     analysis.to_pickle()
 
     analysis.annotate(quant_matrix="coverage")
@@ -97,11 +105,11 @@ def main():
 
 
     # Unsupervised analysis
-    unsupervised(analysis, quant_matrix="accessibility", samples=None, attributes_to_plot=plotting_attributes + ["good_batch"], plot_prefix="accessibility")
+    unsupervised_analysis(analysis, quant_matrix="accessibility", samples=None, attributes_to_plot=plotting_attributes, plot_prefix="accessibility")
     for cell_type in cell_types:
-        unsupervised(
-            analysis, quant_matrix="accessibility", samples=[s for s in analysis.samples if (s.cell_type == cell_type) ],
-            attributes_to_plot=['patient_id', 'timepoint', 'batch'] + ["good_batch"], plot_prefix="accessibility_{}_only".format(cell_type))
+        unsupervised_analysis(
+            analysis, quant_matrix="accessibility", samples=[s for s in analysis.samples if (s.cell_type == cell_type)],
+            attributes_to_plot=['patient_id', 'timepoint', 'batch'], plot_prefix="accessibility_{}_only".format(cell_type))
 
 
     # Time Series Analysis
@@ -125,7 +133,7 @@ def main():
     analysis.fits.to_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index=True)
     analysis.fits = pd.read_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index_col=0)
 
-    visualize_gaussian_process_fits(analysis, fits, output_dir=gp_output_dir, prefix=prefix)
+    visualize_gaussian_process_fits(analysis, analysis.fits, output_dir=gp_output_dir, prefix=prefix)
 
     # cluster variable regulatory elements with hierarchical mixtures of GPs (MOHGP)
     for alpha in [0.01, 0.05]:
@@ -141,7 +149,7 @@ def main():
         # wait for jobs to finish
 
         analysis.assignments = gather_MOHGP(
-            analysis.accessibility, fits,
+            analysis.accessibility, analysis.fits,
             cell_types=cell_types,
             n_clust=[3, 5, 4, 4, 4, 3],
             prefix=clust_prefix, fits_dir=mohgp_output_dir, alpha=alpha, posterior_threshold=0.8)
@@ -153,7 +161,7 @@ def main():
             output_dir=mohgp_output_dir)
 
         # export clusters at gene level
-        clusters_to_signatures(assignments)
+        clusters_to_signatures(analysis.assignments)
 
 
     # Linear time
@@ -167,7 +175,7 @@ def main():
     mohgp_output_dir = os.path.join(analysis.results_dir, "mohgp_fits")
     alpha = 0.05
     prefix = "accessibility.qnorm_pcafix_cuberoot" + ".p={}".format(alpha)
-    assignments = pd.read_csv(os.path.join(mohgp_output_dir, prefix + ".GP_fits.mohgp_clusters.csv"))
+    assignments = pd.read_csv(os.path.join(mohgp_output_dir, prefix + ".GP_fits.mohgp_clusters.csv"), index_col=0)
     l_assignments = cluster_stats(assignments, prefix=prefix)
 
 
@@ -194,14 +202,43 @@ def main():
         as_jobs=True
     )
 
+    # get HOMER consensus motifs
+    from ngs_toolkit.general import homer_combine_motifs
+    comparison_dirs = [os.path.join("results", "cluster_enrichments", x) + ".all" for x in l_assignments['comparison_name'].unique()]
+    output_dir = os.path.join("results", "cluster_enrichments_nostringent")
+
+    for dir_ in comparison_dirs:
+        cpus = 8; genome = "hg19"
+        combined_motifs = os.path.join(output_dir, "homerMotifs.filtered.motifs")
+        cmd = (
+            "findMotifsGenome.pl {bed} {genome}r {dir} -p {cpus} -nomotif -mknown {motif_file}"
+            .format(bed=os.path.join(dir_, prefix + "_regions.bed"),
+                    genome=genome, cpus=cpus, dir=dir_,
+                    motif_file=combined_motifs))
+        subprocess.call("sbatch -J homer.{d} -o {dir}.homer.log -p shortq -c 8 --mem 20000"
+                        .format(d=os.path.basename(dir_), dir=dir_)
+                        .split(" ")
+                        + ['--wrap', cmd])
+
+    homer_combine_motifs(
+        comparison_dirs, output_dir,
+        region_prefix=prefix,
+        reduce_threshold=0.6, match_threshold=10, info_value=0.6,
+        p_value_threshold=1e-10, fold_enrichment=None,
+        cpus=8, run=1, as_jobs=True, genome="hg19",
+        motif_database=None, known_vertebrates_TFs_only=False)
+
+    # Inspect remaining regions
+
     collect_differential_enrichment(
         l_assignments,
         directional=False,
+        steps=['homer_consensus'],
         data_type="ATAC-seq",
         output_dir=enrichments_dir,
         output_prefix=prefix,
         permissive=True)
-    
+
     for simple, label in [(False, ""), (True, "-simple")]:
         enrichment_table = pd.read_csv(os.path.join(
             enrichments_dir, prefix + ".meme_ame.csv"))
@@ -229,6 +266,19 @@ def main():
             comp_variable="comparison_name",
             output_prefix=prefix + label,
             top_n=5)
+        enrichment_table = pd.read_csv(os.path.join(
+            enrichments_dir, prefix + ".homer_consensus.csv"))
+        if simple:
+            enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
+        plot_differential_enrichment(
+            enrichment_table,
+            "homer_consensus",
+            data_type="ATAC-seq",
+            direction_dependent=False,
+            output_dir=enrichments_dir,
+            comp_variable="comparison_name",
+            output_prefix=prefix + label,
+            top_n=1)
         enrichment_table = pd.read_csv(os.path.join(
             enrichments_dir, prefix + ".enrichr.csv"))
         if simple:
@@ -287,7 +337,7 @@ def main():
     # TF analysis
     transcription_factor_accessibility(analysis)
 
-    # Indentity analysis
+    # CLL indentity analysis
     correlation_to_bcell(analysis)
     differentiation_assessment(analysis)
 
@@ -295,12 +345,22 @@ def main():
     cytokine_receptor_repertoire(analysis)
     cytokine_interplay(analysis)
 
+    # Cross-data type comparison
+    scrna_comparison(analysis)
+
+    # Off-target analysis
+    off_target_signature(analysis)
+
+    # Response prediction at day 0 from ATAC-seq
+    pre_treatment_correlation_with_response(analysis)
+
 
 def print_name(function):
     """
     Decorator to print the name of the decorated function.
     """
     import inspect
+
     def wrapper(obj, *args, **kwargs):
         print(function.__name__)
         return function(obj, *args, **kwargs)
@@ -313,6 +373,7 @@ def data_normalization(analysis):
     with quantile normalization followed by PCA-based batch correction and
     cube-root tranformation.
     """
+    cell_types = list(set([sample.cell_type for sample in analysis.samples]))
     to_norm = analysis.coverage.drop(['chrom', 'start', 'end'], axis=1)
     counts_qnorm = pd.DataFrame(
         normalize_quantiles_r(to_norm.values),
@@ -379,7 +440,7 @@ def fit_gaussian_processes(
 
     def submit_job_if_possible(cmd, total_job_lim=800, refresh_time=10, in_between_time=5):
         """
-        If less than `total_job_lim` jobs are running, submit, else, try again in `refresh_time` seconds. 
+        If less than `total_job_lim` jobs are running, submit, else, try again in `refresh_time` seconds.
         """
         import time
         import os
@@ -404,8 +465,8 @@ def fit_gaussian_processes(
     # get ranges of matrix features
     r = np.arange(0, matrix.shape[0], chunks)
 
-    for cell_type in tqdm.tqdm(cell_types, desc="cell_type", dynamic_ncols=True):
-        for start, end in tqdm.tqdm(zip(r, r[1:]) + [(r[-1], matrix.shape[0])], desc="chunk", dynamic_ncols=True):
+    for cell_type in tqdm(cell_types, desc="cell_type", dynamic_ncols=True):
+        for start, end in tqdm(zip(r, r[1:]) + [(r[-1], matrix.shape[0])], desc="chunk", dynamic_ncols=True):
             range_name = "{}-{}".format(start, end)
             name = ".".join([prefix, cell_type, range_name, library])
             log = os.path.join(output_dir, "log", name + ".log")
@@ -453,8 +514,8 @@ def gather_gaussian_processes(
     # Collect output of parallel jobs
     fits = pd.DataFrame()
     r = np.arange(0, matrix.shape[0], chunks)[1:]
-    for cell_type in tqdm.tqdm(cell_types, desc="cell_type"):
-        for start, end in tqdm.tqdm(zip(r, r[1:]) + [(r[-1], matrix.shape[0])], desc="chunk"):
+    for cell_type in tqdm(cell_types, desc="cell_type"):
+        for start, end in tqdm(zip(r, r[1:]) + [(r[-1], matrix.shape[0])], desc="chunk"):
             range_name = "{}-{}".format(start, end)
             name = ".".join([prefix, cell_type, range_name, library])
             try:
@@ -633,7 +694,7 @@ def gather_MOHGP(
         # Apply threshold probability to filter out some regions
         phi['assigned'] = (phi > posterior_threshold).any(axis=1)
 
-        # Assign to cluster 
+        # Assign to cluster
         phi['cluster_assignment'] = phi.loc[:, phi.dtypes == float].apply(np.argmax, axis=1).to_frame(name="cluster").squeeze()
 
         ass = fits.loc[phi.index]
@@ -847,7 +908,7 @@ def gp_linear(
     # Try with linear time
     fit_gaussian_processes(
         analysis.accessibility,
-        cell_types=cell_types, 
+        cell_types=cell_types,
         matrix_file=matrix_file,
         linear_time=True,
         prefix=prefix)  # wait for jobs to complete
@@ -861,7 +922,7 @@ def gp_linear(
     visualize_gaussian_process_fits(analysis, fits, output_dir=gp_output_dir, prefix=prefix)
 
     # cluster variable regulatory elements with hierarchical mixtures of GPs (MOHGP)
-    
+
     for alpha in [0.01, 0.05]:
         prefix = prefix + ".p={}".format(alpha)
         fit_MOHGP(
@@ -1075,7 +1136,7 @@ def plot_lola_enrichments(
             .str.replace("nan", "").str.replace("None", "")
             .str.replace(", , ", "").str.replace(", $", ""))
 
-        # Replace inf values with 
+        # Replace inf values with
         enr["pValueLog"] = enr["pValueLog"].replace(
             np.inf,
             enr.loc[enr["pValueLog"] != np.inf, "pValueLog"].max()
@@ -1133,7 +1194,7 @@ def plot_lola_enrichments(
             .str.replace("nan", "").str.replace("None", "")
             .str.replace(", , ", "").str.replace(", $", ""))
 
-        # Replace inf values with 
+        # Replace inf values with
         enr["pValueLog"] = enr["pValueLog"].replace(
             np.inf,
             enr.loc[enr["pValueLog"] != np.inf, "pValueLog"].max()
@@ -1429,7 +1490,8 @@ def specific_cll_enrichments():
 
 
 def transcription_factor_accessibility(
-        analysis, output_dir="{results_dir}/tf_accessibility",
+        analysis,
+        output_dir="{results_dir}/tf_accessibility",
         bed_dir="/home/arendeiro/resources/regions/LOLACore/hg19/encode_tfbs/regions/"):
     from glob import glob
     import pybedtools
@@ -1555,11 +1617,20 @@ def transcription_factor_accessibility(
     g = sns.factorplot(data=all_res[all_res['transcription_factor'] == "background"], x="timepoint", y="accessibility", hue="cell_type")
     g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.cell_type_hue.lineplots.background_only.svg"), dpi=300, bbox_inches="tight")
 
-    g = sns.factorplot(data=all_res[all_res['transcription_factor'] != "background"], x="timepoint", y="norm_accessibility", hue="cell_type", col="transcription_factor", col_wrap=5, sharey=False)
+    g = sns.lmplot(
+        data=all_res[all_res['transcription_factor'] != "background"],
+        x="timepoint", y="norm_accessibility",
+        hue="cell_type", col="transcription_factor",
+        ci=75,
+        col_wrap=5, sharey=False)
     g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.cell_type_hue.lineplots.free_y.svg"), dpi=300, bbox_inches="tight")
 
-    g = sns.factorplot(data=all_res[all_res['transcription_factor'] != "background"], x="timepoint", y="norm_accessibility", hue="cell_type", col="transcription_factor", col_wrap=5)
-    g.savefig(os.path.join(output_dir, "all_factor_binding.mean_patients.cell_type_hue.lineplots.svg"), dpi=300, bbox_inches="tight")
+    g = sns.lmplot(
+        data=all_res[all_res['transcription_factor'] != "background"],
+        x="timepoint", y="norm_accessibility",
+        hue="cell_type", col="transcription_factor",
+        ci=75, col_wrap=5)
+    g.savefig(os.path.join(output_dir, "_all_factor_binding.mean_patients.cell_type_hue.lineplots.svg"), dpi=300, bbox_inches="tight")
 
 
     p = pd.pivot_table(all_res[all_res['transcription_factor'] != "background"], index="transcription_factor", columns=["cell_type", "timepoint"], values="norm_accessibility")
@@ -1660,7 +1731,7 @@ def transcription_factor_accessibility(
     fig.savefig(os.path.join(output_dir, "scRNA-seq_expression.tfs.min_patients.signed_fold_change.svg"), dpi=300, bbox_inches="tight")
 
 
-    
+
     fig, axis = plt.subplots(1)
     sns.heatmap(expr.loc[["RELB", "REL", "NFKB1", "NFKB2"]].T.groupby(['cell_type', 'timepoint']).mean(), ax=axis)
     axis.set_yticklabels(axis.get_yticklabels(), rotation=0)
@@ -1727,7 +1798,7 @@ def differentiation_assessment(analysis):
     accessibility = analysis.accessibility
     accessibility.columns = accessibility.columns.get_level_values("sample_name")
 
-    for sample_set in ["fzhao", "dlara"]:
+    for sample_set in ["fzhao"]:
         # Make new config file pointing to respective annotation sheet
         new_annot = "annotation.{}_samples.csv".format(sample_set)
         new_config = os.path.join("metadata", "project_config.{}_samples.yaml".format(sample_set))
@@ -1744,91 +1815,103 @@ def differentiation_assessment(analysis):
         tmp_analysis.set_consensus_sites(os.path.join("results", "cll-time_course_peak_set.bed"))
         # Get coverage values for each peak in each sample
         tmp_analysis.measure_coverage(tmp_analysis.samples)
+        tmp_analysis.coverage.to_csv(os.path.join(
+            "results", "analysis.cll-time_course.{}_samples".format(sample_set) + ".coverage.csv"))
         tmp_analysis.coverage = tmp_analysis.coverage.loc[:, ~tmp_analysis.coverage.columns.str.contains("D199")]
         # Normalize cell types jointly (quantile normalization)
         tmp_analysis.normalize_coverage_quantiles(samples=[s for s in tmp_analysis.samples if "D199" not in s.name])
+        tmp_analysis.coverage_qnorm.to_csv(os.path.join(
+            "results", "analysis.cll-time_course.{}_samples".format(sample_set) + ".coverage_qnorm.csv"))
         tmp_analysis.to_pickle()
 
         # Join matrix with CLL samples from major tmp_analysis
         q = accessibility.join(tmp_analysis.coverage_qnorm).drop(['chrom', 'start', 'end'], axis=1)
+
         # Compute correlation
+        for region_set in ['all', 'differential', 'cll_differential']:
+            if region_set == "all":
+                c = q.corr()
+            elif region_set == "differential":
+                diff = analysis.assignments.index.unique()
+                c = q.loc[diff, :].corr()
+            elif region_set == "cll_differential":
+                diff = analysis.assignments.loc[analysis.assignments['cell_type'] == "CLL"].index.unique()
+                c = q.loc[diff, :].corr()
 
-        c = q.corr()
+            g = sns.clustermap(tmp_analysis.coverage_qnorm.drop(['chrom', 'start', 'end'], axis=1).corr(), xticklabels=False, figsize=(8, 8), rasterized=True)
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+            g.savefig(os.path.join("results", "differentiation_assessment.{}_only.map.{}.svg".format(sample_set, region_set)), dpi=200)
 
-        g = sns.clustermap(tmp_analysis.coverage_qnorm.drop(['chrom', 'start', 'end'], axis=1).corr(), xticklabels=False, figsize=(8 ,8), rasterized=True)
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.savefig(os.path.join("results", "differentiation_assessment.{}_only.map.svg".format(sample_set)), dpi=200)
+            g = sns.clustermap(c, xticklabels=False, figsize=(8, 8), rasterized=True)
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+            g.savefig(os.path.join("results", "differentiation_assessment.{}_together.map.{}.svg".format(sample_set, region_set)), dpi=200)
 
-        g = sns.clustermap(c, xticklabels=False, figsize=(8 ,8), rasterized=True)
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.savefig(os.path.join("results", "differentiation_assessment.{}_together.map.svg".format(sample_set)), dpi=200)
+            mask = c.index.str.contains("d_CLL") | (c.index.str.contains("CB") & c.index.str.contains("NaiveBcell|chedBcell|Tcell"))
+            g = sns.clustermap(c.loc[mask, mask], xticklabels=False, figsize=(8, 8), rasterized=True)
+            g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
+            g.savefig(os.path.join("results", "differentiation_assessment.{}_together.relevant.map.{}.svg".format(sample_set, region_set)), dpi=200)
 
-        mask = c.index.str.contains("d_CLL") | (c.index.str.contains("CB") & c.index.str.contains("NaiveBcell|chedBcell|Tcell"))
-        g = sns.clustermap(c.loc[mask, mask], xticklabels=False, figsize=(8 ,8), rasterized=True)
-        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize="xx-small")
-        g.savefig(os.path.join("results", "differentiation_assessment.{}_together.relevant.map.svg".format(sample_set)), dpi=200)
+            c2 = pd.melt(c.loc[mask, mask].reset_index(), "index")
+            annot = pd.DataFrame(map(pd.Series, c2['index'].str.split("_"))).iloc[:, [1, 2, 3]]
+            annot[2] = annot[2].str.replace("d|ND", "").astype(int)
+            c2.index = pd.MultiIndex.from_arrays(annot.T.values, names=["patient_id", "timepoint", "cell_type"])
 
-        c2 = pd.melt(c.loc[mask, mask].reset_index(), "index")
-        annot = pd.DataFrame(map(pd.Series, c2['index'].str.split("_"))).iloc[:, [1, 2, 3]]
-        annot[2] = annot[2].str.replace("d|ND", "").astype(int)
-        c2.index = pd.MultiIndex.from_arrays(annot.T.values, names=["patient_id", "timepoint", "cell_type"])
+            c3 = c2[c2['variable'].str.contains("ND") & ~c2.index.get_level_values("cell_type").str.contains("ND") & ~c2['index'].str.contains("ND")]
+            c3['healty_subset'] = [x[3] for x in c3['variable'].str.split("_")]
+            g = sns.factorplot(data=c3.reset_index(), x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False)
+            g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.{}.svg".format(sample_set, region_set)), dpi=300)
 
-        c3 = c2[c2['variable'].str.contains("ND") & ~c2.index.get_level_values("cell_type").str.contains("ND") & ~c2['index'].str.contains("ND")]
-        c3['healty_subset'] = [x[3] for x in c3['variable'].str.split("_")]
-        g = sns.factorplot(data=c3.reset_index(), x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False)
-        g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.svg".format(sample_set)), dpi=300)
+            g = sns.factorplot(data=c3.reset_index(), x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False, sharex=False)
+            g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.{}.svg".format(sample_set, region_set)), dpi=300)
 
-        g = sns.factorplot(data=c3.reset_index(), x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False, sharex=False)
-        g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.svg".format(sample_set)), dpi=300)
+            data = pd.pivot_table(data=c3.reset_index(), index=['patient_id', 'timepoint', 'cell_type'], columns='healty_subset', values="value")
+            data_z = pd.DataFrame(zscore(data, axis=0), index=data.index, columns=data.columns)
+            data_z = (data - data.mean(0)) / data.std(0)
 
-        data = pd.pivot_table(data=c3.reset_index(), index=['patient_id', 'timepoint', 'cell_type'], columns='healty_subset', values="value")
-        data_z = pd.DataFrame(zscore(data, axis=0), index=data.index, columns=data.columns)
-        data_z = (data - data.mean(0)) / data.std(0)
+            g = sns.factorplot(
+                data=pd.melt(data_z.reset_index(), id_vars=['patient_id', 'timepoint', 'cell_type'], var_name="healty_subset"),
+                x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False, sharex=False)
+            g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.zscore.{}.svg".format(sample_set, region_set)), dpi=300)
 
-        g = sns.factorplot(
-            data=pd.melt(data_z.reset_index(), id_vars=['patient_id', 'timepoint', 'cell_type'], var_name="healty_subset"),
-            x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=False, sharex=False)
-        g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.zscore.svg".format(sample_set)), dpi=300)
+            # Get ratios along time for each patient
+            data['switched_to_naive'] = np.log2(data['SwitchedBcell'] / data['NaiveBcell'])
+            data['switched_to_unswitched'] = np.log2(data['SwitchedBcell'] / data['UnswitchedBcell'])
+            data['unswitched_to_naive'] = np.log2(data['UnswitchedBcell'] / data['NaiveBcell'])
+            data['Bcell_mean'] = data[['SwitchedBcell', 'UnswitchedBcell', 'NaiveBcell']].mean(axis=1)
+            data['b_to_t'] = np.log2(data['Bcell_mean'] / data['Tcell'])
+            data['cd8_to_cd4'] = np.log2(data['CD8Tcell'] / data['CD4Tcell'])
 
+            g = sns.factorplot(
+                data=pd.melt(data.loc[:, data.columns.str.contains("_to_")].reset_index(), id_vars=['patient_id', 'timepoint', 'cell_type'], var_name="healty_subset"),
+                x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=True, sharex=False)
+            for ax in g.axes.flatten():
+                ax.axhline(0, linestyle="--", color="black")
+            g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.ratios.fold_change.{}.svg".format(sample_set, region_set)), dpi=300)
 
-        # Get ratios along time for each patient
-        data['switched_to_naive'] = np.log2(data['SwitchedBcell'] / data['NaiveBcell'])
-        data['switched_to_unswitched'] = np.log2(data['SwitchedBcell'] / data['UnswitchedBcell'])
-        data['unswitched_to_naive'] = np.log2(data['UnswitchedBcell'] / data['NaiveBcell'])
-        data['Bcell_mean'] = data[['SwitchedBcell', 'UnswitchedBcell', 'NaiveBcell']].mean(axis=1)
-        data['b_to_t'] = np.log2(data['Bcell_mean'] / data['Tcell'])
-        data['cd8_to_cd4'] = np.log2(data['CD8Tcell'] / data['CD4Tcell'])
+            g = sns.factorplot(
+                data=pd.melt(data.loc[:, data.columns.str.contains("_to_")].reset_index(), id_vars=['patient_id', 'timepoint', 'cell_type'], var_name="healty_subset"),
+                x="timepoint", y="value", hue="healty_subset", sharey=True, sharex=False)
+            for ax in g.axes.flatten():
+                ax.axhline(0, linestyle="--", color="black")
+            g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.ratios.fold_change.mean_patients.{}.svg".format(sample_set, region_set)), dpi=300)
 
-        g = sns.factorplot(
-            data=pd.melt(data.loc[:, data.columns.str.contains("_to_")].reset_index(), id_vars=['patient_id', 'timepoint', 'cell_type'], var_name="healty_subset"),
-            x="timepoint", y="value", col="patient_id", hue="healty_subset", sharey=True, sharex=False)
-        for ax in g.axes.flatten():
-            ax.axhline(0, linestyle="--", color="black")
-        g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.ratios.fold_change.svg".format(sample_set)), dpi=300)
+            from ngs_toolkit.graphics import radar_plot
 
-        g = sns.factorplot(
-            data=pd.melt(data.loc[:, data.columns.str.contains("_to_")].reset_index(), id_vars=['patient_id', 'timepoint', 'cell_type'], var_name="healty_subset"),
-            x="timepoint", y="value", hue="healty_subset", sharey=True, sharex=False)
-        for ax in g.axes.flatten():
-            ax.axhline(0, linestyle="--", color="black")
-        g.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.ratios.fold_change.mean_patients.svg".format(sample_set)), dpi=300)
+            data2 = data.reset_index()
 
+            f = radar_plot(
+                data2[data2['patient_id'] != "KI"],
+                subplot_var="patient_id", group_var="timepoint",
+                radial_vars=["NaiveBcell", "SwitchedBcell", "UnswitchedBcell"],
+                cmap="inferno", scale_to_max=False)
+            f.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.radar_plot.{}.svg".format(sample_set, region_set)), dpi=300)
 
-        from ngs_toolkit.graphics import radar_plot
-
-        f = radar_plot(
-            data[data['patient_id'] != "KI"].reset_index(),
-            subplot_var="patient_id", group_var="timepoint",
-            radial_vars=["NaiveBcell", "SwitchedBcell", "UnswitchedBcell"],
-            cmap="inferno", scale_to_max=False)
-        f.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.radar_plot.svg".format(sample_set)), dpi=300)
-
-        f = radar_plot(
-            data[data['patient_id'] != "KI"].reset_index(),
-            subplot_var="patient_id", group_var="timepoint",
-            radial_vars=["NaiveBcell", "SwitchedBcell", "UnswitchedBcell"],
-            cmap="inferno", scale_to_max=True)
-        f.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.radar_plot.scale_to_max.svg".format(sample_set)), dpi=300)
+            f = radar_plot(
+                data2[data2['patient_id'] != "KI"],
+                subplot_var="patient_id", group_var="timepoint",
+                radial_vars=["NaiveBcell", "SwitchedBcell", "UnswitchedBcell"],
+                cmap="inferno", scale_to_max=True)
+            f.savefig(os.path.join("results", "differentiation_assessment.{}_correlation_to_normal.time_dependent.radar_plot.scale_to_max.{}.svg".format(sample_set, region_set)), dpi=300)
 
 
 def get_gene_level_accessibility(analysis):
@@ -1871,7 +1954,7 @@ def cytokine_receptor_repertoire(
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    # Get ligand-receptor info 
+    # Get ligand-receptor info
     lr = pd.read_excel("https://images.nature.com/original/nature-assets/ncomms/2015/150722/ncomms8866/extref/ncomms8866-s3.xlsx", 1)
     lr = lr.loc[
         ~lr['Pair.Evidence'].str.contains("EXCLUDED"),
@@ -1887,10 +1970,10 @@ def cytokine_receptor_repertoire(
         """<!DOCTYPE Query>""",
         """<Query  virtualSchemaName = "default" formatter = "CSV" header = "0" uniqueRows = "0" count = "" datasetConfigVersion = "0.6" >""",
         """<Dataset name = "hsapiens_gene_ensembl" interface = "default" >""",
-		"""<Attribute name = "ensembl_gene_id" />""",
-		"""<Attribute name = "external_gene_name" />""",
-		"""<Attribute name = "hgnc_id" />""",
-		"""<Attribute name = "hgnc_symbol" />""",
+        """<Attribute name = "ensembl_gene_id" />""",
+        """<Attribute name = "external_gene_name" />""",
+        """<Attribute name = "hgnc_id" />""",
+        """<Attribute name = "hgnc_symbol" />""",
         """</Dataset>""",
         """</Query>"""])
     req = requests.get(url_query, stream=True)
@@ -1914,6 +1997,9 @@ def cytokine_receptor_repertoire(
     acc = analysis.accessibility.copy()
     acc.index = analysis.accessibility.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
 
+    # order by cell type, timepoint, patient
+    acc = acc.T.reset_index().sort_values(by=['cell_type', 'timepoint', 'patient_id'], axis=0).set_index(acc.columns.names).T
+
     # Get all reg. elements which are associated to each gene
     full_acc = acc.loc[acc.index.get_level_values("gene_name").isin(lr_genes), :]
     red_acc = full_acc.groupby(level="gene_name").mean()
@@ -1921,16 +2007,25 @@ def cytokine_receptor_repertoire(
     full_acc_time = full_acc.T.groupby(level=["cell_type", "timepoint"]).mean().T
     red_acc_time = red_acc.T.groupby(level=["cell_type", "timepoint"]).mean().T
 
-    for variable, label1 in [("full", "region_level"), ("red", "gene_level")]:
+    for variable, label1 in [("red", "gene_level")]:  # ("full", "region_level"),
         for ext, label2 in [("", ""), ("_time", ".timepoint_mean")]:
-            for z, label3 in [(None, ""), (1, "_zscore")]:
+            for z, label3 in [(None, ""), (1, ".zscore")]:
                 m = eval(variable + "_" + "acc" + ext)
+
                 w, h = m.shape[0] * 0.01, m.shape[1] * 0.12
+
                 g = sns.clustermap(
                     m.T, col_cluster=True, row_cluster=True, z_score=z,
                     figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
                 g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
-                g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
+                g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
+
+                g = sns.clustermap(
+                    m.T,
+                    col_cluster=True, row_cluster=False, z_score=z,
+                    figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+                g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+                g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.sorted.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
 
     # Differential regulatory elements with changing ligand or receptor
     # get variable regions for all cell types
@@ -1943,28 +2038,54 @@ def cytokine_receptor_repertoire(
     for variable, label1 in [("full", "region_level"), ("red", "gene_level")]:
         for ext, label2 in [("", ""), ("_time", ".timepoint_mean")]:
             for z, label3 in [(None, ""), (1, ".zscore")]:
+                print(label1, label2, label3)
                 m = eval(variable + "_" + "acc" + ext + "_sig")
 
+                w, h = m.shape[0] * 0.01, m.shape[1] * 0.12
+
+                # g = sns.clustermap(
+                #     m.T, col_cluster=True, row_cluster=True, z_score=z,
+                #     figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+                # g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+                # g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
+
+                # g = sns.clustermap(
+                #     m.T, col_cluster=True, row_cluster=False, z_score=z,
+                #     figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+                # g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+                # g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.sorted.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
+
+                # Without CLL
+                m2 = m.loc[:, m.columns.get_level_values("cell_type") != "CLL"]
                 g = sns.clustermap(
-                    m.T, col_cluster=True, row_cluster=True, z_score=z,
-                    robust=True, xticklabels=False, rasterized=True)
+                    m2.T, col_cluster=True, row_cluster=True, z_score=z,
+                    figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
                 g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
-                g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
+                g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.noCLL.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
+
+                g = sns.clustermap(
+                    m2.T, col_cluster=True, row_cluster=False, z_score=z,
+                    figsize=(w, h), robust=True, xticklabels=False, rasterized=True)
+                g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize="xx-small")
+                g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.sig_only{}.clustermap{}.sorted.noCLL.svg".format(label1, label2, label3)), dpi=300, bbox_inches="tight")
+
 
     # for each cell type
-    for cell_type in acc.columns.levels[3]:
+    cmap_mean = plt.get_cmap("PuOr_r")
+    for cell_type in [u'Bcell', u'CD4', u'CD8', u'Mono', u'NK']:
         variable_regions = analysis.assignments[(analysis.assignments['cell_type'] == cell_type)].index.drop_duplicates().tolist()
-        for variable, label1 in [("full", "region_level"), ("red", "gene_level")]:
+        for variable, label1 in [("red", "gene_level")]:  # ("full", "region_level")
             for ext, label2 in [("", ""), ("_time", ".timepoint_mean")]:
-                for row_cluster, label3 in [(False, "sorted"), (True, "clustered")]:
-                    for z, label4 in [(None, ""), (1, ".zscore")]:
-                        m = eval(variable + "_" + "acc" + ext + "_sig").sort_index(axis=1, level=['timepoint'])
+                for row_cluster, label3 in [(False, "sorted")]:  # (True, "clustered")
+                    for z, label4 in [(1, ".zscore")]:  # (None, ""),
+                        print(cell_type, label1, label2, label3, label4)
+                        m = eval(variable + "_" + "acc" + ext + "_sig")
 
                         if variable == "full":
                             m = m.loc[variable_regions, m.columns.get_level_values("cell_type") == cell_type]
                         else:
                             variable_genes = full_acc.index[full_acc.index.get_level_values("index").isin(variable_regions)].get_level_values("gene_name").drop_duplicates().tolist()
-                            m = m.loc[variable_genes, m.columns.get_level_values("cell_type") == cell_type]
+                            m = m.loc[m.index.get_level_values("gene_name").isin(variable_genes), m.columns.get_level_values("cell_type") == cell_type].groupby("gene_name").mean()
 
                         w, h = m.shape[0] * 0.1, m.shape[1] * 1.2
 
@@ -1975,12 +2096,101 @@ def cytokine_receptor_repertoire(
                             square = False
                             xticklabels = False
 
+                        mean = m.mean(1)
+                        norm = matplotlib.colors.Normalize(vmin=-abs(mean).max(), vmax=abs(mean).max())
+
                         g = sns.clustermap(
                             m.T, col_cluster=True, row_cluster=row_cluster, z_score=z, square=square,
-                            figsize=(h, w), robust=True, xticklabels=xticklabels, rasterized=True)
+                            figsize=(h, w), robust=True, xticklabels=xticklabels, rasterized=True, col_colors=cmap_mean(norm(mean)))
                         g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize=h / 3.)
                         g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, ha="center", fontsize=w / 3.)
-                        g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.{}.sig_only{}.clustermap.{}{}.svg".format(cell_type, label1, label2, label3, label4)), dpi=300, bbox_inches="tight")
+                        g.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.{}.sig_only{}.clustermap.{}{}.svg".format(
+                            cell_type, label1, label2, label3, label4)), dpi=300, bbox_inches="tight")
+
+                        if variable == "red":
+                            if (label4 == ".zscore") and (label3 == "sorted"):
+                                fig = barmap(
+                                    g.data2d, z_score=None, square=square, ylims=(-1, 1), figsize=(g.fig.get_figwidth(), g.fig.get_figheight()))
+                                for ax in fig.axes:
+                                    ax.set_yticklabels(ax.get_yticklabels(), rotation=0, ha="left", fontsize=h / 6.)
+                                    ax.set_xticklabels(ax.get_xticklabels(), rotation=90, ha="center", fontsize=w / 3.)
+                                fig.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.{}.sig_only{}.barmap.{}{}.svg".format(cell_type, label1, label2, label3, label4)), dpi=300, bbox_inches="tight")
+
+                            # only receptors, cytokines
+                            m2 = m.loc[
+                                (m.index.str.startswith("CD") | m.index.str.startswith("CCL") | m.index.str.startswith("CCR") | m.index.str.startswith("CXC")
+                                    | m.index.str.startswith("IL") | m.index.str.startswith("ITG") | m.index.str.startswith("IFN")
+                                    | m.index.str.startswith("VCAM") | m.index.str.startswith("NCAM") | m.index.str.startswith("ICAN")) &
+                                (~m.index.str.startswith("CDH")), :]
+
+                            w, h = m2.shape[0] * 0.1, m2.shape[1] * 1.2
+
+                            mean = m2.mean(1)
+                            norm = matplotlib.colors.Normalize(vmin=-abs(mean).max(), vmax=abs(mean).max())
+
+                            g2 = sns.clustermap(
+                                m2.T, col_cluster=True, row_cluster=row_cluster, z_score=z, square=square,
+                                figsize=(h, w), robust=True, xticklabels=xticklabels, rasterized=True,
+                                col_colors=cmap_mean(norm(mean)))
+                            g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize=h / 3.)
+                            g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90, ha="center", fontsize=w)
+                            g2.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.{}.sig_only{}.clustermap.{}{}.only_CD.svg".format(
+                                cell_type, label1, label2, label3, label4)), dpi=300, bbox_inches="tight")
+
+                            if (label4 == ".zscore") and (label3 == "sorted"):
+                                fig = barmap(
+                                    g2.data2d, z_score=None, square=square, ylims=(-1, 1), figsize=(g.fig.get_figwidth(), g.fig.get_figheight()))
+                                for ax in fig.axes:
+                                    ax.set_yticklabels(ax.get_yticklabels(), rotation=0, ha="left", fontsize=h / 6.)
+                                    ax.set_xticklabels(ax.get_xticklabels(), rotation=90, ha="center", fontsize=w)
+                                fig.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.{}.sig_only{}.barmap.{}{}.only_CD.svg".format(cell_type, label1, label2, label3, label4)), dpi=300, bbox_inches="tight")
+
+                            # sorted alphabetically
+                            g2 = sns.clustermap(
+                                m2.T, col_cluster=False, row_cluster=row_cluster, z_score=z, square=square,
+                                figsize=(h, w), robust=True, xticklabels=xticklabels, rasterized=True,
+                                col_colors=cmap_mean(norm(mean)))
+                            g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize=h / 3.)
+                            g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90, ha="center", fontsize=w)
+                            g2.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.{}.sig_only{}.clustermap.{}{}.only_CD.sorted_name.svg".format(
+                                cell_type, label1, label2, label3, label4)), dpi=300, bbox_inches="tight")
+
+                            if (label4 == ".zscore") and (label3 == "sorted"):
+                                fig = barmap(
+                                    g2.data2d, z_score=None, square=square, ylims=(-1, 1), figsize=(g.fig.get_figwidth(), g.fig.get_figheight()))
+                                for ax in fig.axes:
+                                    ax.set_yticklabels(ax.get_yticklabels(), rotation=0, ha="left", fontsize=h / 6.)
+                                    ax.set_xticklabels(ax.get_xticklabels(), rotation=90, ha="center", fontsize=w)
+                                fig.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.{}.sig_only{}.barmap.{}{}.only_CD.sorted_name.svg".format(cell_type, label1, label2, label3, label4)), dpi=300, bbox_inches="tight")
+
+
+                            # only cam pathway
+                            m3 = m.loc[(m.index.isin(cam_genes)), :]
+
+                            w, h = m3.shape[0] * 0.1, m3.shape[1] * 1.2
+
+                            mean = m3.mean(1)
+                            norm = matplotlib.colors.Normalize(vmin=-abs(mean).max(), vmax=abs(mean).max())
+
+                            g2 = sns.clustermap(
+                                m3.T, col_cluster=True, row_cluster=row_cluster, z_score=z, square=square,
+                                figsize=(h, w), robust=True, xticklabels=xticklabels, rasterized=True,
+                                col_colors=cmap_mean(norm(mean)))
+                            g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0, ha="left", fontsize=h / 3.)
+                            g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90, ha="center")
+                            g2.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.{}.sig_only{}.clustermap.{}{}.only_CAM.svg".format(
+                                cell_type, label1, label2, label3, label4)), dpi=300, bbox_inches="tight")
+
+                            if (label4 == ".zscore") and (label3 == "sorted"):
+                                fig = barmap(
+                                    g2.data2d, z_score=None, square=square, ylims=(-1, 1), figsize=(g.fig.get_figwidth(), g.fig.get_figheight()))
+                                for ax in fig.axes:
+                                    ax.set_yticklabels(ax.get_yticklabels(), rotation=0, ha="left", fontsize=h / 6.)
+                                    ax.set_xticklabels(ax.get_xticklabels(), rotation=90, ha="center", fontsize=w)
+                                fig.savefig(os.path.join(output_dir, "ligand-receptor_repertoire.{}.{}.sig_only{}.barmap.{}{}.only_CAM.svg".format(cell_type, label1, label2, label3, label4)), dpi=300, bbox_inches="tight")
+
+
+
 
         red_acc_time_sig.to_csv(os.path.join(output_dir, "ligand-receptor_repertoire.{}.gene_level.sig_only.timepoint_mean.clustermap.csv".format(cell_type)), index=True)
 
@@ -2002,7 +2212,6 @@ def cytokine_receptor_repertoire(
     red_acc_time_sig_specific = red_acc_time_sig.loc[
         (red_acc_time_sig.index.str.startswith("TGF")) |
         (red_acc_time_sig.index.str.startswith("WNT")) |
-        (red_acc_time_sig.index.str.startswith("NOTCH")) |
         (red_acc_time_sig.index.str.startswith("NOTCH")) |
         (red_acc_time_sig.index.str.startswith("TNF")) |
         (red_acc_time_sig.index.str.startswith("IL")) |
@@ -2035,7 +2244,6 @@ def cytokine_receptor_repertoire(
     red_acc_time_sig_specific = red_acc_time_sig.loc[
         (red_acc_time_sig.index.str.startswith("TGF")) |
         (red_acc_time_sig.index.str.startswith("WNT")) |
-        (red_acc_time_sig.index.str.startswith("NOTCH")) |
         (red_acc_time_sig.index.str.startswith("NOTCH")) |
         (red_acc_time_sig.index.str.startswith("TNF")) |
         (red_acc_time_sig.index.str.startswith("IL")) |
@@ -2091,7 +2299,7 @@ def cytokine_receptor_repertoire(
 def cytokine_interplay(analysis):
     import scipy
 
-    # Get ligand-receptor info 
+    # Get ligand-receptor info
     ligand_receptor = pd.read_excel("https://images.nature.com/original/nature-assets/ncomms/2015/150722/ncomms8866/extref/ncomms8866-s3.xlsx", 1)
     ligand_receptor = ligand_receptor.loc[
         ~ligand_receptor['Pair.Evidence'].str.contains("EXCLUDED"),
@@ -2232,7 +2440,6 @@ def scrna_comparison(analysis):
     g.ax_heatmap.set_xlabel(None, visible=False)
     g.ax_heatmap.set_ylabel(None, visible=False)
 
-
     g = sns.clustermap(tpm_qnorm.loc[['IKZF1', 'NFATC1', 'PAX5']])
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90)
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
@@ -2240,16 +2447,17 @@ def scrna_comparison(analysis):
     p = tpm_qnorm.loc[:, tpm_qnorm.columns.get_level_values("cell_type") == "CLL"]
     sns.swarmplot(
         data=pd.melt(p.loc[['IKZF1', 'NFATC1', 'PAX5']].T.reset_index(),
-        id_vars=['patient_id', 'timepoint', 'cell_type']), x='variable', y='value', hue="timepoint")
+                     id_vars=['patient_id', 'timepoint', 'cell_type']),
+        x='variable', y='value', hue="timepoint")
 
-    # 
+    #
 
     mean_signatures = pd.DataFrame()
-    for i, cell_type in enumerate(assignments['cell_type'].drop_duplicates()):
+    for i, cell_type in enumerate(analysis.assignments['cell_type'].drop_duplicates()):
         for cluster in range(5):
-            ass = assignments.loc[
-                (assignments['cell_type'] == cell_type) &
-                (assignments['cluster_assignment'] == cluster), :].sort_values("p_value")
+            ass = analysis.assignments.loc[
+                (analysis.assignments['cell_type'] == cell_type) &
+                (analysis.assignments['cluster_assignment'] == cluster), :].sort_values("p_value")
             if ass.empty:
                 continue
 
@@ -2264,9 +2472,13 @@ def scrna_comparison(analysis):
             mean_signatures = mean_signatures.append(sig, ignore_index=True)
 
     mean_signatures.to_csv(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.mean_expression.csv"), index=False)
+    mean_signatures = pd.read_csv(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.mean_expression.csv"))
 
     # Plot signature change with time within cell types for each ATAC-seq cluster
-    piv = pd.pivot_table(data=mean_signatures, index=['cell_type', 'timepoint'], columns=['ATAC-seq_cell_type', 'cluster'])
+    piv = pd.pivot_table(
+        data=mean_signatures,
+        index=['cell_type', 'timepoint'],
+        columns=['ATAC-seq_cell_type', 'cluster'])
 
     # remove effect of different expression mean per timepoint/cell type
     piv2 = (piv.T / df2.mean()).T
@@ -2286,7 +2498,8 @@ def scrna_comparison(analysis):
     fig.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.mean_expression.normalized.barplot.svg"), bbox_inches="tight")
 
     # get measurements per patient
-    df2 = df.loc[:,
+    df2 = df.loc[
+        :,
         (~df.columns.get_level_values("cell_type").isin(["NurseLikeCell", "NA"])) &
         (df.columns.get_level_values("timepoint").isin(["d0", "d30"]))]
     df2 = df2.loc[~(df2.sum(axis=1) == 0), :]
@@ -2376,6 +2589,107 @@ def scrna_comparison(analysis):
 
 
 
+
+    # Get averaged gene expression of each ATAC-seq cluster for each single cell
+    from ngs_toolkit.scrna import seurat_rdata_to_pandas
+    # get Seurat-normalized gene expression and metadata from R
+    rdata_file = os.path.join("results", "single_cell_RNA", "10_Seurat_raw", "inclDay30_noIGHLK_negbinom", "inclDay30_noIGHLK.RData")
+    expression, metadata = seurat_rdata_to_pandas(rdata_file, "pbmc")
+    metadata = metadata.rename(columns={"nGene": "genes_covered", "nUMI": "umis_detected", "CellType": "assigned_cell_type", "sample": "sample_id"})
+    metadata["patient_id"] = metadata['sample_id'].str.replace(r"\d", "").str.split("_").apply(lambda x: x[0])
+    metadata["timepoint"] = metadata['sample_id'].str.split("_").apply(lambda x: x[-1]).str.replace("d", "").astype(int)
+
+    cell_signatures = pd.DataFrame()
+    for i, cell_type in enumerate(["CD4", "CD8", "CLL", "NK", "Mono"]):
+        for cluster in range(5):
+            ass = analysis.assignments.loc[
+                (analysis.assignments['cell_type'] == cell_type) &
+                (analysis.assignments['cluster_assignment'] == cluster), :].sort_values("p_value")
+            if ass.empty:
+                continue
+
+            # get genes in cluster
+            top_g = analysis.coverage_annotated.loc[ass.index, "gene_name"].str.split(",").apply(pd.Series).stack().drop_duplicates()
+            top_g_coding = top_g[(~top_g.str.startswith("LINC")) & (~top_g.str.startswith("LOC")) & (~top_g.str.startswith("MIR"))].str.replace("-AS1", "")
+
+            # get cells of respective cell type
+            for patient in metadata['patient_id'].unique():
+                for timepoint in metadata['timepoint'].unique():
+                    print(cell_type, cluster, patient, timepoint)
+                    cells = metadata.loc[
+                        (metadata['assigned_cell_type'] == cell_type) &
+                        (metadata['patient_id'] == patient) &
+                        (metadata['timepoint'] == timepoint)].index
+                    pat_cells = metadata.loc[
+                        (metadata['assigned_cell_type'] == cell_type) &
+                        (metadata['patient_id'] == patient) &
+                        (metadata['timepoint'] == timepoint)].index
+                    if len(cells) < 1:
+                        continue
+                    exp = expression.loc[top_g_coding, cells].dropna()
+                    pat_exp = expression.loc[:, pat_cells].dropna()
+                    exp = (exp.mean(axis=0) - pat_exp.mean().mean()) / pat_exp.std().std()
+                    # exp = exp.mean(axis=0)
+
+                    exp = exp.to_frame(name="signature")
+                    exp['cell_type'] = cell_type
+                    exp['cluster'] = cluster
+                    exp['patient'] = patient
+                    exp['timepoint'] = timepoint
+                    cell_signatures = cell_signatures.append(exp.reset_index(), ignore_index=True)
+
+
+    fig, axis = plt.subplots(3, 5, figsize=(4 * 5, 4 * 3), sharey=True)
+    axis = iter(axis.flatten())
+    for cell_type in ['CD4', 'CD8', 'CLL']:
+        for cluster in cell_signatures['cluster'].unique():
+            ax = axis.next()
+            ax.set_title("{} - cluster {}".format(cell_type, cluster))
+            p = cell_signatures[(cell_signatures['cell_type'] == cell_type) & (cell_signatures['cluster'] == cluster)]
+            if p.empty: continue
+            sns.barplot(data=p, x="patient", y='signature', hue='timepoint', ax=ax)
+    fig.savefig(os.path.join(output_dir, "_scRNA-seq_signal_on_ATAC-seq_clusters.diff_atac.expression_single_cells.std_patient.barplot.by_cluster.svg"), bbox_inches="tight", dpi=300)
+
+    fig, axis = plt.subplots(3, 4, figsize=(4 * 4, 4 * 3), sharey=True)
+    axis = iter(axis.flatten())
+    for cell_type in ['CD4', 'CD8', 'CLL']:
+        for patient in cell_signatures['patient'].unique():
+            ax = axis.next()
+            ax.set_title("{} - patient {}".format(cell_type, patient))
+            p = cell_signatures[(cell_signatures['cell_type'] == cell_type) & (cell_signatures['patient'] == patient)]
+            sns.barplot(data=p, x="cluster", y='signature', hue='timepoint', ax=ax)
+    fig.savefig(os.path.join(output_dir, "_scRNA-seq_signal_on_ATAC-seq_clusters.diff_atac.expression_single_cells.std_patient.barplot.by_patient.svg"), bbox_inches="tight", dpi=300)
+
+
+    p = cell_signatures[(cell_signatures['cell_type'].isin(["CD4", "CD8", "CLL"]) & (cell_signatures['cluster'].isin([0, 1])))]
+    grid = sns.FacetGrid(data=p, row="cell_type", col="cluster", hue='timepoint')
+    grid.map(sns.violinplot, "patient", 'signature', alpha=0.2)
+    grid.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.diff_atac.expression_single_cells.barplot.svg"), bbox_inches="tight", dpi=300)
+
+
+    # # make heatmap of expression in CLL cluster regions
+    # e = expression.T.join(metadata)
+    # ee = e.groupby(['assigned_cell_type', 'patient_id', 'timepoint']).mean().T
+    # diff_regions = analysis.assignments.loc[
+    #     (analysis.assignments['cell_type'] == "CLL") &
+    #     (analysis.assignments['cluster_assignment'].isin([0, 1])), :].index
+    # genes = analysis.coverage_annotated.loc[diff_regions, "gene_name"].str.split(",").apply(pd.Series).stack().drop_duplicates()
+
+
+    # grid = sns.clustermap(
+    #     ee.loc[genes, ee.columns.get_level_values("assigned_cell_type") == "CLL"].dropna(),
+    #     z_score=1, cmap="RdBu_r", metric="correlation", rasterized=True,
+    #     vmax=1,
+    #     robust=True,
+    #     xticklabels=True, yticklabels=False
+    # )
+    # # grid.ax_heatmap.set_yticklabels(grid.ax_heatmap.get_yticklabels(), rotation=0, fontsize=4)
+    # grid.ax_heatmap.set_xticklabels(grid.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+    # grid.savefig(os.path.join(output_dir, "scRNA-seq_signal_on_ATAC-seq_clusters.diff_atac.expression_mean.clustermap.svg"), bbox_inches="tight", dpi=300)
+
+
+
+
     # Get enrichments of ATAC-seq region clusters
     atac_enr = pd.read_csv(os.path.join(
         analysis.results_dir, "cluster_enrichments", prefix + ".enrichr.csv"))
@@ -2444,7 +2758,7 @@ def scrna_comparison(analysis):
             #     sort_var="pvalue",
             #     as_jobs=True)
             # # wait for jobs to finish
-    
+
             collect_differential_enrichment(
                 scrna_diff2.loc[index, :].set_index("gene_name"),
                 directional=True,
@@ -2494,7 +2808,7 @@ def scrna_comparison(analysis):
                 a[['data_type', 'comparison_name', 'description', 'combined_score', 'p_value']],
                 s[['data_type', 'comparison_name', 'description', 'combined_score', 'p_value']],
                 g_s[['data_type', 'comparison_name', 'description', 'combined_score', 'p_value']]])
-            
+
             for metric in ['p_value', 'combined_score']:
                 p = pd.pivot_table(data=q, index="description", columns=['data_type', 'comparison_name'], values=metric)
 
@@ -2594,16 +2908,30 @@ def scrna_comparison(analysis):
         # join and compare
         joint = pd.concat([lola_red, encode_red])
         for metric in ['log_p_value', 'combined_score']:
-            
 
             # scatter
+
+            ## not directional
+            joint2 = joint.groupby(['data_type', 'comparison_name', 'antibody']).mean()
+            for cmap in ['YlOrBr', "summer", "coolwarm"]:
+                fig, axis = plt.subplots(1, 1, figsize=(4, 4))
+                piv = pd.pivot_table(data=joint2, index="antibody", columns=['data_type', 'comparison_name'], values=metric)
+                top = piv[[('scRNA-seq', "CLL"), ('ATAC-seq', "CLL")]].dropna().apply(zscore, axis=0).mean(axis=1)
+                axis.scatter(piv[('scRNA-seq', "CLL")], piv[('ATAC-seq', "CLL")], alpha=0.5, color=plt.get_cmap(cmap)(top))
+                for i in top.sort_values().tail(20).index:
+                    axis.text(piv.loc[i, ('scRNA-seq', "CLL")], piv.loc[i, ('ATAC-seq', "CLL")], i)
+                axis.set_xlabel("ATAC-seq ChIP-seq database overlap ({})".format(metric))
+                axis.set_ylabel("scRNA-seq gene set overlap ({})".format(metric))
+                fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.{}.CLL_joint_non_directional.scatter.{}.svg".format(metric, cmap)), dpi=300, bbox_inches="tight")
+
+            ## directional
             fig, axis = plt.subplots(1, 1, figsize=(4, 4))
             piv = pd.pivot_table(data=joint, index="antibody", columns=['data_type', 'comparison_name', 'direction'], values=metric)
             top = piv[[('ATAC-seq', "CLL_down", "all"), ('scRNA-seq', "CLL", "down")]].dropna().apply(zscore, axis=0).mean(axis=1)
             axis.scatter(piv[('ATAC-seq', "CLL_down", "all")], piv[('scRNA-seq', "CLL", "down")], alpha=0.5, color=plt.get_cmap("YlGnBu")(top))
             for i in top.sort_values().tail(20).index:
                 axis.text(piv.loc[i, ('ATAC-seq', "CLL_down", "all")], piv.loc[i, ('scRNA-seq', "CLL", "down")], i)
-            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.CLL_down.scatter.svg"), dpi=300, bbox_inches="tight")
+            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.{}.CLL_down.scatter.svg".format(metric)), dpi=300, bbox_inches="tight")
 
             fig, axis = plt.subplots(1, 1, figsize=(4, 4))
             piv = pd.pivot_table(data=joint, index="antibody", columns=['data_type', 'comparison_name', 'direction'], values=metric)
@@ -2611,7 +2939,7 @@ def scrna_comparison(analysis):
             axis.scatter(piv[('ATAC-seq', "CLL_up", "all")], piv[('scRNA-seq', "CLL", "up")], alpha=0.5, color=plt.get_cmap("YlOrRd")(top))
             for i in top.sort_values().tail(20).index:
                 axis.text(piv.loc[i, ('ATAC-seq', "CLL_up", "all")], piv.loc[i, ('scRNA-seq', "CLL", "up")], i)
-            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.CLL_up.scatter.svg"), dpi=300, bbox_inches="tight")
+            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.{}.CLL_up.scatter.svg".format(metric)), dpi=300, bbox_inches="tight")
 
             # barplots
             l = lola_red.loc[('CLL_down', 'all')].sort_values('log_p_value', ascending=False).head(20).reset_index()
@@ -2620,7 +2948,7 @@ def scrna_comparison(analysis):
             sns.barplot(data=l, x="log_p_value", y="antibody", orient="horizontal", color=sns.color_palette("colorblind")[0], ax=axis[0])
             sns.barplot(data=e, x="log_p_value", y="tf", orient="horizontal", color=sns.color_palette("colorblind")[0], ax=axis[1])
             sns.despine(fig)
-            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.CLL_down.barplot.svg"), dpi=300, bbox_inches="tight")
+            fig.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.{}.CLL_down.barplot.svg".format(metric)), dpi=300, bbox_inches="tight")
 
             # heatmaps
             piv = pd.pivot_table(
@@ -2633,6 +2961,32 @@ def scrna_comparison(analysis):
                 g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize="xx-small")
                 g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=3)
                 g.savefig(os.path.join(output_dir, "lola_vs_encode_enrichments.{}.heatmap.{}.svg".format(metric, label)), dpi=300, bbox_inches="tight")
+
+
+        # Report number of enriched TFs in
+        reported_tfs = dict()
+        metric = "log_p_value"
+        piv = pd.pivot_table(data=joint, index="antibody", columns=['data_type', 'comparison_name', 'direction'], values=metric)
+
+        for direction in ['down', 'up']:
+            # get down/upregulated in ATAC-seq down/up cluster and scRNA-seq down/upregualted genes
+            piv_cll_direction = piv.loc[
+                :,
+                (
+                    (piv.columns.get_level_values("data_type") == "ATAC-seq") &
+                    (piv.columns.get_level_values("comparison_name") == "CLL_{}".format(direction)))
+                |
+                (
+                    (piv.columns.get_level_values("data_type") == "scRNA-seq") &
+                    (piv.columns.get_level_values("comparison_name") == "CLL") &
+                    (piv.columns.get_level_values("direction") == direction))
+                ].dropna()
+
+            # scale between 0-1
+            standard_score = lambda x: (x - x.min()) / (x.max() - x.min())
+            # now report enriched the ones above a line where the sum is higher than 0.70
+            reported_tfs[direction] = piv_cll_direction.loc[piv_cll_direction.apply(standard_score, axis=0).sum(axis=1) > 0.7, :].index.tolist()
+        reported_tfs['both'] = [x for x in reported_tfs['down'] if x in reported_tfs['up']]
 
 
         # follow with ATAC-seq in-depth analysis
@@ -2784,7 +3138,7 @@ def scrna_comparison(analysis):
 
 
 
-def off_target_signature():
+def off_target_signature(analysis):
     import itertools
     from scipy.stats import pearsonr
     import scipy
@@ -2858,7 +3212,7 @@ def off_target_signature():
         corrs.append([c1, c2, r])
 
     fig, axis = plt.subplots(1, 1, figsize=(4 * 1, 4), tight_layout=True)
-    sns.heatmap(pd.pivot_table(data=pd.DataFrame(corrs), index=0, columns=1), cmap="PuOr_r", vmin=0, vmax=0.5, ax=axis, square=True)
+    sns.heatmap(pd.pivot_table(data=pd.DataFrame(corrs), index=0, columns=1), cmap="RdBu_r", vmin=-0.5, vmax=0.5, ax=axis, square=True)
     fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.fold_change.correlation.heatmap.svg"), dpi=300)
 
     # plot number of shared genes across cell types
@@ -2893,15 +3247,16 @@ def off_target_signature():
     common = piv[piv.sum(axis=1) < -1]
     common = piv[piv.sum(axis=1).abs() > 2]
 
+    # piv = pd.pivot_table(data=expr_diff2, index='gene', columns=['cell_type', 'patient_id', 'timepoint'], values='direction')
+    # # filter on agreement across patients
+    # piv2 = piv.T.groupby(['cell_type', 'timepoint']).sum().abs()
+    # piv3 = piv[(piv2 > 1).any()]
+    # s = piv3.sum(1).sort_values()
+    # common = s[s.abs() > 10]
+    # plt.scatter(s.rank(), s, alpha=0.1, s=5)
 
-    piv = pd.pivot_table(data=expr_diff, index='gene', columns=['cell_type', 'patient_id', 'timepoint'], values='direction')
-    # filter on agreement across patients
-    piv2 = piv.T.groupby(['cell_type', 'timepoint']).sum().abs()
-    piv3 = piv[(piv2 > 1).any()]
-    s = piv3.sum(1).sort_values()
-    common = s[s.abs() > 10]
-
-    plt.scatter(s.rank(), s, alpha=0.1, s=5)
+    # common.to_csv(os.path.join("results", "offtarget_signature.csv"), index=True)
+    # common.to_clipboard(index=True)
 
 
     g = sns.clustermap(expr.loc[common.index].T, xticklabels=False, z_score=1, rasterized=True, row_cluster=False)
@@ -2912,8 +3267,8 @@ def off_target_signature():
     f = expr_z.columns.to_frame()
     f['intercept'] = 1
     c = pd.pivot_table(f, index=['cell_type', 'patient_id'], columns='timepoint')
-    i = pd.melt(c[c.sum(1) > 1].reset_index(), id_vars=['cell_type', 'patient_id']).dropna()[['cell_type', 'timepoint', 'patient_id']]
-    expr_z = expr_z.loc[:, pd.MultiIndex.from_arrays(i.values.T, names=['cell_type', 'timepoint', 'patient_id'])]
+    i = pd.melt(c[c.sum(1) > 1].reset_index(), id_vars=['cell_type', 'patient_id']).dropna()[['timepoint', 'cell_type', 'patient_id']]
+    expr_z = expr_z.loc[:, pd.MultiIndex.from_arrays(i.values.T, names=['timepoint', 'cell_type', 'patient_id'])]
 
     g = sns.clustermap(
         expr_z.loc[common.index, ~expr_z.columns.get_level_values("cell_type").isin(["NA", "NurseLikeCell"])].dropna().T,
@@ -2966,9 +3321,26 @@ def off_target_signature():
     g = sns.clustermap(
         e.groupby(['cell_type', 'timepoint']).mean(),
         col_colors=[plt.get_cmap("RdBu_r")(diff)],
-        xticklabels=True, z_score=None, rasterized=False, row_cluster=False, metric="correlation", square=True)
+        z_score=1, cmap="RdBu_r",
+        xticklabels=True, rasterized=False, row_cluster=False, metric="correlation", square=True)
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=3)
     g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+    g.savefig("/home/arendeiro/plot.svg", bbox_inches="tight", dpi=300)
+
+
+    # Make a few plots illustrating marker expression
+    genes = ['CXCR4', "CD44", "FGR", "ZFPL2"]
+    cell_types = ['CD4', "CD8", 'CLL', "NK", "Mono"]
+
+    d = pd.melt(e.loc[:, genes].reset_index(),
+        var_name="gene", id_vars=["cell_type", "patient_id", "timepoint"])
+    d = d[d['patient_id'] == 'PT']
+
+    fig, axis = plt.subplots(1, len(genes), figsize=(4 * len(genes), 4))
+    for i, gene in enumerate(genes):
+        sns.barplot(data=d[d['gene'] == gene], x="timepoint", y="value", hue="cell_type", ax=axis[i])
+        axis[i].set_title(gene)
+    fig.savefig("/home/arendeiro/plot2.svg", bbox_inches="tight", dpi=300)
 
 
 
@@ -2976,9 +3348,40 @@ def off_target_signature():
     df["Term"] = df["Term"].str.replace("_.*", "")
     df2 = df.sort_values('Adjusted P-value').head(20)
 
-    fig, axis = plt.subplots(1)
+    fig, axis = plt.subplots(1, figsize=(5.0 / 2., 8.5 / 2.))
     sns.barplot(x=-np.log10(df2['Adjusted P-value']), y=df2['Term'], ax=axis, orient="horizontal", estimator=max)
-    fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.enrichment.WikiPathways.barplot.svg"), dpi=300, bbox_inches="tight")
+    # axis.scatter(x=-np.log10(df2['Adjusted P-value']), y=-np.log10(df2['Adjusted P-value']).rank(), s=df2['odds_ratio'], alpha=0.6)
+    fig.savefig(os.path.join("offtarget_signature.enrichment.WikiPathways.barplot2.svg"), dpi=300, bbox_inches="tight")
+
+    fig, axis = plt.subplots(1, figsize=(5.0 / 2., 8.5 / 2.))
+    sns.barplot(x=df2['odds_ratio'], y=df2['Term'], ax=axis, orient="horizontal", estimator=max)
+    # axis.scatter(x=-np.log10(df2['Adjusted P-value']), y=-np.log10(df2['Adjusted P-value']).rank(), s=df2['odds_ratio'], alpha=0.6)
+    fig.savefig(os.path.join("offtarget_signature.enrichment.WikiPathways.barplot2.odds.svg"), dpi=300, bbox_inches="tight")
+
+    # Calculate odds ratio:
+    df['d'] = df['Overlap'].str.split("/").apply(lambda x: int(x[0]))
+    df['c'] = df['Overlap'].str.split("/").apply(lambda x: int(x[1]))
+    df['b'] = common.shape[0] - df['d']
+    df['a'] = 20000 - (df['b'] + df['c'] + df['d'])
+    df['odds_ratio'] = df.apply(lambda x: fisher_exact([[x['a'], x['b']], [x['c'], x['d']]])[0], axis=1)
+
+    # reduce redundant terms
+    df['Term'] = df['Term'].str.lower()
+    df2 = df.groupby(['Term'])[['odds_ratio', 'Adjusted P-value']].max()
+
+    fig, axis = plt.subplots(1, figsize=(3, 3))
+    axis.scatter(x=df2['odds_ratio'], y=-np.log10(df2['Adjusted P-value']), s=3, alpha=0.6)
+    for term in df2.sort_values('Adjusted P-value').head(10).index:
+        axis.text(x=df2.loc[term, 'odds_ratio'], y=-np.log10(df2.loc[term, 'Adjusted P-value']), s=term, fontsize=6, ha="right")
+    axis.set_xlabel("Odds ratio")
+    axis.set_ylabel("-log(q-value)")
+    sns.despine(fig)
+    fig.savefig(os.path.join("offtarget_signature.enrichment.WikiPathways.scatter.svg"), dpi=300, bbox_inches="tight")
+
+
+
+
+
 
     # Get a cell type mixture for each patient, timepoint
     mix = e.groupby(['patient_id', 'timepoint']).mean().T
@@ -3011,7 +3414,7 @@ def off_target_signature():
     axis.text(0.9, 0.9, "t = {:3f}\np = {:3f}".format(t, p))
     fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.akh.validation.paired_pointplot.svg"), dpi=300, bbox_inches="tight")
 
-
+    data = a.reset_index()[['patient_id', 'timepoint_name', 0]].append(b.reset_index()[['patient_id', 'timepoint_name', 0]])
     data.sort_values(0)
 
     tp = (data.loc[:, 'timepoint_name'] == 'before_Ibrutinib').sum()
@@ -3067,9 +3470,1217 @@ def off_target_signature():
     g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.akh.sorted_timepoint.svg"), dpi=300, bbox_inches="tight")
 
 
+
+
+    # come up with a ibrutinib signature score
+    expr = pd.read_csv("results/single_cell_RNA/MeanMatrix.csv", index_col=0)
+    c = pd.Series(expr.columns).str.split("_").apply(pd.Series)
+    c[1] = c[1].str.replace('d', '').astype(int)
+    c = c[[1, 2, 0]]
+    expr.columns = pd.MultiIndex.from_arrays(c.values.T, names=['timepoint', 'cell_type', 'patient_id'])
+    expr = expr.sort_index(level=['timepoint', 'cell_type'], axis=1)
+    # Z-score values within each cell type
+    expr_z = expr.copy()
+    for cell_type in expr.columns.levels[1]:
+        expr_z.loc[:, expr_z.columns.get_level_values("cell_type") == cell_type] = scipy.stats.zscore(
+            expr_z.loc[:, expr_z.columns.get_level_values("cell_type") == cell_type], axis=1)
+
+    e = expr_z.loc[common.index, expr_z.columns.get_level_values("cell_type").isin(["CLL", "CD4", "CD8", "Mono"])].dropna().T.sort_index(axis=0, level=['timepoint', 'cell_type'])
+    diff = e[e.index.get_level_values('timepoint') >= 120].mean() - e[e.index.get_level_values('timepoint') == 0].mean()
+    up = diff[diff > 0].index
+    down = diff[diff <= 0].index
+    # sig = e.loc[:, up].mean(axis=1) / e.loc[:, down].mean(axis=1)
+
+    # Get second validation cohort
+    landau = pd.read_csv(os.path.join("landau.2017.cll_ibrutinib_RNA-seq.csv"), index_col=0)
+    landau.columns = pd.MultiIndex.from_arrays(
+        np.array(landau.columns.str.split("_").tolist()).T,
+        names=['patient_id', 'timepoint'])
+
+    # # get only patients with timepoint 1 and 3
+    # ts = landau.T.reset_index().groupby('patient_id')['timepoint'].sum()
+    # landau = landau.loc[:, ts.loc[ts.str.contains("T01") & ts.str.contains("T02") & ts.str.contains("T03")].index]
+
+    res = pd.DataFrame()
+    for timepoint in landau.columns.levels[1]:
+        r = (landau.loc[up, landau.columns.get_level_values("timepoint") == timepoint].mean() /
+             landau.loc[down, landau.columns.get_level_values("timepoint") == timepoint].mean())
+        r.name = timepoint
+        res = res.append(r.reset_index(level=1, drop=True))
+    res = res.T
+
+    fig, axis = plt.subplots(1, 2, figsize=(2 * 3, 3), sharey=True)
+    t, p = scipy.stats.ttest_rel(*res[['T03', 'T01']].dropna().T.values.tolist())
+    fig.suptitle('Landau et al, cohort' + "\nt = {:.1f}\np = {:.1E}".format(t, p), fontsize=12)
+    t, p = scipy.stats.ttest_rel(*res[['T02', 'T01']].dropna().T.values.tolist())
+
+    sns.pointplot(
+        x="timepoint", y="value", hue="index",
+        data=res[['T01', 'T02']].reset_index().melt(id_vars="index", var_name="timepoint"),
+        ax=axis[0], palette="tab20")
+    axis[0].text(0.9, 0.9, "t = {:.1f}\np = {:.1E}".format(t, p))
+    axis[0].set_title("1 month vs pre-theraphy")
+
+    t, p = scipy.stats.ttest_rel(*res[['T03', 'T02']].dropna().T.values.tolist())
+    sns.pointplot(
+        x="timepoint", y="value", hue="index",
+        data=res[['T02', 'T03']].reset_index().melt(id_vars="index", var_name="timepoint"),
+        ax=axis[1], palette="tab20")
+    axis[1].text(0.9, 0.9, "t = {:.1f}\np = {:.1E}".format(t, p))
+    axis[1].set_title("6 month vs pre-theraphy")
+    for ax in axis:
+        ax.set_ylabel("Ibrutinib signature score")
+    fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.landau.validation.paired_pointplot.svg"), dpi=300, bbox_inches="tight")
+
+    # ROC curve
+    from sklearn import metrics
+    data = res.reset_index().melt(id_vars="index", var_name="timepoint")
+    data = data.sort_values("timepoint").dropna()
+
+    fig, axis = plt.subplots(1, figsize=(3, 3))
+    axis.plot((0, 1), (0, 1), linestyle="--", color="black", alpha=0.5)
+    axis.set_xlabel("FPR")
+    axis.set_ylabel("TPR")
+    for c, label in enumerate(["T03-T01","T02-T01","T03-T02"]):
+        print(label)
+        t2, t1 = label.split("-")
+
+        tp = (data.loc[:, 'timepoint'] == t1).sum()
+        tn = (data.loc[:, 'timepoint'] == t2).sum()
+        tpr = list()
+        fpr = list()
+        # for threshold in np.linspace(data["value"].min(), data["value"].max(), 20):
+        for threshold in data["value"].sort_values().unique():
+            p = (data.loc[data["value"] <= threshold, 'timepoint'] == t1).sum()
+            n = (data.loc[data["value"] <= threshold, 'timepoint'] == t2).sum()
+            tpr.append(float(p) / tp)
+            fpr.append(float(n) / tn)
+        auc = metrics.auc(fpr, tpr)
+
+        axis.plot(fpr, tpr, label="{}; AUC = {:3f}".format(label, auc), color=sns.color_palette()[c])
+
+        # randomize and plot
+        r_fpr = list()
+        r_tpr = list()
+        r_aucs = list()
+        for i in range(100):
+            data2 = data.loc[data['timepoint'].isin([t1, t2])].copy()
+            data2['value'] = data2['value'].sample(frac=1).values
+            tp = (data2.loc[:, 'timepoint'] == t1).sum()
+            tn = (data2.loc[:, 'timepoint'] == t2).sum()
+            tpr = list()
+            fpr = list()
+            # for threshold in np.linspace(data2["value"].min(), data2["value"].max(), 20):
+            for threshold in data2["value"].sort_values().unique():
+                p = (data2.loc[data2["value"] <= threshold, 'timepoint'] == t1).sum()
+                n = (data2.loc[data2["value"] <= threshold, 'timepoint'] == t2).sum()
+                tpr.append(float(p) / tp)
+                fpr.append(float(n) / tn)
+            auc = metrics.auc(fpr, tpr)
+            r_aucs.append(auc)
+            # axis.plot(fpr, tpr, color=sns.color_palette()[c], alpha=0.1, linestyle=":")
+            r_fpr.append(fpr)
+            r_tpr.append(tpr)
+
+        axis.plot(
+            np.array(r_fpr).mean(0), np.array(r_tpr).mean(0),
+            color=sns.color_palette()[c], linestyle=":",
+            label="Random {}; AUC = {:3f}".format(label, np.mean(r_aucs)))
+    axis.legend()
+    fig.savefig(os.path.join(analysis.results_dir, "offtarget_signature.landau.validation.roc_auc.svg"), dpi=300, bbox_inches="tight")
+
+    g2 = sns.clustermap(
+        landau.sort_index(level='timepoint', axis=1).loc[diff.index].dropna(),
+        xticklabels=True, z_score=0, center=0, cmap="RdBu_r",
+        rasterized=True, col_cluster=True, metric="correlation", row_cluster=True)
+    g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+    g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.landau.svg"), dpi=300, bbox_inches="tight")
+
+    g2 = sns.clustermap(
+        landau.sort_index(level='timepoint', axis=1).loc[diff.index].dropna(),
+        xticklabels=True, z_score=0, center=0, cmap="RdBu_r",
+        rasterized=True, col_cluster=False, metric="correlation", row_cluster=True)
+    g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+    g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.landau.sorted_time.svg"), dpi=300, bbox_inches="tight")
+
+    g2 = sns.clustermap(
+        landau.sort_index(level='timepoint', axis=1).loc[diff.index].dropna(),
+        xticklabels=True, z_score=0, center=0, cmap="RdBu_r",
+        rasterized=True, col_cluster=True, metric="correlation", row_cluster=True)
+    g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+    g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.landau.clustered.svg"), dpi=300, bbox_inches="tight")
+    g2 = sns.clustermap(
+        landau.sort_index(level=['patient_id', 'timepoint'], axis=1).loc[diff.index].dropna(),
+        xticklabels=True, z_score=0, center=0, cmap="RdBu_r",
+        rasterized=True, col_cluster=False, metric="correlation", row_cluster=True)
+    g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+    g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.landau.sorted_patient.svg"), dpi=300, bbox_inches="tight")
+    g2 = sns.clustermap(
+        landau.sort_index(level='timepoint', axis=1).loc[diff.index].dropna(),
+        xticklabels=True, z_score=0, center=0, cmap="RdBu_r",
+        rasterized=True, col_cluster=False, metric="correlation", row_cluster=True)
+    g2.ax_heatmap.set_yticklabels(g2.ax_heatmap.get_yticklabels(), rotation=0)
+    g2.ax_heatmap.set_xticklabels(g2.ax_heatmap.get_xticklabels(), rotation=90)
+    g2.savefig(os.path.join(analysis.results_dir, "offtarget_signature.landau.sorted_timepoint.svg"), dpi=300, bbox_inches="tight")
+
+    # # Investigate cell cycle changes in single cells
+    # # stdscore = lambda x: (x - x.min()) / (x.max() - x.min())
+
+    # # load predictions
+    # # cc = pd.read_table(os.path.join("results", "single_cell_RNA", "50_cell_cycle", "all_cells.txt"))
+    # cc = pd.read_table(os.path.join("data", "cell_cycle_assignments.all_cells.txt"))
+    # cc = cc.join(
+    #     cc['sample']
+    #     .str.replace("FE1_", "")
+    #     .str.replace("KI1_", "")
+    #     .str.split("_").apply(pd.Series).rename(columns={0: "patient_id", 1: "timepoint"}))
+    # cc['patient_id'] = cc['patient_id'].str.replace(r'\d', "")
+    # cc['timepoint'] = cc['timepoint'].str.replace("d", "").astype(int)
+
+    # # plot distribution of scores
+    # cc['mean'] = (cc.loc[:, "G2M.Score"] + cc.loc[:, "S.Score"]) / 2
+    # cc['fc'] = np.log2(cc.loc[:, "G2M.Score"] / cc.loc[:, "S.Score"])
+
+    # phases = sorted(cc["Phase"].unique())
+    # fig, axis = plt.subplots(1, 2, figsize=(8, 4))
+    # for i, phase in enumerate(phases):
+    #     axis[0].scatter(
+    #         cc.loc[cc["Phase"] == phase, "S.Score"],
+    #         cc.loc[cc["Phase"] == phase, "G2M.Score"],
+    #         c=plt.get_cmap("Paired")(i), label=phase, s=3, alpha=0.1)
+    #     axis[1].scatter(
+    #         cc.loc[cc["Phase"] == phase, "mean"],
+    #         cc.loc[cc["Phase"] == phase, "fc"],
+    #         c=plt.get_cmap("Paired")(i), label=phase, s=3, alpha=0.1)
+
+    # axis[0].plot((-0.2, 1), (-0.2, 1), linestyle="--", color="black", alpha=0.5)
+    # axis[1].axhline(0, linestyle="--", color="black", alpha=0.5)
+    # axis[1].axvline(0, linestyle="--", color="black", alpha=0.5)
+    # axis[0].set_xlabel("S score")
+    # axis[0].set_ylabel("G2M score")
+    # axis[1].set_xlabel("Mean")
+    # axis[1].set_ylabel("log2 fold change (G2M / S)")
+    # axis[0].set_xlim(-0.2, 1)
+    # axis[0].set_ylim(-0.2, 1)
+    # axis[0].legend()
+    # axis[1].legend()
+
+    # # set thresholds:
+    # axis[1].axhline(-0.5, linestyle="--", color="red", alpha=0.5)
+    # axis[1].axhline(0.5, linestyle="--", color="red", alpha=0.5)
+    # axis[1].axvline(-0.02, linestyle="--", color="red", alpha=0.5)
+    # axis[1].axvline(0.02, linestyle="--", color="red", alpha=0.5)
+
+    # sel_cc = cc.loc[
+    #     (cc["mean"].abs() > 0.02) &
+    #     (cc["fc"].abs() > 0.5)]
+
+    # fig, axis = plt.subplots(1, 2, figsize=(8, 4))
+    # for i, phase in enumerate(phases):
+    #     axis[0].scatter(
+    #         sel_cc.loc[sel_cc["Phase"] == phase, "S.Score"],
+    #         sel_cc.loc[sel_cc["Phase"] == phase, "G2M.Score"],
+    #         c=plt.get_cmap("Paired")(i), label=phase, s=3, alpha=0.1)
+    #     axis[1].scatter(
+    #         sel_cc.loc[sel_cc["Phase"] == phase, "mean"],
+    #         sel_cc.loc[sel_cc["Phase"] == phase, "fc"],
+    #         c=plt.get_cmap("Paired")(i), label=phase, s=3, alpha=0.1)
+
+    # axis[0].plot((-0.2, 1), (-0.2, 1), linestyle="--", color="black", alpha=0.5)
+    # axis[1].axhline(0, linestyle="--", color="black", alpha=0.5)
+    # axis[1].axvline(0, linestyle="--", color="black", alpha=0.5)
+    # axis[0].set_xlabel("S score")
+    # axis[0].set_ylabel("G2M score")
+    # axis[1].set_xlabel("Mean")
+    # axis[1].set_ylabel("log2 fold change (G2M / S)")
+    # axis[0].set_xlim(-0.2, 1)
+    # axis[0].set_ylim(-0.2, 1)
+    # axis[0].legend()
+    # axis[1].legend()
+
+    # # summary stats
+    # fractions = (
+    #     cc.groupby(['patient_id', 'cellType', 'timepoint'])
+    #     ['Phase']
+    #     .apply(lambda x: x.value_counts() / x.count())
+    #     .reset_index()
+    #     .rename(columns={"level_3": "Phase", "Phase": "fraction"}))
+    # fractions2 = fractions.loc[
+    #     (fractions['cellType'].isin(["CD4", "CD8", "CLL", "Mono"])) &
+    #     (~fractions['patient_id'].isin(["KI"]))]
+    # g = sns.factorplot(
+    #     data=fractions2, x="timepoint", y='fraction',
+    #     row="patient_id", col="cellType", sharey=False, hue='Phase')
+    # g.savefig(os.path.join("results", "cell_cycle_changes.all_cells.factorplot.svg"), dpi=300, bbox_inches="tight")
+    # g = sns.factorplot(
+    #     data=fractions2,#.loc[fractions2['timepoint'] <= 120, :],
+    #     x="timepoint", y='fraction',
+    #     col="cellType", sharey=False, hue='Phase')
+    # g.savefig(os.path.join("results", "cell_cycle_changes.all_cells.cross_patients.factorplot.svg"), dpi=300, bbox_inches="tight")
+
+    # fractions = (
+    #     sel_cc.groupby(['patient_id', 'cellType', 'timepoint'])
+    #     ['Phase']
+    #     .apply(lambda x: x.value_counts() / x.count())
+    #     .reset_index()
+    #     .rename(columns={"level_3": "Phase", "Phase": "fraction"}))
+    # fractions2 = fractions.loc[
+    #     (fractions['cellType'].isin(["CD4", "CD8", "CLL", "Mono"])) &
+    #     (~fractions['patient_id'].isin(["KI"]))]
+    # g = sns.factorplot(
+    #     data=fractions2, x="timepoint", y='fraction',
+    #     row="patient_id", col="cellType", sharey=False, hue='Phase')
+    # g.savefig(os.path.join("results", "cell_cycle_changes.filtered_cells.factorplot.svg"), dpi=300, bbox_inches="tight")
+    # # analysis.results_dir
+
+
+def offtarget_on_atac(analysis):
+
+    # get chromatin accessibility at gene-level
+    analysis.accessibility = pd.read_csv(os.path.abspath(os.path.join(
+            "results", analysis.name + ".accessibility.annotated_metadata.csv")),
+        header=list(range(9)), index_col=0)
+    check = analysis.gene_annotation.index.str.contains(":").all() and analysis.gene_annotation.index.str.contains("-").all()
+    if check:
+        analysis.gene_annotation = analysis.gene_annotation.reset_index()
+        analysis.gene_annotation.index = (
+            analysis.gene_annotation['chrom'] + ":" +
+            analysis.gene_annotation['start'].astype(str) + "-" +
+            analysis.gene_annotation['end'].astype(str))
+    mean_acc = analysis.get_gene_level_accessibility()
+
+    # get signature
+    common = pd.read_csv(os.path.join("results", "offtarget_signature.csv"), index_col=0, header=None, squeeze=True)
+    g = common.abs().argmin()
+    common = (common - common.min()) / (common.max() - common.min())
+    common -= common.loc[g]
+
+    sig = common.index.to_series()
+
+    sig_acc = mean_acc.reindex(sig).dropna()
+    c = analysis.get_level_colors(index=sig_acc.columns, levels=['patient_id', 'timepoint', 'cell_type'])
+    sample_color = pd.DataFrame(c, index=['patient_id', 'timepoint', 'cell_type'], columns=sig_acc.columns)
+    direction_color = plt.get_cmap("RdBu_r")(common.reindex(sig_acc.index))
+
+    g = sns.clustermap(
+        sig_acc.T,
+        metric="correlation",
+        col_colors=direction_color, row_colors=sample_color.T,
+        rasterized=True, robust=True,
+        xticklabels=True, yticklabels=sig_acc.columns.get_level_values("sample_name"))
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=4)
+    g.savefig(os.path.join("results", "offtarget_signature.atacseq_level.svg"), dpi=300)
+
+    g = sns.clustermap(
+        sig_acc.T,
+        metric="correlation",
+        z_score=1, cmap="RdBu_r", center=0,
+        col_colors=direction_color, row_colors=sample_color.T, rasterized=True, robust=True,
+        xticklabels=True, yticklabels=sig_acc.columns.get_level_values("sample_name"))
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=4)
+    g.savefig(os.path.join("results", "offtarget_signature.atacseq_level.z_score.svg"), dpi=300)
+
+    g = sns.clustermap(
+        sig_acc.T.groupby(['cell_type', 'timepoint']).mean(),
+        metric="correlation",
+        z_score=1, cmap="RdBu_r", center=0,
+        col_colors=direction_color,rasterized=True, robust=True,
+        xticklabels=True, yticklabels=sig_acc.columns.get_level_values("sample_name"))
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.savefig(os.path.join("results", "offtarget_signature.atacseq_level.timepoint_mean.z_score.svg"), dpi=300)
+
+    g = sns.clustermap(
+        sig_acc.T.groupby(['cell_type', 'timepoint']).mean(),
+        metric="correlation",
+        row_cluster=False,
+        z_score=1, cmap="RdBu_r", center=0,
+        col_colors=direction_color, rasterized=True, robust=True,
+        xticklabels=True, yticklabels=True)
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.savefig(os.path.join("results", "offtarget_signature.atacseq_level.timepoint_mean.z_score.ordered.svg"), dpi=300)
+
+    for cell_type in sig_acc.columns.levels[sig_acc.columns.names.index('cell_type')]:
+        print(cell_type)
+        p = sig_acc.loc[:, sig_acc.columns.get_level_values("cell_type") == cell_type]
+        p = p.sort_index(axis=1, level=['timepoint'])
+
+        g = sns.clustermap(
+            p.T,
+            metric="correlation", row_cluster=False,
+            z_score=1, cmap="RdBu_r", center=0,
+            col_colors=direction_color, row_colors=sample_color.T, rasterized=True, robust=True, figsize=(12, 5),
+            xticklabels=True, yticklabels=p.columns.get_level_values("sample_name"))
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=4)
+        g.savefig(os.path.join("results", "offtarget_signature.atacseq_level.{}.z_score.ordered.svg".format(cell_type)), dpi=300)
+
+        g = sns.clustermap(
+            p.T,
+            metric="correlation",
+            z_score=1, cmap="RdBu_r", center=0,
+            col_colors=direction_color, row_colors=sample_color.T, rasterized=True, robust=True, figsize=(12, 5),
+            xticklabels=True, yticklabels=p.columns.get_level_values("sample_name"))
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=4)
+        g.savefig(os.path.join("results", "offtarget_signature.atacseq_level.{}.z_score.svg".format(cell_type)), dpi=300)
+
+        g = sns.clustermap(
+            p.T.drop(["003d", "008d", "150d"], level="timepoint", axis=0),
+            metric="correlation",
+            z_score=1, cmap="RdBu_r", center=0,
+            col_colors=direction_color,
+            row_colors=sample_color.T.drop(["003d", "008d", "150d"], level="timepoint", axis=0),
+            row_cluster=False,
+            rasterized=True, robust=True, figsize=(12, 5),
+            xticklabels=True,
+            yticklabels=p.T.drop(["003d", "008d", "150d"], level="timepoint", axis=0).index.get_level_values("sample_name"))
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=4)
+        g.savefig(os.path.join("results", "offtarget_signature.atacseq_level.{}.z_score.selection.ordered.svg".format(cell_type)), dpi=300)
+
+        g = sns.clustermap(
+            p.T.groupby("timepoint").mean(),
+            metric="correlation",
+            z_score=1, cmap="RdBu_r", center=0,
+            col_colors=direction_color, rasterized=True, robust=True, figsize=(12, 2.5),
+            xticklabels=True, yticklabels=True)
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=4)
+        g.savefig(os.path.join("results", "offtarget_signature.atacseq_level.{}.timepoint_mean.z_score.svg".format(cell_type)), dpi=300)
+
+        g = sns.clustermap(
+            p.T.groupby("timepoint").mean(), row_cluster=False,
+            metric="correlation",
+            z_score=1, cmap="RdBu_r", center=0,
+            col_colors=direction_color, rasterized=True, robust=True, figsize=(12, 2.5),
+            xticklabels=True, yticklabels=True)
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.savefig(os.path.join("results", "offtarget_signature.atacseq_level.{}.timepoint_mean.z_score.ordered.svg".format(cell_type)), dpi=300)
+
+        g = sns.clustermap(
+            p.T.groupby("timepoint").mean().drop(["003d", "008d", "150d"], axis=0), row_cluster=False,
+            metric="correlation",
+            z_score=1, cmap="RdBu_r", center=0,
+            col_colors=direction_color, rasterized=True, robust=True, figsize=(12, 2.5),
+            xticklabels=True, yticklabels=True)
+        g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=4)
+        g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+        g.savefig(os.path.join("results", "offtarget_signature.atacseq_level.{}.timepoint_mean.z_score.ordered.selection.svg".format(cell_type)), dpi=300)
+
+
+def investigate_unclustered_regions():
+
+    root_dir = os.path.join("/home/afr/Downloads", "Ibrutinib_time_course", "tables_and_supplement", "previous")
+    df = pd.read_excel(os.path.join(root_dir, "Supplementary Table 5.xls"))
+
+    for cell_type in df['cell_type'].unique():
+        if not os.path.exists(os.path.join(root_dir, cell_type)):
+            os.makedirs(os.path.join(root_dir, cell_type))
+        regions = df.loc[(df['cell_type'] == cell_type) & (df['assigned'] == False), "region"]
+        df2 = pd.DataFrame([
+            regions.str.split(":").apply(lambda x: x[0]),
+            regions.str.split(":").apply(lambda x: x[1].split("-")[0]),
+            regions.str.split(":").apply(lambda x: x[1].split("-")[1])]).T
+        df2.to_csv(
+            os.path.join(root_dir, cell_type, "unclustered_regions.{}.bed".format(cell_type)),
+            index=False, sep="\t", header=False)
+
+        specific_universe = os.path.join(root_dir, cell_type, "dynamic_regions.{}.bed".format(cell_type))
+        regions = df.loc[(df['cell_type'] == cell_type), "region"]
+        df2 = pd.DataFrame([
+            regions.str.split(":").apply(lambda x: x[0]),
+            regions.str.split(":").apply(lambda x: x[1].split("-")[0]),
+            regions.str.split(":").apply(lambda x: x[1].split("-")[1])]).T
+        df2.to_csv(specific_universe, index=False, sep="\t", header=False)
+
+    prefix = "unclustered_regions"
+    output_dir = root_dir = os.path.join("results", "unclustered_regions")
+    genome = "hg19"
+
+    universe_bed = os.path.abspath(os.path.join("results", "cll-time_course_peak_set.bed"))
+    for cell_type in ["Bcell", "CD4", "CD8", "CLL", "Mono", "NK"]:
+
+        background_type = "universe"
+        name = ".".join([prefix, cell_type, background_type])
+        log = os.path.join(output_dir, "log", name + ".log")
+        job = " ".join([
+            "Rscript /home/arendeiro/jobs/run_LOLA.R",
+            " {}".format(os.path.join(root_dir, cell_type, "unclustered_regions.{}.bed".format(cell_type))),
+            " {}".format(universe_bed),
+            " {}".format(genome)])
+        cmd = " ".join([
+            "sbatch",
+            "-J {}".format(name),
+            "-o {}".format(log),
+            "-p {}".format("shortq"),
+            "-c {}".format(4),
+            "--mem {}".format(20000),
+            "--wrap",
+            "'{}'".format(job)])
+        os.system(cmd)
+
+        background_type = "specific_universe"
+        name = ".".join([prefix, cell_type, background_type])
+        log = os.path.join(output_dir, "log", name + ".log")
+        job = " ".join([
+            "Rscript /home/arendeiro/jobs/run_LOLA.R",
+            " {}".format(os.path.join(root_dir, cell_type, "dynamic_regions.{}.bed".format(cell_type))),
+            " {}".format(os.path.join(root_dir, cell_type, "dynamic_regions.{}.bed".format(cell_type))),
+            " {}".format(genome)])
+        cmd = " ".join([
+            "sbatch",
+            "-J {}".format(name),
+            "-o {}".format(log),
+            "-p {}".format("shortq"),
+            "-c {}".format(4),
+            "--mem {}".format(20000),
+            "--wrap",
+            "'{}'".format(job)])
+        os.system(cmd)
+
+
+def temporal_ibrutinib_signature():
+    from ngs_toolkit.general import standard_score
+
+    # Gene expression
+    expr = pd.read_csv("results/single_cell_RNA/MeanMatrix.csv", index_col=0)
+    c = pd.Series(expr.columns).str.split("_").apply(pd.Series)
+    c[1] = c[1].str.replace('d', '').astype(int)
+    c = c[[1, 2, 0]]
+    expr.columns = pd.MultiIndex.from_arrays(c.values.T, names=['timepoint', 'cell_type', 'patient_id'])
+    expr = expr.sort_index(level=['timepoint', 'cell_type'], axis=1)
+
+    # Z-score values within each cell type
+    expr_z = expr.copy()
+    for cell_type in expr.columns.levels[1]:
+        expr_z.loc[:, expr_z.columns.get_level_values("cell_type") == cell_type] = scipy.stats.zscore(
+            expr_z.loc[:, expr_z.columns.get_level_values("cell_type") == cell_type], axis=1)
+
+    # Gene expression diff
+    expr_diff = pd.read_csv(os.path.join(
+        "results", "single_cell_RNA", "13_4_Overtime_nUMI_Cutoff", "SigGenes_overTime.tsv"), sep="\t").rename(
+            columns={"cellType": "cell_type", "logFC": "log_fold_change"}).set_index("gene")
+    expr_diff['intercept'] = 1
+    expr_diff['patient_id'] = expr_diff['patient'].str.split("_").apply(lambda x: x[0])
+    expr_diff['timepoint'] = expr_diff['patient'].str.split("_").apply(lambda x: x[1]).str.replace("d", "").astype(int)
+    expr_diff['direction'] = (expr_diff['log_fold_change'] > 0).astype(int).replace(0, -1)
+
+    expr_diff2 = expr_diff.loc[expr_diff['qvalue'] < 0.05]
+
+    # Get signature
+    common = pd.read_csv(os.path.join("results", "offtarget_signature.csv"), index_col=0, header=None, squeeze=True)
+
+    # Get signature score for each patient, timepoint, cell type
+    e_z = (expr_z.loc[common.index, expr_z.columns.get_level_values("cell_type").isin(["CLL", "CD4", "CD8", "Mono"])]
+        .dropna().T.sort_index(axis=0, level=['timepoint', 'cell_type']))
+
+    t_sigs = e_z.loc[:, common[common > 0].index].mean(axis=1) - e_z.loc[:, common[common < 0].index].mean(axis=1)
+
+    # Aggregate across cell_types for a combined patient sig
+    p_sig = t_sigs[t_sigs.index.get_level_values('cell_type') == "CLL"].groupby(level=['timepoint', 'patient_id']).mean()
+    # p_sig = t_sigs.groupby(level=['timepoint', 'patient_id']).mean()
+
+    # Get FACS data
+    facs = pd.read_csv(os.path.join("metadata", "facs.cell_type.quantification.csv"))
+    facs = facs.loc[facs['value_type'] == 'percentage', :]
+    facs = pd.melt(facs[["timepoint", "patient_code", "CD5+ CLL"]], id_vars=["timepoint", "patient_code"], value_name="CLL").dropna()
+    facs['CLL_scale'] = standard_score(facs['CLL'])
+    facs['timepoint'] = facs['timepoint'].astype(int)
+    facs = facs.drop("variable", axis=1).set_index(['timepoint', 'patient_code'])
+
+
+    # Patient
+    p = p_sig.index.levels[1]
+    fig, axis = plt.subplots(len(p), 1, figsize=(6 * 1, 3 * len(p)), sharex=True)
+    for i, patient in enumerate(p):
+        p_sig_p = p_sig.loc[p_sig.index.get_level_values("patient_id") == patient]
+        axis[i].plot(
+            p_sig_p.index.get_level_values("timepoint") + 1, p_sig_p,
+            color="blue", linestyle='--', marker='o', label="Ibrutinib response signature")
+
+        ax2 = axis[i].twinx()
+        facs_p = facs.loc[facs.index.get_level_values("patient_code") == patient, "CLL"]
+        ax2.plot(
+            facs_p.index.get_level_values("timepoint") + 1, facs_p,
+            color="orange", linestyle='--', marker='o', label="CLL cells per uL")
+
+        axis[i].set_ylim((-1.5, 1.5))
+        # ax2.set_ylim((-1, 1))
+
+        # axis[i].set_xscale("log", basex=2)
+        # ax2.set_xscale("log", basex=2)
+
+        # axis[i].legend()
+        # ax2.legend()
+
+        axis[i].axhline(0, linestyle="--", alpha=0.5, color="black", zorder=1000)
+        ax2.axhline(0, linestyle="--", alpha=0.5, color="black", zorder=1000)
+
+        axis[i].set_ylabel("Signature score", color="blue")
+        ax2.set_ylabel("CLL cells per uL", color="orange")
+
+        axis[i].set_title(patient)
+
+    axis[i].set_xlabel("Days since ibrutinib start")
+    ax2.set_xlabel("Days since ibrutinib start")
+
+    sns.despine(fig, top=True, left=False, right=False, bottom=False)
+    fig.savefig(os.path.join("results", "temporal_ibrutinib_signature.per_patient2.svg"), dpi=300, bbox_inches="tight")
+
+    # Cell type
+    # get non-zscored values
+    # Aggregate across patients for a combined cell type sig
+    e = (expr.loc[common.index, expr.columns.get_level_values("cell_type").isin(["CLL", "CD4", "CD8", "Mono"])]
+         .dropna().T.sort_index(axis=0, level=['timepoint', 'cell_type']))
+    t_sigs = e.loc[:, common[common > 0].index].mean(axis=1) - e.loc[:, common[common < 0].index].mean(axis=1)
+    ct_sig = t_sigs.groupby(level=['timepoint', 'cell_type']).mean()
+
+    ct = ct_sig.index.levels[1]
+    fig, axis = plt.subplots(1, 1, figsize=(6 * 1, 3 * 1))
+    for i, cell_type in enumerate(ct):
+        ct_sig_ct = ct_sig.loc[ct_sig.index.get_level_values("cell_type") == cell_type]
+        axis.plot(
+            ct_sig_ct.index.get_level_values("timepoint") + 1, ct_sig_ct,
+            linestyle='--', marker='o', label=cell_type)
+
+    # axis.set_ylim((-1.5, 1.5))
+    # axis.set_xscale("log")
+    axis.axhline(0, linestyle="--", alpha=0.5, color="black", zorder=1000)
+    axis.set_ylabel("Signature score", color="blue")
+    axis.set_xlabel("Days since ibrutinib start")
+    axis.legend()
+
+    sns.despine(fig, top=True, left=False, right=True, bottom=False)
+    fig.savefig(os.path.join("results", "temporal_ibrutinib_signature.per_cell_type.svg"), dpi=300, bbox_inches="tight")
+
+
+def cd5_expression():
+    df = pd.read_csv("results/single_cell_RNA/MeanMatrix.csv", index_col=0)
+    df.columns = pd.MultiIndex.from_arrays(pd.Series(df.columns).str.split("_").apply(pd.Series).values.T, names=['patient_id', 'timepoint', 'cell_type'])
+
+    m = df.mean(axis=1)
+
+    fig, axis = plt.subplots(1, figsize=(3, 3))
+    sns.distplot(m, kde=False, bins=30, ax=axis)
+    axis.set_yscale("log")
+    axis.axvline(m.loc['CD5'], linestyle="--", color="brown")
+    axis.text(m.loc['CD5'], 10**4, s="CD5")
+    axis.set_xlabel("Mean expression (log)")
+    axis.set_ylabel("Genes (log)")
+    sns.despine(fig)
+    fig.savefig(os.path.join("results", "cd5_expression.distplot.svg"), bbox_inches="tight", dpi=300)
+
+
+def pre_treatment_correlation_with_response(analysis):
+    def test_pca_significance(
+            matrix, iterations=None,
+            standardize_matrix=True,
+            adjust_pvalues=True,
+            multipletest_method="fdr_bh"):
+        """
+        Empirical testing of Principal Component Analysis.
+
+        Both principal components and feature's weights in components are tested.
+        The approach is to simply shuffle the input data, perform PCA,
+        and get empirical p-values for the PCA fitted on original data compared with the
+        randomized background.
+
+        :param matrix: Dataframe of shape (n_samples, n_variables)
+        :type matrix: pandas.DataFrame
+        :param iterations: Number of iterations to perform randomization.
+                           Defaults to length of samples.
+        :type iterations: int, optional
+        :param standardize_matrix: Whether to standardize the input data prior to fitting.
+                                   Defaults to False
+        :type standardize_matrix: bool, optional
+        :returns: Metrics per component, for real or random data (shape n_pcs,4);
+                  Weights of every feature in every component, for real or random data (shape n_pcs,n_vars, 2);
+                  P-values of every feature in every component (shape n_pcs,n_vars);
+        :rtype: (pandas.DataFrame, pandas.DataFrame, pandas.DataFrame)
+        """
+        from sklearn.decomposition import PCA
+        from statsmodels.distributions.empirical_distribution import ECDF
+        from statsmodels.stats.multitest import multipletests
+        from sklearn.preprocessing import StandardScaler
+
+        def shuffle_array_rows_by_col(a):
+            """
+            Shuflle each of the 2D array's columns independently.
+            Rows should be much smaller than columns
+            :param np.array a: 2D array
+            :returns np.array: Shuffled array
+            """
+            import itertools
+            all_perm = np.array(list(itertools.permutations(list(range(a.shape[0])))))
+            idx = all_perm[np.random.randint(0, all_perm.shape[0], size=a.shape[1])].T
+            idx += a.shape[0] * np.arange(a.shape[1])
+            assert a.shape == idx.shape
+            b = a.flatten('F')[idx.flatten('C')].reshape(a.shape)
+            assert np.allclose(a.sum(axis=0), b.sum(axis=0))
+            return b
+
+        def empirical_interpolated_p_value(a, b):
+            from scipy.interpolate import interp1d
+            ecdf = ECDF(b)
+            slope_changes = sorted(set(a))
+            inverted_edf = interp1d(ecdf(a), slope_changes, fill_value="extrapolate")
+            return inverted_edf(a)
+
+        if standardize_matrix:
+            matrix = pd.DataFrame(
+                StandardScaler().fit_transform(matrix),
+                index=matrix.index, columns=matrix.columns)
+        n, m = matrix.shape
+        iterations = pd.Index(
+            range(iterations if iterations is not None else n), name="iterations")
+        var = pd.Index(matrix.columns, name="feature")
+
+        pca = PCA(n_components=min(n, m) - 1)
+        # First fit to whole data
+        pca.fit(matrix)
+        pcs = pd.Index(range(1, pca.n_components_ + 1), name="pc")
+        v = pd.Series(pca.explained_variance_ratio_, index=pcs)
+        w = pd.DataFrame(pca.components_.T, index=var, columns=pcs)
+
+        # Now fit n times shuffling data across features
+        random_v = pd.DataFrame(index=pcs, columns=iterations)
+        random_w = pd.DataFrame(
+            index=pd.MultiIndex.from_product([pcs.tolist(), var.tolist()], names=['pc', 'feature']),
+            columns=iterations)
+        for i in tqdm(iterations, total=len(iterations)):
+            pca.fit(shuffle_array_rows_by_col(matrix.values.copy()))
+            # pca.fit(pd.Series(matrix.values.flatten()).sample(frac=1).values.reshape(matrix.shape))
+            random_v.loc[:, i] = pd.Series(pca.explained_variance_ratio_, index=pcs)
+            random_w.loc[:, i] = pca.components_.flatten()
+
+        # Test PCs
+        ecdf = ECDF(-random_v.values.flatten())
+        sig_pcs = pd.Series(ecdf(-v), index=pcs)
+        if adjust_pvalues:
+            adj_sig_pcs = pd.Series(multipletests(sig_pcs, method=multipletest_method)[1], index=pcs)
+        ecdf = ECDF(-random_w.abs().values.flatten())
+        sig_vars = pd.DataFrame(ecdf(-w.abs()), index=var, columns=pcs)
+        if adjust_pvalues:
+            adj_sig_vars = pd.DataFrame(index=var, columns=pcs)
+            for pc in pcs:
+                adj_sig_vars.loc[:, pc] = multipletests(
+                    sig_vars.loc[:, pc].values.squeeze(), method=multipletest_method)[1]
+
+        v = v.to_frame(name="real")
+        v['randomized'] = random_v.mean(axis=1)
+        v['log_ratio_over_random'] = np.log10(v['real'] / v['randomized'])
+        v['p_value'] = sig_pcs
+        v['q_value'] = adj_sig_pcs
+
+        random_w = random_w.mean(axis=1).reset_index().pivot_table(
+            index="feature", columns="pc", values=0)
+        w = pd.concat([w, random_w], axis=1, keys=['real', 'random'])
+
+        sig_vars = pd.concat([sig_vars, adj_sig_vars], axis=1, keys=['raw', 'adjusted'])
+
+        return v, w, sig_vars
+
+    # 1. First approach, find a axis correlating with response in unsupervised analysis
+    # # whole data
+    unsupervised_analysis(
+        analysis, steps=['pca', 'pca_association'], quant_matrix="accessibility",
+        attributes_to_plot=plotting_attributes, plot_prefix="20190111.accessibility")
+
+    for cell_type in analysis.accessibility.columns.levels[3]:
+        # if cell_type == "CLL": continue
+        # All samples from one cell type
+        analysis.accessibility_ct = analysis.accessibility.loc[
+            :,
+            (analysis.accessibility.columns.get_level_values("cell_type") == cell_type)]
+        exclude = ['cell_type', 'compartment', 'timepoint']
+        unsupervised_analysis(
+            analysis, steps=['pca', 'pca_association'], quant_matrix="accessibility_ct",
+            attributes_to_plot=[x for x in plotting_attributes if x not in exclude],
+            plot_prefix="20190111.accessibility_{}".format(cell_type),
+            standardize_matrix=True)
+
+        # Only T0
+        analysis.accessibility_t0_ct = analysis.accessibility.loc[
+            :, (analysis.accessibility.columns.get_level_values("timepoint") == "000d") &
+            (analysis.accessibility.columns.get_level_values("cell_type") == cell_type)]
+        exclude = ['cell_type', 'compartment', 'timepoint']
+        unsupervised_analysis(
+            analysis, steps=['pca', 'pca_association'], quant_matrix="accessibility_t0_ct",
+            attributes_to_plot=[x for x in plotting_attributes if x not in exclude],
+            plot_prefix="20190111.accessibility_t0_{}".format(cell_type),
+            standardize_matrix=True)
+
+        v, w, sig_vars = test_pca_significance(
+            analysis.accessibility_t0_ct.T,
+            iterations=None,
+            standardize_matrix=True)
+
+        # Assemble table of results
+        v.to_csv(
+            os.path.join("20190111.accessibility_t0_{}".format(cell_type) +
+                         ".pc_significance_stats.csv"))
+
+    # # # plot all association p-values jointly
+    ps = pd.DataFrame()
+    vs = pd.DataFrame()
+    for cell_type in analysis.accessibility.columns.levels[3]:
+        p = pd.read_csv(
+            os.path.join(
+                'results', 'unsupervised_analysis_ATAC-seq',
+                'cll-time_course.20190111.accessibility_t0_{}.pca.variable_principle_components_association.csv'
+                .format(cell_type)))
+        p.loc[:, 'cell_type'] = cell_type
+        ps = ps.append(p)
+
+        r = pd.read_csv(
+            os.path.join("20190111.accessibility_t0_{}".format(cell_type) +
+                         ".pc_significance_stats.csv"))
+        r.loc[:, 'cell_type'] = cell_type
+        vs = vs.append(r)
+
+    ps.loc[:, '-log_pvalue'] = -np.log10(ps.loc[:, 'p_value'])
+    pss = ps.pivot_table(index=['cell_type', 'pc'], columns="attribute", values='-log_pvalue')
+
+    fig, axis = plt.subplots(1, 1, figsize=(8, 8))
+    sns.heatmap(
+        pss.T,
+        xticklabels=True, yticklabels=True,
+        square=True, ax=axis)
+    fig.savefig(os.path.join(
+        "results", "unsupervised_analysis_ATAC-seq",
+        "cll-time_course.20190111.accessibility_t0.all_cell_types.pca.variable_principle_components_association.svg"),
+        bbox_inches="tight")
+
+    vs['-log10(p)'] = (-np.log10(vs['p_value'])).replace(np.inf, 3)
+    fig, axis = plt.subplots(3, 1, figsize=(3 * 8, 8))
+    sns.heatmap(
+        vs[['pc', 'cell_type', 'real', 'randomized']]
+        .melt(id_vars=['cell_type', 'pc'])
+        .pivot_table(index=['cell_type', "pc"], columns=['variable'], values='value').T,
+        xticklabels=True, yticklabels=True,
+        cmap="Reds",
+        square=True, ax=axis[0])
+    sns.heatmap(
+        vs[['pc', 'cell_type', 'log_ratio_over_random']]
+        .melt(id_vars=['cell_type', 'pc'])
+        .pivot_table(index=['cell_type', "pc"], columns=['variable'], values='value').T,
+        xticklabels=True, yticklabels=True,
+        cmap="PuOr_r", center=0,
+        square=True, ax=axis[1])
+    sns.heatmap(
+        vs[['pc', 'cell_type', '-log10(p)']]
+        .melt(id_vars=['cell_type', 'pc'])
+        .pivot_table(index=['cell_type', "pc"], columns=['variable'], values='value').T,
+        xticklabels=True, yticklabels=True,
+        cmap="Reds",
+        square=True, ax=axis[2])
+    fig.savefig(os.path.join(
+        "results", "unsupervised_analysis_ATAC-seq",
+        "cll-time_course.20190111.accessibility_t0.all_cell_types.pca.variance_explained.svg"),
+        bbox_inches="tight")
+
+
+    # look into CLL PC2
+    output_dir = os.path.join(analysis.results_dir, "unsupervised_analysis_" + analysis.data_type)
+    prefix = os.path.join(output_dir, analysis.name + ".20190111.accessibility_t0_cll")
+    alpha = 0.1
+    analysis.accessibility_t0_cll = analysis.accessibility.loc[
+        :, (analysis.accessibility.columns.get_level_values("timepoint") == "000d") &
+        (analysis.accessibility.columns.get_level_values("cell_type") == "CLL")]
+
+    # # Test significance of PCs
+    v, w, sig_vars = test_pca_significance(
+        analysis.accessibility_t0_cll.T,
+        iterations=None,
+        standardize_matrix=True)
+
+    # Assemble table of results
+    v['log_pvalue'] = (-np.log10(v['p_value'])).replace(np.inf, 3)
+    v.to_csv(os.path.join(prefix + ".pc_significance_stats.csv"))
+
+    unsup_results = w['real'].reset_index().melt(id_vars='feature', value_name="real_weight").set_index(['feature', 'pc'])
+    unsup_results = unsup_results.join(w['random'].reset_index().melt(id_vars='feature', value_name="random_weight").set_index(['feature', 'pc']))
+    unsup_results = unsup_results.join((w['real'] - w['random']).reset_index().melt(id_vars='feature', value_name="weight_over_random").set_index(['feature', 'pc']))
+    unsup_results = unsup_results.join(sig_vars['raw'].reset_index().melt(id_vars='feature', value_name="pvalue").set_index(['feature', 'pc']))
+    unsup_results = unsup_results.join(sig_vars['adjusted'].reset_index().melt(id_vars='feature', value_name="padj").set_index(['feature', 'pc']))
+    m = analysis.accessibility_t0_cll.mean(axis=1)
+    m.name = 'mean'
+    m.index.name = 'feature'
+    unsup_results = unsup_results.join(m)
+    unsup_results.to_csv(os.path.join(prefix + ".pc_feature_significance_stats.csv"))
+    # unsup_results = pd.read_csv(os.path.join(prefix + ".pc_feature_significance_stats.csv"), index_col=[0, 1])
+
+    # Plot
+    # v['log_pvalue'] = v['log_pvalue'].replace(np.inf, v['log_pvalue'][v['log_pvalue'] != np.inf].max())
+
+    # # PC stats
+    fig, axis = plt.subplots(1, 3, figsize=(3 * 3, 3), tight_layout=True)
+    v_melted = v.reset_index()[['pc', 'real', 'randomized']].melt(
+            id_vars='pc', var_name='data_type', value_name="variance_explained_ratio")
+    sns.barplot(
+        data=v_melted,
+        x="variance_explained_ratio", y="pc", hue="data_type", orient="h", ax=axis[0])
+    axis[1].plot(v.index, v['real'], "o-", label="real")
+    axis[1].plot(v.index, v['randomized'], "o-", label="randomized")
+    axis[1].legend()
+    axis[1].set_xlabel("PC")
+    axis[1].set_ylabel("variance_explained_ratio")
+    axis[2].scatter(v['log_ratio_over_random'], v['log_pvalue'], alpha=0.5)
+    axis[2].axvline(0, linestyle="--", color="grey")
+    axis[2].set_xlabel("log_ratio_over_random")
+    axis[2].set_ylabel("-log10(p-value)")
+    for pc in v.sort_values('log_ratio_over_random').tail(5).index:
+        axis[2].text(
+            v.loc[pc, 'log_ratio_over_random'], v.loc[pc, 'log_pvalue'],
+            s="PC {}".format(pc), fontsize=4)
+    fig.savefig(
+        os.path.join(prefix + ".pc_significance_association.svg"), dpi=300, bbox_inches="tight")
+
+    # # real vs random
+    # # # scatter
+    # # # distplot
+    for label, (a, b) in [
+            ("explained_variance_ratio", ("real_weight", "random_weight")),
+            ("p_value", ("pvalue", "padj"))]:
+        n = int(np.ceil(np.sqrt(unsup_results.index.levels[1].shape)))
+        fig1, axis1 = plt.subplots(n, n, figsize=(n * 3, n * 3), sharex=True, sharey=True)
+        fig2, axis2 = plt.subplots(n, n, figsize=(n * 3, n * 3), sharex=True, sharey=True)
+        axes = [axis1.flatten(), axis2.flatten()]
+        for i, pc in enumerate(unsup_results.index.levels[1]):
+            for ax in axes:
+                ax[i].set_title("PC {}".format(pc))
+                ax[i].axvline(0, linestyle="--", color="grey")
+                ax[i].axhline(0, linestyle="--", color="grey")
+            p = unsup_results.loc[unsup_results.index.get_level_values("pc") == pc]
+            axes[0][i].scatter(p[b], p[a], alpha=0.05, s=0.5, rasterized=True)
+            sns.distplot(p[b], kde=False, label=b, ax=axes[1][i])
+            sns.distplot(p[a], kde=False, label=a, ax=axes[1][i])
+            axes[1][i].legend()
+            if label != 'p_value':
+                m = max(p[b].abs().max(), p[a].abs().max())
+                axes[0][i].set_xlim((-m, m))
+                axes[0][i].set_ylim((-m, m))
+            else:
+                axes[0][i].set_xlim((-0.1, 1.1))
+                axes[0][i].set_ylim((-0.1, 1.1))
+        for ax in axis1[:, 0]:
+            ax.set_ylabel(a)
+        for ax in axis1[-1, :]:
+            ax.set_xlabel(b)
+        for ax in axis2[:, 0]:
+            ax.set_ylabel("Features")
+        for ax in axis2[-1, :]:
+            ax.set_xlabel("Weights")
+        fig1.savefig(
+            os.path.join(prefix + ".pc.{}.real_vs_random.scatter.svg".format(label)), dpi=300, bbox_inches="tight")
+        fig2.savefig(
+            os.path.join(prefix + ".pc.{}.real_vs_random.distplot.svg".format(label)), dpi=300, bbox_inches="tight")
+
+    # # plot pc2 vs response
+    fits = pd.read_csv(prefix + ".pca.fit.csv")
+    fig, axis = plt.subplots(1, 1, figsize=(1 * 3, 1 * 3))
+    axis.scatter(fits['2'], fits['response_at_120'])
+    for i, r in fits.iterrows():
+        axis.text(r['2'], r['response_at_120'], s=r['patient_id'])
+    axis.set_xlabel("PC 2")
+    axis.set_ylabel("Response at day 120")
+    fig.savefig(
+        os.path.join(prefix + ".pc_vs_response.scatter.svg"), dpi=300, bbox_inches="tight")
+
+    # # # for significant PCs associated with response, get significant features
+    from ngs_toolkit.general import plot_differential, differential_enrichment
+    attrs = [x for x in plotting_attributes if x not in exclude]
+
+    # # # now only PC2 of CLLs
+    pc = 2
+    alpha = 0.1
+    cell_type = "CLL"
+    p = "cll-time_course.20190111.accessibility_t0_cll"
+    output_prefix = p + ".PC{}".format(pc)
+
+    pp = unsup_results.loc[unsup_results.index.get_level_values('pc') == pc, :].reset_index(level=1)
+
+    plot_differential(
+        analysis, results=pp,
+        output_dir=output_dir, output_prefix=output_prefix,
+        mean_column='mean', log_fold_change_column='weight_over_random',
+        p_value_column='pvalue', adjusted_p_value_column='padj', comparison_column="pc",
+        matrix=analysis.accessibility, samples=[s for s in analysis.samples if s.cell_type == cell_type],
+        robust=True, group_wise_colours=True, group_variables=attrs)
+
+    # get significant
+    # diff = pp.loc[pp['padj'] < alpha, :].copy()
+    # diff['pc'] = diff['pc'].astype(str)
+    # diff = diff.rename(columns={'real_weight': 'log2FoldChange', 'pc': 'comparison_name'})
+
+    # since no significant, look at top/bottom 500
+    pp['direction'] = (pp['weight_over_random'] > 0).replace(True, "up").replace(False, "down")
+    diff = pp.groupby(['direction'])['pvalue'].nsmallest(500).reset_index().set_index('feature')
+    diff = diff.rename(columns={'direction': 'comparison_name'})
+    diff['comparison_name'] = "PC{} ".format(pc) + diff['comparison_name']
+    diff['log2FoldChange'] = 0
+    diff.to_csv(os.path.join(prefix + ".PC2.top_regions.csv"))
+    # diff = pd.read_csv(os.path.join(prefix + ".PC2.top_regions.csv"), index_col=0)
+
+    """
+    # first let's change to hg38
+    # # universe
+    liftOver \
+    results/cll-time_course_peak_set.bed \
+    ~/resources/tools/liftOver/hg19ToHg38.over.chain \
+    results/cll-time_course_peak_set.liftedover_hg38.bed \
+    results/cll-time_course_peak_set.liftedover_hg38.unmapped.bed
+    # # down regions
+    liftOver \
+    results/unsupervised_analysis_ATAC-seq/PC2\ down.all/cll-time_course.20190111.accessibility_t0_cll.PC2_regions.bed \
+    ~/resources/tools/liftOver/hg19ToHg38.over.chain \
+    results/unsupervised_analysis_ATAC-seq/PC2\ down.all/cll-time_course.20190111.accessibility_t0_cll.PC2_regions.liftedover_hg38.bed \
+    results/unsupervised_analysis_ATAC-seq/PC2\ down.all/cll-time_course.20190111.accessibility_t0_cll.PC2_regions.liftedover_hg38.unmapped.bed
+    # # up regions
+    liftOver \
+    results/unsupervised_analysis_ATAC-seq/PC2\ up.all/cll-time_course.20190111.accessibility_t0_cll.PC2_regions.bed \
+    ~/resources/tools/liftOver/hg19ToHg38.over.chain \
+    results/unsupervised_analysis_ATAC-seq/PC2\ up.all/cll-time_course.20190111.accessibility_t0_cll.PC2_regions.liftedover_hg38.bed \
+    results/unsupervised_analysis_ATAC-seq/PC2\ up.all/cll-time_course.20190111.accessibility_t0_cll.PC2_regions.liftedover_hg38.unmapped.bed
+    # # lola again
+
+    sbatch \
+    -p develop --mem 20000 -c 4 \
+    -o results/unsupervised_analysis_ATAC-seq/PC2\ down.all/cll-time_course.20190111.accessibility_t0_cll.PC2_regions.liftedover_hg38.log \
+    -J cll-time_course.20190111.accessibility_t0_cll.PC2_regions.liftedover_hg38.down \
+    --wrap "Rscript ~/jobs/run_LOLA.R \
+    results/unsupervised_analysis_ATAC-seq/PC2\ down.all/cll-time_course.20190111.accessibility_t0_cll.PC2_regions.liftedover_hg38.bed \
+    results/cll-time_course_peak_set.liftedover_hg38.bed \
+    hg38"
+    sbatch \
+    -p develop --mem 20000 -c 4 \
+    -o results/unsupervised_analysis_ATAC-seq/PC2\ up.all/cll-time_course.20190111.accessibility_t0_cll.PC2_regions.liftedover_hg38.log \
+    -J cll-time_course.20190111.accessibility_t0_cll.PC2_regions.liftedover_hg38.up \
+    --wrap "Rscript ~/jobs/run_LOLA.R \
+    results/unsupervised_analysis_ATAC-seq/PC2\ up.all/cll-time_course.20190111.accessibility_t0_cll.PC2_regions.liftedover_hg38.bed \
+    results/cll-time_course_peak_set.liftedover_hg38.bed \
+    hg38"
+    """
+
+    differential_enrichment(
+        analysis, differential=diff, directional=False, genome=analysis.genome,
+        output_dir=output_dir, output_prefix=output_prefix, as_jobs=1)
+
+    collect_differential_enrichment(
+        diff,
+        directional=False,
+        # steps=['homer_consensus'],
+        data_type="ATAC-seq",
+        output_dir=output_dir,
+        input_prefix=output_prefix,
+        output_prefix=output_prefix,
+        permissive=True)
+
+    enrichments_dir = os.path.join(output_dir, "enrichments_PC{}".format(pc))
+    enrichment_table = pd.read_csv(os.path.join(
+        output_dir, output_prefix + ".lola.csv"))
+    plot_differential_enrichment(
+        enrichment_table,
+        "lola",
+        data_type="ATAC-seq",
+        direction_dependent=True,
+        output_dir=enrichments_dir,
+        comp_variable="comparison_name",
+        output_prefix=p + ".PC3.top_8",
+        top_n=8, z_score=1,
+        rasterized=False,
+        clustermap_metric="euclidean")
+    enrichment_table = pd.read_csv(os.path.join(
+        output_dir, output_prefix + ".enrichr.csv"))
+    plot_differential_enrichment(
+        enrichment_table,
+        "enrichr",
+        data_type="ATAC-seq",
+        direction_dependent=True,
+        output_dir=enrichments_dir,
+        comp_variable="comparison_name",
+        output_prefix=output_prefix,
+        top_n=12, z_score=1)
+
+    # observe accessibility of those regions
+    g = sns.clustermap(
+        analysis.accessibility.loc[
+            diff.index,
+            (analysis.accessibility.columns.get_level_values("cell_type") == "CLL") &
+            (analysis.accessibility.columns.get_level_values("timepoint") == "000d")
+        ].T,
+        metric="correlation",
+        robust=True,
+        xticklabels=False, yticklabels=True,
+        row_colors=pd.DataFrame(
+            analysis.get_level_colors(analysis.accessibility.columns),
+            index=analysis.accessibility.columns.names, columns=analysis.accessibility.columns).T,
+        cbar_kws={"label": "Accessibility"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("PC2 regions (n={})".format(diff.shape[0]))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.t0_accessibility.clustermap.svg"), dpi=300, bbox_inches="tight")
+    g = sns.clustermap(
+        analysis.accessibility.loc[
+            diff.index,
+            (analysis.accessibility.columns.get_level_values("cell_type") == "CLL") &
+            (analysis.accessibility.columns.get_level_values("timepoint") == "000d")
+        ].T,
+        metric="correlation", z_score=1, center=0,
+        cmap="RdBu_r", robust=True,
+        xticklabels=False, yticklabels=True,
+        row_colors=pd.DataFrame(
+            analysis.get_level_colors(analysis.accessibility.columns),
+            index=analysis.accessibility.columns.names, columns=analysis.accessibility.columns).T,
+        cbar_kws={"label": "Accessibility"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("PC2 regions (n={})".format(diff.shape[0]))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.t0_accessibility.clustermap.z_score.svg"), dpi=300, bbox_inches="tight")
+
+    # # now for all samples
+    g = sns.clustermap(
+        analysis.accessibility.loc[
+            diff.index,
+            analysis.accessibility.columns.get_level_values("cell_type") == "CLL"
+        ].T,
+        metric="correlation",
+        robust=True,
+        xticklabels=False, yticklabels=True,
+        row_colors=pd.DataFrame(
+            analysis.get_level_colors(analysis.accessibility.columns),
+            index=analysis.accessibility.columns.names, columns=analysis.accessibility.columns).T,
+        cbar_kws={"label": "Accessibility"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("PC2 regions (n={})".format(diff.shape[0]))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.accessibility.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    g = sns.clustermap(
+        c,
+        metric="correlation", z_score=1, center=0,
+        cmap="RdBu_r", robust=True,
+        xticklabels=False, yticklabels=True,
+        row_colors=pd.DataFrame(
+            analysis.get_level_colors(analysis.accessibility.columns),
+            index=analysis.accessibility.columns.names, columns=analysis.accessibility.columns).T,
+        cbar_kws={"label": "Accessibility (Z-score)"}, row_cluster=False)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("PC2 regions (n={})".format(diff.shape[0]))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.accessibility.clustermap.z_score.svg"), dpi=300, bbox_inches="tight")
+
+    #
+    #
+    # 2. Second approach: regress the response directly
+    from ngs_toolkit.general import least_squares_fit
+
+    for cell_type in analysis.accessibility.columns.levels[3]:
+        print(cell_type)
+        # All samples from one cell type
+        # analysis.accessibility_ct = analysis.accessibility.loc[
+        #     :,
+        #     (analysis.accessibility.columns.get_level_values("cell_type") == cell_type)]
+        # exclude = ['cell_type', 'compartment', 'timepoint']
+
+        # quant_matrix = analysis.accessibility_ct.T
+        # design_matrix = analysis.accessibility_ct.columns.to_frame()
+        # results = least_squares_fit(
+        #     quant_matrix, design_matrix,
+        #     test_model="~ response_at_120", null_model="~ 1", standardize_data=True,
+        #     multiple_correction_method="fdr_bh")
+        # results.to_csv(os.path.join("results", "response_association", "regression.{}.csv".format(cell_type)))
+
+        # Only T0
+        analysis.accessibility_t0_ct = analysis.accessibility.loc[
+            :, (analysis.accessibility.columns.get_level_values("timepoint") == "000d") &
+            (analysis.accessibility.columns.get_level_values("cell_type") == cell_type)]
+
+        quant_matrix = analysis.accessibility_t0_ct.T
+        design_matrix = analysis.accessibility_t0_ct.columns.to_frame()
+        results = least_squares_fit(
+            quant_matrix, design_matrix,
+            test_model="~ response_at_120", null_model="~ 1", standardize_data=True,
+            multiple_correction_method="fdr_bh")
+        results.to_csv(os.path.join("results", "response_association", "regression.{}.t0_only.csv".format(cell_type)))
+
+
 if __name__ == '__main__':
+    import sys
     try:
         sys.exit(main())
     except KeyboardInterrupt:
         print("Program canceled by user!")
         sys.exit(1)
+
+
+# for a in [
+# 'coverage',
+# 'coverage_annotated',
+# 'accessibility',
+# 'fits',
+# 'support',
+# 'sites',
+# 'coverage_qnorm',
+# 'region_annotation',
+# 'chrom_state_annotation_b',
+# 'region_annotation_b',
+# 'assignments',
+# 'gene_annotation',
+# 'chrom_state_annotation']:
+#     setattr(analysis, a, getattr(analysis2, a))
+
+
+
+order = [
+"ATAC-seq_CLL1_120d_CLL",
+"ATAC-seq_CLL7_30d_CLL",
+"ATAC-seq_CLL7_1d_CLL",
+"ATAC-seq_CLL7_8d_CLL",
+"ATAC-seq_CLL7_3d_CLL",
+"ATAC-seq_CLL7_150d_CLL",
+"ATAC-seq_CLL7_0d_CLL",
+"ATAC-seq_CLL6_0d_CLL",
+"ATAC-seq_CLL2_0d_CLL",
+"ATAC-seq_CLL2_3d_CLL",
+"ATAC-seq_CLL6_280d_CLL",
+"ATAC-seq_CLL6_120d_CLL",
+"ATAC-seq_CLL6_030d_CLL",
+"ATAC-seq_CLL2_120d_CLL",
+"ATAC-seq_CLL1_030d_CLL",
+"ATAC-seq_CLL1_3d_CLL",
+"ATAC-seq_CLL2_30d_CLL",
+"ATAC-seq_CLL2_8d_CLL",
+"ATAC-seq_CLL8_030d_CLL",
+"ATAC-seq_CLL8_3d_CLL",
+"ATAC-seq_CLL5_240d_CLL",
+"ATAC-seq_CLL5_2d_CLL",
+"ATAC-seq_CLL5_1d_CLL",
+"ATAC-seq_CLL5_3d_CLL",
+"ATAC-seq_CLL5_0d_CLL",
+"ATAC-seq_CLL4_0d_CLL",
+"ATAC-seq_CLL8_0d_CLL",
+"ATAC-seq_CLL5_30d_CLL",
+"ATAC-seq_CLL1_0d_CLL",
+"ATAC-seq_CLL5_150d_CLL",
+"ATAC-seq_CLL4_3d_CLL",
+"ATAC-seq_CLL4_2d_CLL",
+"ATAC-seq_CLL5_8d_CLL",
+]
