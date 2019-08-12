@@ -13,6 +13,7 @@ import random
 import string
 
 import GPy
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -4620,6 +4621,536 @@ def pre_treatment_correlation_with_response(analysis):
             test_model="~ response_at_120", null_model="~ 1", standardize_data=True,
             multiple_correction_method="fdr_bh")
         results.to_csv(os.path.join("results", "response_association", "regression.{}.t0_only.csv".format(cell_type)))
+
+
+def response_day0_rna():
+    import os
+    import random
+    import string
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    import seaborn as sns
+    from tqdm import tqdm
+    from scipy.stats import zscore
+
+    from peppy import Project
+    from ngs_toolkit.atacseq import ATACSeqAnalysis    # Start project and analysis objects
+
+    prj = Project(os.path.join("metadata", "project_config.yaml"))
+    prj._samples = [sample for sample in prj.samples if sample.library == "ATAC-seq"]
+    for sample in prj.samples:
+        sample.filtered = os.path.join(sample.paths.sample_root, "mapped", sample.name + ".trimmed.bowtie2.filtered.bam")
+        sample.peaks = os.path.join(sample.paths.sample_root, "peaks", sample.name + "_peaks.narrowPeak")
+        sample.bigwig = os.path.join(prj.trackhubs.trackhub_dir, sample.name + "_peaks.narrowPeak")
+
+        for attr in sample.__dict__.keys():
+            if type(getattr(sample, attr)) is str:
+                if getattr(sample, attr) == "nan":
+                    setattr(sample, attr, np.nan)
+
+    analysis = ATACSeqAnalysis(name="cll-time_course", prj=prj, samples=prj.samples)
+
+    # Sample's attributes
+    sample_attributes = [
+        "sample_name", "patient_id", "timepoint", "cell_type", "compartment", 'sex',
+        'ighv_mutation', 'ighv_homology', 'p53_mutation', 'cd38_expression',
+        'binet_stage', 'number_of_prior_treatments', 'ttft',
+        "response_at_120", "response", "cell_number", "batch", "good_batch"]
+    numerical_attributes = [
+        'ighv_homology', 'number_of_prior_treatments',
+        'ttft', 'response_at_120']
+    plotting_attributes = [
+        "patient_id", "timepoint", "cell_type", "compartment", 'sex',
+        'ighv_mutation', 'ighv_homology', 'p53_mutation', 'cd38_expression',
+        'binet_stage', 'number_of_prior_treatments', 'ttft',
+        'response_at_120', "batch", "good_batch"]
+    cell_types = list(set([sample.cell_type for sample in analysis.samples]))
+
+    analysis.accessibility = pd.read_csv(os.path.abspath(os.path.join(
+            "results", analysis.name + ".accessibility.annotated_metadata.csv")),
+        header=list(range(18)), index_col=0)
+
+    # look into CLL PC2
+    output_dir = os.path.join(analysis.results_dir, "unsupervised_analysis_" + analysis.data_type)
+    prefix = os.path.join(output_dir, analysis.name + ".20190111.accessibility_t0_cll")
+    alpha = 0.1
+    analysis.accessibility_t0_cll = analysis.accessibility.loc[
+        :, (analysis.accessibility.columns.get_level_values("timepoint") == "000d") &
+        (analysis.accessibility.columns.get_level_values("cell_type") == "CLL")]
+
+    # # # now only PC2 of CLLs
+    pc = 2
+    alpha = 0.1
+    cell_type = "CLL"
+    p = "cll-time_course.20190111.accessibility_t0_cll"
+    output_prefix = p + ".PC{}".format(pc)
+    diff = pd.read_csv(os.path.join(prefix + ".PC2.top_regions.csv"), index_col=0)
+
+    if not os.path.exists("gene.csv.gz"):
+        gene = analysis.get_gene_level_matrix(analysis.accessibility.loc[diff.index])
+        gene.to_csv("gene.csv.gz")
+    else:
+        gene = pd.read_csv("gene.csv.gz", index_col=0, header=list(range(18)))
+
+    colors = analysis.get_level_colors(analysis.accessibility.columns, as_dataframe=True).T
+
+    # plot
+    # # for day 0 only
+    g = sns.clustermap(
+        gene.loc[:, (gene.columns.get_level_values("cell_type") == "CLL") & (gene.columns.get_level_values("timepoint") == "000d")].T,
+        metric="correlation",
+        robust=True,
+        xticklabels=False, yticklabels=True,
+        row_colors=colors.loc['response_at_120', :].T,
+        cbar_kws={"label": "Accessibility"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("PC2 regions (n={})".format(diff.shape[0]))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.t0_accessibility.gene_level.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    g = sns.clustermap(
+        gene.loc[:, (gene.columns.get_level_values("cell_type") == "CLL") & (gene.columns.get_level_values("timepoint") == "000d")].T,
+        metric="correlation", z_score=1, center=0,
+        cmap="RdBu_r", robust=True,
+        xticklabels=False, yticklabels=True,
+        row_colors=colors.loc['response_at_120', :].T,
+        cbar_kws={"label": "Accessibility (Z-score)"}, row_cluster=False)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("PC2 regions (n={})".format(diff.shape[0]))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.t0_accessibility.gene_level.clustermap.z_score.svg"), dpi=300, bbox_inches="tight")
+
+    # # now for all samples
+    g = sns.clustermap(
+        gene.loc[:, gene.columns.get_level_values("cell_type") == "CLL"].T,
+        metric="correlation",
+        robust=True,
+        # xticklabels=None, yticklabels=True,
+        # row_colors=colors.loc['response_at_120', :].T,
+        cbar_kws={"label": "Accessibility"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("PC2 regions (n={})".format(diff.shape[0]))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.accessibility.gene_level.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    g = sns.clustermap(
+        gene.loc[:, gene.columns.get_level_values("cell_type") == "CLL"].T,
+        metric="correlation", z_score=1, center=0,
+        cmap="RdBu_r", robust=True,
+        yticklabels=True,
+        row_colors=colors.loc['response_at_120', :].T,
+        cbar_kws={"label": "Accessibility (Z-score)"}, row_cluster=False)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("PC2 regions (n={})".format(diff.shape[0]))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.accessibility.gene_level.clustermap.z_score.svg"), dpi=300, bbox_inches="tight")
+
+    #
+    # Now take those genes and see expression
+    import scanpy as sc
+    sc_prefix = "cll-time_course-scRNA-seq.all_samples.250-50_filter"
+    adata = sc.read(sc_prefix + ".dca_denoised-zinb.processed.h5ad", cached=True)
+    adata.obs = pd.read_csv(sc_prefix + ".dca_denoised-zinb.processed.obs.csv", index_col=0)
+
+    cll = adata[adata.obs['cell_type'] == "CLL", :]
+
+    # Get expression per timepoint per patient
+    if not os.path.exists("single_cell.mean_expression.csv.gz"):
+        d = pd.DataFrame(cll.X, index=cll.obs.index, columns=cll.var.index).join(cll.obs[['patient_id', 'timepoint']])
+        dt = d.groupby(['patient_id', 'timepoint']).mean().T.sort_index()
+        dt.to_csv("single_cell.mean_expression.csv.gz")
+    else:
+        dt = pd.read_csv("single_cell.mean_expression.csv.gz", index_col=0, header=[0, 1])
+
+    # Read both
+    gene = pd.read_csv("gene.csv.gz", index_col=0, header=list(range(18)))
+    dt = pd.read_csv("single_cell.mean_expression.csv.gz", index_col=0, header=[0, 1])
+
+    # get vector of strength of association
+    diff.loc[:, 'log_p'] = -np.log10(diff['pvalue'])
+    diff.loc[diff['comparison_name'].str.endswith("down"), 'log_p'] *= -1
+    diff = diff.sort_values("log_p")
+
+    diff_gene = analysis.get_gene_level_matrix(diff[['log_p', 'log2FoldChange']])
+    gene_colors = pd.Series([tuple(x) for x in plt.get_cmap("RdBu_r")(diff_gene['log_p'])], diff_gene.index)
+
+    # visualize expression
+    g = sns.clustermap(
+        dt.loc[gene.index, dt.columns.get_level_values("timepoint") == "000d"].dropna().T,
+        metric="correlation",
+        robust=True,
+        yticklabels=True,
+        # row_colors=colors.loc['response_at_120', :].T,
+        col_colors=gene_colors,
+        cbar_kws={"label": "Accessibility"})
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("Genes associated with PC2 regions (n={})".format(len(gene.index)))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.gene_expression.t0_expression.reduced_patient.clustermap.svg"), dpi=300, bbox_inches="tight")
+
+    g = sns.clustermap(
+        dt.loc[gene.index, :].dropna().T,
+        metric="correlation", z_score=1, center=0,
+        cmap="RdBu_r", robust=True,
+        yticklabels=True,
+        # row_colors=colors.loc['response_at_120', :].T,
+        col_colors=gene_colors.loc[gene.index],
+        # col_colors=gene_colors,
+        cbar_kws={"label": "Expression (Z-score)"}, row_cluster=False)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("Genes associated with PC2 regions (n={})".format(len(gene.index)))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.gene_expression.reduced_patient.clustermap.z_score.svg"), dpi=300, bbox_inches="tight")
+
+    g = sns.clustermap(
+        dt.loc[gene.index, dt.columns.get_level_values("timepoint") == "000d"].dropna().T,
+        metric="correlation", z_score=1, center=0,
+        cmap="RdBu_r", robust=True,
+        yticklabels=True,
+        # row_colors=colors.loc['response_at_120', :].T,
+        col_colors=gene_colors.loc[gene.index],
+        # col_colors=gene_colors,
+        cbar_kws={"label": "Expression (Z-score)"}, row_cluster=False)
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    g.ax_heatmap.set_ylabel("ATAC-seq samples")
+    g.ax_heatmap.set_xlabel("Genes associated with PC2 regions (n={})".format(len(gene.index)))
+    g.ax_heatmap.get_children()[0].set_rasterized(True)
+    g.savefig(
+        os.path.join(prefix + ".pc_regions.gene_expression.t0_expression.reduced_patient.clustermap.z_score.svg"), dpi=300, bbox_inches="tight")
+
+
+def inspect_coefficients():
+    # export coefficients from R
+    """
+    library("nmslibR")
+    loadRData <- function(fileName){
+        load(fileName)
+        get(ls()[ls() != "fileName"])
+    }
+    reg <- loadRData("results/single_cell_RNA/80_3_2_01_PredictTime6_CV/Reg.models.RData")
+
+    writeMM(reg$CLL1$model$beta, "results/single_cell_RNA.80_3_2_01_PredictTime6_CV.Reg.models.CLL1.beta.mm")
+    writeMM(reg$CLL5$model$beta, "results/single_cell_RNA.80_3_2_01_PredictTime6_CV.Reg.models.CLL5.beta.mm")
+    writeMM(reg$CLL6$model$beta, "results/single_cell_RNA.80_3_2_01_PredictTime6_CV.Reg.models.CLL6.beta.mm")
+    writeMM(reg$CLL7$model$beta, "results/single_cell_RNA.80_3_2_01_PredictTime6_CV.Reg.models.CLL7.beta.mm")
+
+    write(colnames(reg$CLL7$model$beta), "results/single_cell_RNA.80_3_2_01_PredictTime6_CV.Reg.models.CLL7.beta.colnames.txt")
+    write(rownames(reg$CLL7$model$beta), "results/single_cell_RNA.80_3_2_01_PredictTime6_CV.Reg.models.CLL7.beta.rownames.txt")
+    """
+    from scipy.io import mmread
+    from scipy.stats import fisher_exact
+
+    output_dir = os.path.join("results", "scrna_prediction")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    col = pd.read_csv("results/single_cell_RNA.80_3_2_01_PredictTime6_CV.Reg.models.CLL7.beta.colnames.txt", header=None, squeeze=True)
+    row = pd.read_csv("results/single_cell_RNA.80_3_2_01_PredictTime6_CV.Reg.models.CLL7.beta.rownames.txt", header=None, squeeze=True)
+
+    clls = ["CLL1", "CLL5", "CLL6", "CLL7"]
+    lambdas = [20, 21, 18, 16]
+
+    coefs = list()
+    for i, (cll, lamb) in enumerate(zip(clls, lambdas)):
+        d = pd.DataFrame(
+            mmread("results/single_cell_RNA.80_3_2_01_PredictTime6_CV.Reg.models.{}.beta.mm".format(cll))
+            .todense(), index=row, columns=col).iloc[:, lamb]
+        coefs.append(d.rename(cll))
+    coefs = pd.concat(coefs, 1)
+    coefs.index.name = "gene_name"
+    coefs = coefs.rename(columns={"CLL7": "CLL8"})
+
+    # drop zeros everywhere
+    coefs = coefs.loc[~(coefs == 0).all(1), :]
+
+    # add info on how each gene is related with response
+    annot = pd.read_csv(os.path.join("metadata", "annotation.csv"))
+    response = annot.loc[:, ['patient_id', 'response_at_120']].drop_duplicates().dropna().set_index("patient_id").squeeze()
+    corr = coefs.T.corrwith(response.loc[coefs.columns])
+
+    # search for consistent coefficients
+    mean = coefs.mean(1)
+    sign = (mean > 0).astype(int).replace(0, -1)
+    log_mean = mean.abs() ** (1 / 3) * sign
+    std = coefs.std(1) / 2
+    coefs = coefs.assign(
+        corr=corr,
+        mean=mean,
+        median=coefs.median(1),
+        log_mean=log_mean,
+        abs_mean=mean.abs(),
+        std=std * 2, v=std,
+        diff=mean.abs() - std).sort_values("diff")
+
+    coefs.to_csv(os.path.join(output_dir, "regression_coefficients.csv"))
+    coefs = coefs.query("(diff < -1e-3) | (diff > 1e-3)")
+
+    # get colors for the genes
+    div = plt.get_cmap("RdBu_r")
+    cont = plt.get_cmap("plasma")
+    norm0 = matplotlib.colors.Normalize(vmin=0, vmax=2)
+    norm1 = matplotlib.colors.Normalize(vmin=-1, vmax=1)
+    norm2 = matplotlib.colors.Normalize(vmin=-0.3, vmax=0.3)
+    gene_color_dataframe = pd.DataFrame(
+        [[tuple(x) for x in div(norm1(coefs['corr'].values))],
+         [tuple(x) for x in div(norm2(coefs['log_mean'].values))],
+         [tuple(x) for x in div(norm2(coefs['median'].values))],
+         [tuple(x) for x in cont(norm0(coefs['std'].values))],
+         [tuple(x) for x in div(norm1(coefs['diff'].values))]],
+        index=['corr', 'log_mean', 'median', 'std', 'diff'], columns=coefs.index).T
+
+    # Display all coefficients
+    grid = sns.clustermap(
+        coefs.loc[:, coefs.columns.str.startswith("CLL")],
+        cmap="RdBu_r", center=0, robust=True, rasterized=True, metric="correlation",
+        cbar_kws={"label": "Regression coefficient"},
+        row_colors=gene_color_dataframe)
+    grid.savefig(
+        os.path.join("results", "scrna_prediction", "regression_coefficients.clustermap.svg"),
+        bbox_inches="tight", dpi=300)
+
+    # Display how patients relate to each other
+    grid = sns.clustermap(
+        coefs.loc[:, coefs.columns.str.startswith("CLL")].corr(),
+        cmap="RdBu_r", center=0, robust=True, rasterized=True, metric="correlation",
+        cbar_kws={"label": "Correlation of regression coefficient"})
+    grid.savefig(
+        os.path.join("results", "scrna_prediction", "regression_coefficients.patient_correlation.clustermap.svg"),
+        bbox_inches="tight", dpi=300)
+
+    # Display how genes relate to each other
+    grid = sns.clustermap(
+        coefs.loc[:, coefs.columns.str.startswith("CLL")].T.corr(),
+        cmap="RdBu_r", center=0, robust=True, rasterized=True, metric="correlation",
+        cbar_kws={"label": "Correlation of regression coefficient"},
+        row_colors=gene_color_dataframe)
+    grid.savefig(
+        os.path.join("results", "scrna_prediction", "regression_coefficients.gene_correlation.clustermap.svg"),
+        bbox_inches="tight", dpi=300)
+
+    # Select strongest, consistent, variable, correlated genes across patients
+    strength_thresold = 1
+    consistence_threshold = 0.25
+    variability_threshold = 1.5
+    correlation_threshold = 0.90
+    attrs = ["strong", "consistent", "variable", "correlated"]
+    coefs = coefs.assign(
+        strong=coefs['mean'].abs() > strength_thresold,
+        consistent=coefs['diff'] > consistence_threshold,
+        variable=coefs['std'] > variability_threshold,
+        correlated=coefs['corr'].abs() > correlation_threshold)
+    coefs.to_csv(os.path.join(output_dir, "regression_coefficients.filtered.classified.csv"))
+
+    # Illustration of selection procedure
+    fig, axis = plt.subplots(1, 7, figsize=(7 * 4, 4))
+    v = coefs['log_mean'].abs().max()
+    v += v * 0.1
+    axis[0].scatter(
+        coefs['log_mean'], np.log(coefs['v']),
+        c=coefs['corr'], cmap="coolwarm",
+        alpha=0.2, rasterized=True)
+    axis[0].set_xlabel("Coefficient mean (log)")
+    axis[0].set_ylabel("Coefficient standard deviation (log)")
+    axis[0].set_xlim(-v, v)
+    axis[0].axvline(0, linestyle="--", color="grey")
+    axis[0].axhline(np.log(variability_threshold), linestyle="--", color="black")
+    axis[0].axvline(-np.log(strength_thresold), linestyle="--", color="black")
+    vv = coefs.query("strong == True")['log_mean'].abs().min()
+    axis[0].axvline(vv, linestyle="--", color="black")
+    axis[0].axvline(-vv, linestyle="--", color="black")
+
+    axis[1].scatter(
+        coefs['log_mean'], coefs['diff'],
+        c=coefs['corr'], cmap="coolwarm",
+        alpha=0.2, rasterized=True)
+    axis[1].set_xlabel("Coefficient log_mean")
+    axis[1].set_ylabel("Deviation from expected")
+    axis[1].set_xlim(-v, v)
+    axis[1].axhline(consistence_threshold, linestyle="--", color="black")
+    axis[1].axhline(0, linestyle="--", color="grey")
+
+    axis[2].scatter(
+        coefs['log_mean'], coefs['corr'],
+        c=coefs['corr'], cmap="coolwarm",
+        alpha=0.2, rasterized=True)
+    axis[2].set_xlabel("Coefficient log_mean")
+    axis[2].set_ylabel("Correlation to response")
+    axis[2].set_xlim(-v, v)
+    axis[2].axhline(-correlation_threshold, linestyle="--", color="black")
+    axis[2].axhline(correlation_threshold, linestyle="--", color="black")
+    axis[2].axhline(0, linestyle="--", color="grey")
+
+    for i, label in enumerate(attrs):
+        p = coefs.query(f"{label} == True")
+        axis[3 + i].set_title(f"Most {label} genes")
+        axis[3 + i].scatter(
+            p['corr'].rank(), p['corr'],
+            c=p['corr'], cmap="coolwarm",
+            alpha=0.9, s=5, rasterized=True)
+        axis[3 + i].set_xlabel("Correlation to response (rank)")
+        axis[3 + i].set_ylabel("Correlation to response")
+        axis[3 + i].axhline(0, linestyle="--", color="grey")
+        r = p['corr'].rank()
+        for l in p.index:
+            axis[3 + i].text(r.loc[l], p.loc[l, 'corr'], s=l, fontsize=5, rotation=90, va="bottom")
+
+    fig.savefig(
+        os.path.join("results", "scrna_prediction", "regression_coefficients.inspection.scatter.svg"),
+        bbox_inches="tight", dpi=300)
+
+    # Display top genes
+    for i, label in enumerate(attrs):
+        p = coefs.query(f"{label} == True")
+        grid = sns.clustermap(
+            p.loc[:, p.columns.str.startswith("CLL")],
+            cmap="RdBu_r", center=0, robust=True, rasterized=True, metric="correlation",
+            cbar_kws={"label": "Regression coefficient"},
+            row_colors=gene_color_dataframe)
+        grid.savefig(
+            os.path.join("results", "scrna_prediction", f"regression_coefficients.{label}.top.clustermap.svg"),
+            bbox_inches="tight", dpi=300)
+
+        # # display relationship between genes
+        grid = sns.clustermap(
+            p.loc[:, p.columns.str.startswith("CLL")].T.corr(),
+            cmap="RdBu_r", center=0, robust=True, rasterized=True, metric="correlation",
+            cbar_kws={"label": "Correlation of regression coefficient"},
+            row_colors=gene_color_dataframe,
+            xticklabels=False)
+        grid.savefig(
+            os.path.join("results", "scrna_prediction", f"regression_coefficients.{label}.top.gene_correlation.clustermap.svg"),
+            bbox_inches="tight", dpi=300)
+
+    #
+    # See what fraction of genes is differentially expressed
+
+    # # load diff expression
+    scrna = pd.read_csv(os.path.join(
+        "results", "single_cell_RNA", "13_4_Overtime_nUMI_Cutoff", "SigGenes_overTime.tsv"), sep="\t")
+    all_genes = scrna['gene'].drop_duplicates()
+    scrna2 = scrna.loc[scrna['qvalue'] < 0.05]
+    scrna2.groupby('cellType')['gene'].nunique()
+    scrna2['log_pvalue'] = -np.log10(scrna2['pvalue'])
+    scrna2 = scrna_diff2.rename(
+        columns={"logFC": "log2FoldChange", "cellType": "comparison_name", "gene": "gene_name"})
+    diff = scrna2.query("(comparison_name == 'CLL') and (qvalue < 0.05)")
+
+    # # load offtarget signature
+    atac_sig = pd.read_csv(os.path.join("results", "offtarget_signature.csv"), index_col=0, header=None, squeeze=True)
+
+    # # load ATAC-seq day 0 signature
+    atac_d0_genes = pd.read_csv("gene.csv.gz", index_col=0, header=list(range(18)))
+
+    # # assemble all gene sets
+    gene_sets = {
+        "differential_expression": {
+            "pos": set(diff['gene_name']),
+            "neg": set(all_genes[~all_genes.isin(diff['gene_name'])])},
+        "cross_cell_type_signature": {
+            "pos": set(atac_sig.index),
+            "neg": set(all_genes[~all_genes.isin(atac_sig.index)])},
+        "atacseq_d0_signature": {
+            "pos": set(atac_d0_genes.index),
+            "neg": set(all_genes[~all_genes.isin(atac_d0_genes.index)])},
+        "regression_coefficients": {
+            "pos": set(coefs.index),
+            "neg": set(all_genes[~all_genes.isin(coefs.index)])}}
+    for label in attrs:
+        p = coefs.query(f"{label} == True")
+        gene_sets["regression_coefficients-" + label] = {
+            "pos": set(p.index),
+            "neg": set(all_genes[~all_genes.isin(p.index)])}
+
+    # # test
+    all_tests = list()
+    for s1 in gene_sets:
+        for s2 in gene_sets:
+            s1_ = gene_sets[s1]
+            s1_pos, s1_neg = s1_['pos'], s1_['neg']
+            s2_ = gene_sets[s2]
+            s2_pos, s2_neg = s2_['pos'], s2_['neg']
+            # # diff expressed and in coefficients
+            a = len(s1_pos.intersection(s2_pos))
+            # # not diff expressed but in coefficients
+            b = len(s2_neg.intersection(s1_pos))
+            # # diff expressed and not in coefficients
+            c = len(s2_pos.intersection(s1_neg))
+            # # not diff expressed and not in coefficients
+            # d = (~s2_neg.isin(s1_neg)).sum()
+            d = len(set(s1_neg).union(set(s2_neg)))
+            odds, p = fisher_exact([[a, b], [c, d]], alternative="greater")
+            s = pd.Series(
+                [s1, s2, 'fisher_exact', a, b, c, d, odds, p],
+                name=f'{s1}_vs_{s2}',
+                index=['set1', 'set2', 'test', 'a', 'b', 'c', 'd', "odds_ratio", "p_value"]).to_frame().T
+            all_tests.append(s)
+
+    s = pd.concat(all_tests).infer_objects()
+
+    # Correct p-values
+    # from statsmodels.stats.multitest import multipletests
+    # s = s.assign(p_adj=multipletests(s['p_value'], method="fdr_bh")[1])
+    s = s.assign(p_adj=s['p_value'] * s.shape[0])  # for some reason statsmodels capped the p-values
+    s.loc[s['p_adj'] > 1, 'p_adj'] = 1
+    s.index.name = "comparison"
+    s.to_csv(os.path.join("results", "scrna_prediction", "regression_coefficients.overlap_with_all_signatures.csv"))
+
+    # # plot pairwise relationship of signature
+    # s = s.loc[s['odds_ratio'] != np.inf]
+    s = s.query("set1 != set2")
+    odds = np.log2(s.pivot_table(index="set1", columns="set2", values="odds_ratio"))
+    p = -np.log10(s.pivot_table(index="set1", columns="set2", values="p_adj"))
+
+    fig, axis = plt.subplots(1, 2, figsize=(2 * 5, 5))
+    v = odds.max().replace(np.inf, 0).max()
+    v += v * 0.1
+    sns.heatmap(
+        odds, cmap="RdBu_r", vmin=-v, vmax=v,
+        ax=axis[0], cbar_kws={"label": "log2(Odds ratio)"}, square=True, annot=True, fmt=".2f")
+    v = p.max().max()
+    sns.heatmap(
+        p, vmax=v + v * 0.1,
+        ax=axis[1], cbar_kws={"label": "-log10(Bonferroni p-value)"}, square=True, annot=True, fmt=".2f",
+        yticklabels=False)
+    fig.savefig(
+        os.path.join("results", "scrna_prediction", "regression_coefficients.overlap_with_all_signatures.heatmap.svg"),
+        bbox_inches="tight")
+
+    #
+    # Ilustrate differential expression between patients
+
+    # # read single cell expression
+    prefix = "cll-time_course-scRNA-seq.all_samples.250-50_filter"
+    adata = sc.read(prefix + ".dca_denoised-zinb.processed.h5ad")
+    adata.obs = pd.read_csv(prefix + ".dca_denoised-zinb.processed.obs.csv", index_col=0)
+    adata.obs = adata.obs.assign(sample=adata.obs['patient_id'] + "_" + adata.obs['timepoint'])
+
+    # inspect mean across cells
+    gene = "CD24"
+    x = pd.Series(adata[:, gene].X, index=adata.obs.index, name=gene)
+    adata.obs.join(x).query("cell_type == 'CLL'").groupby(['patient_id', 'timepoint'])[gene].mean()
+
+    genes = ["CD24", "B2M", "CXCR4", "BTG1", "TNF"]
+    ngenes = len(genes)
+    fig, axis = plt.subplots(1, ngenes, figsize=(3 * ngenes, 3))
+    for i, gene in enumerate(genes):
+        ax = sc.pl.violin(adata, gene, groupby="sample", use_raw=False, ax=axis[i], show=False, rasterized=True)
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+    fig.savefig(os.path.join("results", "scrna_prediction", "regression_coefficients.marker_illustration.svg"), dpi=300, bbox_inches="tight")
 
 
 if __name__ == '__main__':
