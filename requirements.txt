@@ -1,0 +1,13 @@
+GPy
+looper==0.6-rc1
+matplotlib
+ngs_toolkit
+numpy
+pandas
+parmap
+pybedtools
+scipy
+seaborn
+sklearn
+statsmodels
+tqdm

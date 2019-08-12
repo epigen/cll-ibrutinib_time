@@ -46,35 +46,10 @@ np.random.seed(SEED)
 
 def main():
     # Start project and analysis objects
-    prj = Project(os.path.join("metadata", "project_config.yaml"))
-    prj._samples = [sample for sample in prj.samples if sample.library == "ATAC-seq"]
-    for sample in prj.samples:
-        sample.filtered = os.path.join(sample.paths.sample_root, "mapped", sample.name + ".trimmed.bowtie2.filtered.bam")
-        sample.peaks = os.path.join(sample.paths.sample_root, "peaks", sample.name + "_peaks.narrowPeak")
-        sample.bigwig = os.path.join(prj.trackhubs.trackhub_dir, sample.name + "_peaks.narrowPeak")
-
-        for attr in sample.__dict__.keys():
-            if type(getattr(sample, attr)) is str:
-                if getattr(sample, attr) == "nan":
-                    setattr(sample, attr, np.nan)
-
-    analysis = ATACSeqAnalysis(name="cll-time_course", prj=prj, samples=prj.samples)
-
-    # Sample's attributes
-    sample_attributes = [
-        "sample_name", "patient_id", "timepoint", "cell_type", "compartment", 'sex',
-        'ighv_mutation', 'ighv_homology', 'p53_mutation', 'cd38_expression',
-        'binet_stage', 'number_of_prior_treatments', 'ttft',
-        "response_at_120", "response", "cell_number", "batch", "good_batch"]
-    numerical_attributes = [
-        'ighv_homology', 'number_of_prior_treatments',
-        'ttft', 'response_at_120']
-    plotting_attributes = [
-        "patient_id", "timepoint", "cell_type", "compartment", 'sex',
-        'ighv_mutation', 'ighv_homology', 'p53_mutation', 'cd38_expression',
-        'binet_stage', 'number_of_prior_treatments', 'ttft',
-        'response_at_120', "batch", "good_batch"]
-    cell_types = list(set([sample.cell_type for sample in analysis.samples]))
+    analysis = ATACSeqAnalysis(
+        from_pep=os.path.join("metadata", "project_config.yaml"))
+    cell_types = list(set([
+        sample.cell_type for sample in analysis.samples]))
 
     # Get accessibility matrix with normalization
     # generate consensus peak set from all samples, cell types together
@@ -84,102 +59,111 @@ def main():
     analysis.get_peak_gene_annotation()
     analysis.get_peak_genomic_location()
     analysis.get_peak_chromatin_state(
-        chrom_state_file=os.path.join("data", "external", "E032_15_coreMarks_mnemonics.bed"))
+        chrom_state_file=get_chrom_state_file())
     analysis.calculate_peak_support(region_type="summits")
 
     # get coverage values for each region in each sample
     analysis.measure_coverage()
-    analysis.coverage = analysis.coverage[~analysis.coverage.index.str.contains("chrX|chrY")]
+    analysis.coverage = analysis.coverage.loc[
+        ~analysis.coverage.index.str.contains("chrX|chrY"), :]
 
     # data normalization
-    analysis.accessibility = data_normalization(analysis)
+    analysis.matrix_norm = data_normalization(analysis)
 
     # annotate matrix with sample metadata and save
-    analysis.accessibility = analysis.annotate_with_sample_metadata(
-        quant_matrix="accessibility", attributes=sample_attributes,
-        numerical_attributes=numerical_attributes,
-        save=True, assign=False)
+    analysis.annotate_with_sample_metadata(
+        numerical_attributes=analysis.numerical_attributes)
+
+    # annotate matrix with feature metadata
+    analysis.annotate_features()
     analysis.to_pickle()
 
-    analysis.annotate(quant_matrix="coverage")
-    analysis.to_pickle()
-
-
+    #
     # Unsupervised analysis
-    unsupervised_analysis(analysis, quant_matrix="accessibility", samples=None, attributes_to_plot=plotting_attributes, plot_prefix="accessibility")
+    # # for all samples jointly
+    analysis.unsupervised_analysis()
+
+    # # for each cell type separately
     for cell_type in cell_types:
-        unsupervised_analysis(
-            analysis, quant_matrix="accessibility", samples=[s for s in analysis.samples if (s.cell_type == cell_type)],
-            attributes_to_plot=['patient_id', 'timepoint', 'batch'], plot_prefix="accessibility_{}_only".format(cell_type))
+        analysis.unsupervised_analysis(
+            samples=[s for s in analysis.samples if (s.cell_type == cell_type)],
+            attributes_to_plot=['patient_id', 'timepoint', 'batch'],
+            plot_prefix="accessibility_{}_only".format(cell_type))
 
-
+    #
     # Time Series Analysis
-    matrix_file = os.path.abspath(os.path.join("results", analysis.name + ".accessibility.annotated_metadata.csv"))
-    cell_types = ['Bcell', 'CD4', 'CD8', 'CLL', 'NK', 'Mono']
+    matrix_file = os.path.abspath(os.path.join(
+        "results", analysis.name + ".matrix_norm.csv"))
     gp_output_dir = os.path.join(analysis.results_dir, "gp_fits")
     mohgp_output_dir = os.path.join(analysis.results_dir, "mohgp_fits")
+    fits_file = os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv")
+    prefix = "accessibility.qnorm_pcafix_cuberoot"
 
     # fit GPs with varying and constant kernel to detect variable regulatory elements
-    prefix = "accessibility.qnorm_pcafix_cuberoot"
     fit_gaussian_processes(
-        analysis.accessibility,
+        analysis.matrix_norm,
         cell_types=cell_types,
         matrix_file=matrix_file,
         prefix=prefix)  # wait for jobs to complete
 
     analysis.fits = gather_gaussian_processes(
-        analysis.accessibility,
+        analysis.matrix_norm,
         matrix_file=matrix_file,
         prefix=prefix)
-    analysis.fits.to_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index=True)
-    analysis.fits = pd.read_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index_col=0)
+    analysis.fits.to_csv(fits_file, index=True)
 
-    visualize_gaussian_process_fits(analysis, analysis.fits, output_dir=gp_output_dir, prefix=prefix)
+    visualize_gaussian_process_fits(
+        analysis, analysis.fits, output_dir=gp_output_dir, prefix=prefix)
 
     # cluster variable regulatory elements with hierarchical mixtures of GPs (MOHGP)
-    for alpha in [0.01, 0.05]:
+    analysis.assignments = dict()
+    for alpha in [0.05]:  # 0.01
         clust_prefix = prefix + ".p={}".format(alpha)
         fit_MOHGP(
-            analysis.accessibility,
-            matrix_file=os.path.abspath(os.path.join(
-                "results", analysis.name + ".accessibility.annotated_metadata.csv")),
-            fits_file=os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"),
+            analysis.matrix_norm,
+            matrix_file=matrix_file,
+            fits_file=fits_file,
             cell_types=cell_types,
             n_clust=[3, 5, 4, 4, 4, 3],
-            prefix=clust_prefix, output_dir=mohgp_output_dir, alpha=alpha)
+            prefix=clust_prefix,
+            output_dir=mohgp_output_dir,
+            alpha=alpha)
         # wait for jobs to finish
 
-        analysis.assignments = gather_MOHGP(
-            analysis.accessibility, analysis.fits,
+        analysis.assignments[alpha] = gather_MOHGP(
+            analysis.matrix_norm, analysis.fits,
             cell_types=cell_types,
             n_clust=[3, 5, 4, 4, 4, 3],
-            prefix=clust_prefix, fits_dir=mohgp_output_dir, alpha=alpha, posterior_threshold=0.8)
-        analysis.assignments.to_csv(os.path.join(mohgp_output_dir, clust_prefix + ".GP_fits.mohgp_clusters.csv"), index=True)
-        analysis.assignments = pd.read_csv(os.path.join(mohgp_output_dir, clust_prefix + ".GP_fits.mohgp_clusters.csv"), index_col=0)
+            prefix=clust_prefix,
+            fits_dir=mohgp_output_dir,
+            alpha=alpha,
+            posterior_threshold=0.8)
+        analysis.assignments[alpha].to_csv(os.path.join(
+            mohgp_output_dir, clust_prefix + ".GP_fits.mohgp_clusters.csv"), index=True)
+        analysis.assignments[alpha] = pd.read_csv(os.path.join(
+            mohgp_output_dir, clust_prefix + ".GP_fits.mohgp_clusters.csv"), index_col=0)
 
         visualize_clustering_assignments(
-            analysis.accessibility, analysis.assignments, prefix=clust_prefix,
+            analysis.matrix_norm, analysis.assignments[alpha], prefix=clust_prefix,
             output_dir=mohgp_output_dir)
 
         # export clusters at gene level
-        clusters_to_signatures(analysis.assignments)
+        clusters_to_signatures(analysis.assignments[alpha])
 
+    # Not included in publication:
+    # # Linear time
+    # gp_linear(analysis)
+    # # Randomized samples
+    # gp_random(analysis)
 
-    # Linear time
-    gp_linear(analysis)
-    # Randomized samples
-    gp_random(analysis)
-
-
+    #
     # Plot distribution of clusters per cell type dependent on their dynamic pattern
-    gp_output_dir = os.path.join(analysis.results_dir, "gp_fits")
-    mohgp_output_dir = os.path.join(analysis.results_dir, "mohgp_fits")
     alpha = 0.05
+    assignments = analysis.assignments[alpha]
     prefix = "accessibility.qnorm_pcafix_cuberoot" + ".p={}".format(alpha)
-    assignments = pd.read_csv(os.path.join(mohgp_output_dir, prefix + ".GP_fits.mohgp_clusters.csv"), index_col=0)
     l_assignments = cluster_stats(assignments, prefix=prefix)
 
-
+    #
     # Get enrichments of region clusters
     enrichments_dir = os.path.join(analysis.results_dir, "cluster_enrichments")
     l_assignments['comparison_name'] = l_assignments['cell_type'] + \
@@ -209,7 +193,8 @@ def main():
     output_dir = os.path.join("results", "cluster_enrichments_nostringent")
 
     for dir_ in comparison_dirs:
-        cpus = 8; genome = "hg19"
+        cpus = 8
+        genome = "hg19"
         combined_motifs = os.path.join(output_dir, "homerMotifs.filtered.motifs")
         cmd = (
             "findMotifsGenome.pl {bed} {genome}r {dir} -p {cpus} -nomotif -mknown {motif_file}"
@@ -229,76 +214,77 @@ def main():
         cpus=8, run=1, as_jobs=True, genome="hg19",
         motif_database=None, known_vertebrates_TFs_only=False)
 
-    # Inspect remaining regions
+    # Not included in publication
+    # # Inspect remaining regions
+    # collect_differential_enrichment(
+    #     l_assignments,
+    #     directional=False,
+    #     steps=['homer_consensus'],
+    #     data_type="ATAC-seq",
+    #     output_dir=enrichments_dir,
+    #     output_prefix=prefix,
+    #     permissive=True)
 
-    collect_differential_enrichment(
-        l_assignments,
-        directional=False,
-        steps=['homer_consensus'],
-        data_type="ATAC-seq",
-        output_dir=enrichments_dir,
-        output_prefix=prefix,
-        permissive=True)
-
-    for simple, label in [(False, ""), (True, "-simple")]:
-        enrichment_table = pd.read_csv(os.path.join(
-            enrichments_dir, prefix + ".meme_ame.csv"))
-        if simple:
-            enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
-        plot_differential_enrichment(
-            enrichment_table,
-            "motif",
-            data_type="ATAC-seq",
-            direction_dependent=False,
-            output_dir=enrichments_dir,
-            comp_variable="comparison_name",
-            output_prefix=prefix + label,
-            top_n=5)
-        enrichment_table = pd.read_csv(os.path.join(
-            enrichments_dir, prefix + ".lola.csv"))
-        if simple:
-            enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
-        plot_differential_enrichment(
-            enrichment_table,
-            "lola",
-            data_type="ATAC-seq",
-            direction_dependent=False,
-            output_dir=enrichments_dir,
-            comp_variable="comparison_name",
-            output_prefix=prefix + label,
-            top_n=5)
-        enrichment_table = pd.read_csv(os.path.join(
-            enrichments_dir, prefix + ".homer_consensus.csv"))
-        if simple:
-            enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
-        plot_differential_enrichment(
-            enrichment_table,
-            "homer_consensus",
-            data_type="ATAC-seq",
-            direction_dependent=False,
-            output_dir=enrichments_dir,
-            comp_variable="comparison_name",
-            output_prefix=prefix + label,
-            top_n=1)
-        enrichment_table = pd.read_csv(os.path.join(
-            enrichments_dir, prefix + ".enrichr.csv"))
-        if simple:
-            enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
-        plot_differential_enrichment(
-            enrichment_table,
-            "enrichr",
-            data_type="ATAC-seq",
-            direction_dependent=False,
-            output_dir=enrichments_dir,
-            comp_variable="comparison_name",
-            output_prefix=prefix + label,
-            top_n=5)
+    # for simple, label in [(False, ""), (True, "-simple")]:
+    #     enrichment_table = pd.read_csv(os.path.join(
+    #         enrichments_dir, prefix + ".meme_ame.csv"))
+    #     if simple:
+    #         enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
+    #     plot_differential_enrichment(
+    #         enrichment_table,
+    #         "motif",
+    #         data_type="ATAC-seq",
+    #         direction_dependent=False,
+    #         output_dir=enrichments_dir,
+    #         comp_variable="comparison_name",
+    #         output_prefix=prefix + label,
+    #         top_n=5)
+    #     enrichment_table = pd.read_csv(os.path.join(
+    #         enrichments_dir, prefix + ".lola.csv"))
+    #     if simple:
+    #         enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
+    #     plot_differential_enrichment(
+    #         enrichment_table,
+    #         "lola",
+    #         data_type="ATAC-seq",
+    #         direction_dependent=False,
+    #         output_dir=enrichments_dir,
+    #         comp_variable="comparison_name",
+    #         output_prefix=prefix + label,
+    #         top_n=5)
+    #     enrichment_table = pd.read_csv(os.path.join(
+    #         enrichments_dir, prefix + ".homer_consensus.csv"))
+    #     if simple:
+    #         enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
+    #     plot_differential_enrichment(
+    #         enrichment_table,
+    #         "homer_consensus",
+    #         data_type="ATAC-seq",
+    #         direction_dependent=False,
+    #         output_dir=enrichments_dir,
+    #         comp_variable="comparison_name",
+    #         output_prefix=prefix + label,
+    #         top_n=1)
+    #     enrichment_table = pd.read_csv(os.path.join(
+    #         enrichments_dir, prefix + ".enrichr.csv"))
+    #     if simple:
+    #         enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("_")]
+    #     plot_differential_enrichment(
+    #         enrichment_table,
+    #         "enrichr",
+    #         data_type="ATAC-seq",
+    #         direction_dependent=False,
+    #         output_dir=enrichments_dir,
+    #         comp_variable="comparison_name",
+    #         output_prefix=prefix + label,
+    #         top_n=5)
 
     # each cell type independently
     for cell_type in cell_types:
         enrichment_table = pd.read_csv(os.path.join(
             enrichments_dir, prefix + ".lola.csv"))
-        enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("{}_".format(cell_type))]
+        enrichment_table = enrichment_table.loc[
+            enrichment_table['comparison_name'].str.contains("{}_".format(cell_type)), :]
         plot_differential_enrichment(
             enrichment_table,
             "lola",
@@ -311,7 +297,8 @@ def main():
 
         enrichment_table = pd.read_csv(os.path.join(
             enrichments_dir, prefix + ".enrichr.csv"))
-        enrichment_table = enrichment_table[enrichment_table['comparison_name'].str.contains("{}_".format(cell_type))]
+        enrichment_table = enrichment_table.loc[
+            enrichment_table['comparison_name'].str.contains("{}_".format(cell_type)), :]
         plot_differential_enrichment(
             enrichment_table,
             "enrichr",
@@ -356,6 +343,24 @@ def main():
     pre_treatment_correlation_with_response(analysis)
 
 
+def get_chrom_state_file():
+    from ngs_toolkit.utils import download_gzip_file
+    import pandas as pd
+
+    url = (
+        "https://egg2.wustl.edu/roadmap/data/byFileType/"
+        + "chromhmmSegmentations/ChmmModels/coreMarks/jointModel/"
+        + "final/E032_15_coreMarks_dense.bed.gz"
+    )
+    chrom_state_file = os.path.abspath("E032_15_coreMarks_hg19_dense.bed")
+    download_gzip_file(url, chrom_state_file)
+
+    # Test
+    assert os.path.exists(chrom_state_file)
+    assert os.stat(chrom_state_file).st_size > 0
+    return chrom_state_file
+
+
 def print_name(function):
     """
     Decorator to print the name of the decorated function.
@@ -375,7 +380,7 @@ def data_normalization(analysis):
     cube-root tranformation.
     """
     cell_types = list(set([sample.cell_type for sample in analysis.samples]))
-    to_norm = analysis.coverage.drop(['chrom', 'start', 'end'], axis=1)
+    to_norm = analysis.matrix_raw.drop(['chrom', 'start', 'end'], axis=1)
     counts_qnorm = pd.DataFrame(
         normalize_quantiles_r(to_norm.values),
         index=to_norm.index,
@@ -576,7 +581,7 @@ def visualize_gaussian_process_fits(analysis, fits, output_dir, prefix="accessib
     e = fits.sort_values("p_value").head(n_top)  # ~fits['cell_type'].str.contains("NK")
     examples = e.index
     example_ct = e['cell_type']
-    example_acc = analysis.accessibility.loc[examples, :]
+    example_acc = analysis.matrix_norm.loc[examples, :]
     cell_types = example_acc.columns.get_level_values("cell_type").drop_duplicates()
     example_acc['cell_type'] = example_ct
 
@@ -755,8 +760,10 @@ def visualize_clustering_assignments(
             g.ax_heatmap.set_yticklabels(
                 g.ax_heatmap.get_yticklabels(), rotation=0)
             g.ax_col_dendrogram.set_rasterized(True)
-            g.savefig(os.path.join(output_dir, prefix + "." + cell_type +
-                                ".mohgp.fitted_model.clustermap.cluster_labels.{}.with_posterior_probs.svg".format(label)), dpi=300, bbox_inches="tight")
+            g.savefig(os.path.join(
+                output_dir, prefix + "." + cell_type +
+                ".mohgp.fitted_model.clustermap.cluster_labels.{}.with_posterior_probs.svg".format(label)),
+                dpi=300, bbox_inches="tight")
 
             # only variable and with assignments above threshold
             g = sns.clustermap(
@@ -771,14 +778,16 @@ def visualize_clustering_assignments(
             g.ax_heatmap.set_yticklabels(
                 g.ax_heatmap.get_yticklabels(), rotation=0)
             g.ax_col_dendrogram.set_rasterized(True)
-            g.savefig(os.path.join(output_dir, prefix + "." + cell_type +
-                                ".mohgp.fitted_model.clustermap.cluster_labels.{}.only_posterior_above_threshold.svg".format(label)), dpi=300, bbox_inches="tight")
+            g.savefig(os.path.join(
+                output_dir, prefix + "." + cell_type +
+                ".mohgp.fitted_model.clustermap.cluster_labels.{}.only_posterior_above_threshold.svg".format(label)),
+                dpi=300, bbox_inches="tight")
 
             # only variable and with assignments above threshold: mean per timepoint
-            matrix_mean = matrix2.loc[regions_assigned.index,
-                                    tp.index].T.groupby(level="timepoint").mean()
-            background_mean = background.loc[:,
-                                    tp.index].T.groupby(level="timepoint").mean()
+            matrix_mean = matrix2.loc[
+                regions_assigned.index, tp.index].T.groupby(level="timepoint").mean()
+            background_mean = background.loc[
+                :, tp.index].T.groupby(level="timepoint").mean()
             g = sns.clustermap(
                 matrix_mean,
                 col_colors=[plt.get_cmap("Paired")(i)
@@ -790,8 +799,10 @@ def visualize_clustering_assignments(
             g.ax_heatmap.set_yticklabels(
                 g.ax_heatmap.get_yticklabels(), rotation=0)
             g.ax_col_dendrogram.set_rasterized(True)
-            g.savefig(os.path.join(output_dir, prefix + "." + cell_type +
-                                ".mohgp.fitted_model.mean_acc.clustermap.cluster_labels.{}.only_posterior_above_threshold.svg".format(label)), dpi=300, bbox_inches="tight")
+            g.savefig(os.path.join(
+                output_dir, prefix + "." + cell_type +
+                ".mohgp.fitted_model.mean_acc.clustermap.cluster_labels.{}.only_posterior_above_threshold.svg".format(label)),
+                dpi=300, bbox_inches="tight")
 
             # only variable and with assignments above threshold: mean per timepoint, mean per cluster
             cluster_matrix_mean = matrix_mean.T.join(regions_assigned[['cluster_assignment']]).groupby('cluster_assignment').mean().T
@@ -810,8 +821,10 @@ def visualize_clustering_assignments(
                 g.ax_heatmap.set_yticklabels(
                     g.ax_heatmap.get_yticklabels(), rotation=0)
                 g.ax_col_dendrogram.set_rasterized(True)
-                g.savefig(os.path.join(output_dir, prefix + "." + cell_type +
-                                    ".mohgp.fitted_model.mean_acc.clustermap.cluster_labels.{}.{}only_posterior_above_threshold.svg".format(label, label2)), dpi=300, bbox_inches="tight")
+                g.savefig(os.path.join(
+                    output_dir, prefix + "." + cell_type +
+                    ".mohgp.fitted_model.mean_acc.clustermap.cluster_labels.{}.{}only_posterior_above_threshold.svg".format(label, label2)),
+                    dpi=300, bbox_inches="tight")
 
                 g = sns.clustermap(
                     cluster_matrix_mean_norm,
@@ -822,8 +835,10 @@ def visualize_clustering_assignments(
                 g.ax_heatmap.set_yticklabels(
                     g.ax_heatmap.get_yticklabels(), rotation=0)
                 g.ax_col_dendrogram.set_rasterized(True)
-                g.savefig(os.path.join(output_dir, prefix + "." + cell_type +
-                                    ".mohgp.fitted_model.mean_acc.clustermap.cluster_labels.total_norm{}.{}only_posterior_above_threshold.svg".format(label, label2)), dpi=300, bbox_inches="tight")
+                g.savefig(os.path.join(
+                    output_dir, prefix + "." + cell_type +
+                    ".mohgp.fitted_model.mean_acc.clustermap.cluster_labels.total_norm{}.{}only_posterior_above_threshold.svg".format(label, label2)),
+                    dpi=300, bbox_inches="tight")
 
         cluster_matrix_mean_norm['cell_type'] = cell_type
         all_signal = all_signal.append(cluster_matrix_mean_norm)
@@ -882,13 +897,31 @@ def clusters_to_signatures(assignments):
             # get genes in cluster
             all_g = analysis.coverage_annotated.loc[ass.index, "gene_name"].str.split(",").apply(pd.Series).stack().drop_duplicates()
             top_g = analysis.coverage_annotated.loc[ass.head(200).index, "gene_name"].str.split(",").apply(pd.Series).stack().drop_duplicates()
-            all_g_coding = all_g[(~all_g.str.startswith("LINC")) & (~all_g.str.startswith("LOC")) & (~all_g.str.startswith("MIR"))].str.replace("-AS1", "")
-            top_g_coding = top_g[(~top_g.str.startswith("LINC")) & (~top_g.str.startswith("LOC")) & (~top_g.str.startswith("MIR"))].str.replace("-AS1", "")
+            all_g_coding = all_g[
+                (~all_g.str.startswith("LINC"))
+                & (~all_g.str.startswith("LOC"))
+                & (~all_g.str.startswith("MIR"))].str.replace("-AS1", "")
+            top_g_coding = top_g[
+                (~top_g.str.startswith("LINC"))
+                & (~top_g.str.startswith("LOC"))
+                & (~top_g.str.startswith("MIR"))].str.replace("-AS1", "")
 
-            all_g.to_csv(os.path.join("results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_level.csv".format(cell_type, cluster)), index=False)
-            top_g.to_csv(os.path.join("results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_level.top200.csv".format(cell_type, cluster)), index=False)
-            all_g_coding.to_csv(os.path.join("results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_level.only_coding.csv".format(cell_type, cluster)), index=False)
-            top_g_coding.to_csv(os.path.join("results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_leveltop200.only_coding.csv".format(cell_type, cluster)), index=False)
+            all_g.to_csv(os.path.join(
+                "results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_level.csv"
+                .format(cell_type, cluster)),
+                index=False)
+            top_g.to_csv(os.path.join(
+                "results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_level.top200.csv"
+                .format(cell_type, cluster)),
+                index=False)
+            all_g_coding.to_csv(os.path.join(
+                "results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_level.only_coding.csv"
+                .format(cell_type, cluster)),
+                index=False)
+            top_g_coding.to_csv(os.path.join(
+                "results", "single_cell_RNA", "ATAC-seq_signatures", "atac-seq.{}.cluster_{}.gene_leveltop200.only_coding.csv"
+                .format(cell_type, cluster)),
+                index=False)
 
 
 def gp_linear(
@@ -908,13 +941,13 @@ def gp_linear(
 
     # Try with linear time
     fit_gaussian_processes(
-        analysis.accessibility,
+        analysis.matrix_norm,
         cell_types=cell_types,
         matrix_file=matrix_file,
         linear_time=True,
         prefix=prefix)  # wait for jobs to complete
     fits = gather_gaussian_processes(
-        analysis.accessibility,
+        analysis.matrix_norm,
         matrix_file=matrix_file,
         prefix=prefix)
     fits.to_csv(os.path.join(gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index=True)
@@ -927,7 +960,7 @@ def gp_linear(
     for alpha in [0.01, 0.05]:
         prefix = prefix + ".p={}".format(alpha)
         fit_MOHGP(
-            analysis.accessibility,
+            analysis.matrix_norm,
             linear=True,
             matrix_file=os.path.abspath(os.path.join(
                 "results", analysis.name + ".accessibility.annotated_metadata.csv")),
@@ -938,14 +971,14 @@ def gp_linear(
             prefix=prefix, output_dir=mohgp_output_dir, alpha=alpha)
         # wait for jobs to finish
         assignments = gather_MOHGP(
-            analysis.accessibility, fits,
+            analysis.matrix_norm, fits,
             cell_types=cell_types,
             n_clust=[3, 4, 4, 4, 4, 3],
             prefix=prefix, fits_dir=mohgp_output_dir, alpha=alpha, posterior_threshold=0.8)
         assignments.to_csv(os.path.join(mohgp_output_dir, prefix + ".GP_fits.linear_time.mohgp_clusters.csv"), index=True)
 
         visualize_clustering_assignments(
-            analysis.accessibility, assignments, prefix=prefix,
+            analysis.matrix_norm, assignments, prefix=prefix,
             output_dir=mohgp_output_dir)
 
 
@@ -964,14 +997,14 @@ def gp_random(
     for i in range(30):
         # randomize times to test robustness
         fit_gaussian_processes(
-            analysis.accessibility,
+            analysis.matrix_norm,
             cell_types=['CLL'],
             matrix_file=os.path.abspath(os.path.join(
                 "results", analysis.name + ".accessibility.annotated_metadata.csv")),
             prefix=prefix + ".random_{}".format(i),
             randomize=True)  # wait for jobs to complete
         fits = gather_gaussian_processes(
-            analysis.accessibility,
+            analysis.matrix_norm,
             cell_types=['CLL'],
             matrix_file=os.path.abspath(os.path.join(
                 "results", analysis.name + ".accessibility.annotated_metadata.csv")),
@@ -999,7 +1032,7 @@ def gp_random(
     e = all_fits.sort_values("p_value").set_index("index").head(n_top)  # ~fits['cell_type'].str.contains("NK")
     examples = e.index
     example_ct = e['cell_type']
-    example_acc = analysis.accessibility.loc[examples, :]
+    example_acc = analysis.matrix_norm.loc[examples, :]
     cell_types = example_acc.columns.get_level_values("cell_type").drop_duplicates()
     example_acc['cell_type'] = example_ct
 
@@ -1530,7 +1563,7 @@ def transcription_factor_accessibility(
         # get regions overlapping with TF sites
         transcription_factor_r = analysis.sites.intersect(bt, wa=True).to_dataframe(names=['chrom', 'start', 'end'])
         transcription_factor_r.index = transcription_factor_r['chrom'] + ":" + transcription_factor_r['start'].astype(str) + "-" + transcription_factor_r['end'].astype(str)
-        transcription_factor_a = analysis.accessibility.loc[transcription_factor_r.index].dropna()
+        transcription_factor_a = analysis.matrix_norm.loc[transcription_factor_r.index].dropna()
 
         # group regions by quantile of accessibility across all experiments
         lower = 0.0
@@ -1577,13 +1610,13 @@ def transcription_factor_accessibility(
     upper = 1.0
     n_groups = 10
     r = np.arange(lower, upper + (upper / n_groups), upper / n_groups)
-    mean = analysis.accessibility.mean(axis=1)
+    mean = analysis.matrix_norm.mean(axis=1)
 
     res = pd.DataFrame()
     for l_quantile, u_quantile in zip(r, r[1:]):
         i = mean[(mean.quantile(l_quantile) > mean) & (mean < mean.quantile(u_quantile))].index
 
-        m = analysis.accessibility.loc[i, :].mean()
+        m = analysis.matrix_norm.loc[i, :].mean()
         m.index = m.index.get_level_values("sample_name")
         m['upper_quantile'] = u_quantile
         res = res.append(m, ignore_index=True)
@@ -1595,7 +1628,7 @@ def transcription_factor_accessibility(
     res = res.sort_index(axis=1, level=['cell_type', 'timepoint'], sort_remaining=False)
     d = res.dropna().T.groupby(level=['cell_type', 'timepoint']).mean().mean(1).reset_index()
     d["transcription_factor"] = "background"
-    d["binding_sites"] = analysis.accessibility.shape[0]
+    d["binding_sites"] = analysis.matrix_norm.shape[0]
     d = d.rename(columns={0: "accessibility"})
     all_res = all_res.append(d, ignore_index=True)
 
@@ -1741,8 +1774,8 @@ def transcription_factor_accessibility(
 
 
 def correlation_to_bcell(analysis):
-    cll = analysis.accessibility.loc[:, (analysis.accessibility.columns.get_level_values("cell_type") == "CLL")]
-    bcell = analysis.accessibility.loc[:, (analysis.accessibility.columns.get_level_values("cell_type") == "Bcell")]
+    cll = analysis.matrix_norm.loc[:, (analysis.matrix_norm.columns.get_level_values("cell_type") == "CLL")]
+    bcell = analysis.matrix_norm.loc[:, (analysis.matrix_norm.columns.get_level_values("cell_type") == "Bcell")]
 
     m_cll = cll.mean(axis=1)
     m_cll.name = "CLL"
@@ -1796,7 +1829,7 @@ def correlation_to_bcell(analysis):
 
 def differentiation_assessment(analysis):
     # Load quantification matrix from major analysis
-    accessibility = analysis.accessibility
+    accessibility = analysis.matrix_norm
     accessibility.columns = accessibility.columns.get_level_values("sample_name")
 
     for sample_set in ["fzhao"]:
@@ -1920,14 +1953,14 @@ def get_gene_level_accessibility(analysis):
     Get gene-level measurements of chromatin accessibility.
     """
     assert hasattr(analysis, "gene_annotation")
-    acc = analysis.accessibility.copy()
+    acc = analysis.matrix_norm.copy()
 
     g = analysis.gene_annotation['gene_name'].str.split(",").apply(pd.Series).stack()
     g.index = g.index.droplevel(1)
     g.name = "gene_name"
-    acc2 = analysis.accessibility.join(g).drop("gene_name", axis=1)
-    acc2.index = analysis.accessibility.join(g).reset_index().set_index(['index', 'gene_name']).index
-    acc2.columns = analysis.accessibility.columns
+    acc2 = analysis.matrix_norm.join(g).drop("gene_name", axis=1)
+    acc2.index = analysis.matrix_norm.join(g).reset_index().set_index(['index', 'gene_name']).index
+    acc2.columns = analysis.matrix_norm.columns
     return acc2.groupby(level=['gene_name']).mean()
 
 
@@ -1995,8 +2028,8 @@ def cytokine_receptor_repertoire(
     cam_genes = mapping.loc[mapping['hgnc_id'].isin(genes), 'hgnc_symbol'].tolist()
 
     # Bring gene annotation as part of the accessibility index
-    acc = analysis.accessibility.copy()
-    acc.index = analysis.accessibility.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
+    acc = analysis.matrix_norm.copy()
+    acc.index = analysis.matrix_norm.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
 
     # order by cell type, timepoint, patient
     acc = acc.T.reset_index().sort_values(by=['cell_type', 'timepoint', 'patient_id'], axis=0).set_index(acc.columns.names).T
@@ -2322,15 +2355,15 @@ def cytokine_interplay(analysis):
     variable = analysis.assignements.index
 
     # Get variable genes from those regions
-    acc = analysis.accessibility.copy()
+    acc = analysis.matrix_norm.copy()
     g = analysis.gene_annotation['gene_name'].str.split(",").apply(pd.Series).stack()
     g.index = g.index.droplevel(1)
     g.name = "gene_name"
     variable_genes = list(set(g.loc[g.index.isin(variable)]))
 
     # Get gene-level accessibility averaged per cell type per timepoint
-    acc = analysis.accessibility.loc[variable]
-    acc.index = analysis.accessibility.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
+    acc = analysis.matrix_norm.loc[variable]
+    acc.index = analysis.matrix_norm.join(analysis.gene_annotation).reset_index().set_index(['index', 'gene_name']).index
 
     acc_mean_gene = get_gene_level_accessibility(analysis)
     acc_mean_gene = acc_mean_gene.T.groupby(['cell_type', 'timepoint']).mean().T
@@ -3742,7 +3775,7 @@ def off_target_signature(analysis):
 def offtarget_on_atac(analysis):
 
     # get chromatin accessibility at gene-level
-    analysis.accessibility = pd.read_csv(os.path.abspath(os.path.join(
+    analysis.matrix_norm = pd.read_csv(os.path.abspath(os.path.join(
             "results", analysis.name + ".accessibility.annotated_metadata.csv")),
         header=list(range(9)), index_col=0)
     check = analysis.gene_annotation.index.str.contains(":").all() and analysis.gene_annotation.index.str.contains("-").all()
@@ -4196,12 +4229,12 @@ def pre_treatment_correlation_with_response(analysis):
         analysis, steps=['pca', 'pca_association'], quant_matrix="accessibility",
         attributes_to_plot=plotting_attributes, plot_prefix="20190111.accessibility")
 
-    for cell_type in analysis.accessibility.columns.levels[3]:
+    for cell_type in analysis.matrix_norm.columns.levels[3]:
         # if cell_type == "CLL": continue
         # All samples from one cell type
-        analysis.accessibility_ct = analysis.accessibility.loc[
+        analysis.matrix_norm_ct = analysis.matrix_norm.loc[
             :,
-            (analysis.accessibility.columns.get_level_values("cell_type") == cell_type)]
+            (analysis.matrix_norm.columns.get_level_values("cell_type") == cell_type)]
         exclude = ['cell_type', 'compartment', 'timepoint']
         unsupervised_analysis(
             analysis, steps=['pca', 'pca_association'], quant_matrix="accessibility_ct",
@@ -4210,9 +4243,9 @@ def pre_treatment_correlation_with_response(analysis):
             standardize_matrix=True)
 
         # Only T0
-        analysis.accessibility_t0_ct = analysis.accessibility.loc[
-            :, (analysis.accessibility.columns.get_level_values("timepoint") == "000d") &
-            (analysis.accessibility.columns.get_level_values("cell_type") == cell_type)]
+        analysis.matrix_norm_t0_ct = analysis.matrix_norm.loc[
+            :, (analysis.matrix_norm.columns.get_level_values("timepoint") == "000d") &
+            (analysis.matrix_norm.columns.get_level_values("cell_type") == cell_type)]
         exclude = ['cell_type', 'compartment', 'timepoint']
         unsupervised_analysis(
             analysis, steps=['pca', 'pca_association'], quant_matrix="accessibility_t0_ct",
@@ -4221,7 +4254,7 @@ def pre_treatment_correlation_with_response(analysis):
             standardize_matrix=True)
 
         v, w, sig_vars = test_pca_significance(
-            analysis.accessibility_t0_ct.T,
+            analysis.matrix_norm_t0_ct.T,
             iterations=None,
             standardize_matrix=True)
 
@@ -4233,7 +4266,7 @@ def pre_treatment_correlation_with_response(analysis):
     # # # plot all association p-values jointly
     ps = pd.DataFrame()
     vs = pd.DataFrame()
-    for cell_type in analysis.accessibility.columns.levels[3]:
+    for cell_type in analysis.matrix_norm.columns.levels[3]:
         p = pd.read_csv(
             os.path.join(
                 'results', 'unsupervised_analysis_ATAC-seq',
@@ -4294,13 +4327,13 @@ def pre_treatment_correlation_with_response(analysis):
     output_dir = os.path.join(analysis.results_dir, "unsupervised_analysis_" + analysis.data_type)
     prefix = os.path.join(output_dir, analysis.name + ".20190111.accessibility_t0_cll")
     alpha = 0.1
-    analysis.accessibility_t0_cll = analysis.accessibility.loc[
-        :, (analysis.accessibility.columns.get_level_values("timepoint") == "000d") &
-        (analysis.accessibility.columns.get_level_values("cell_type") == "CLL")]
+    analysis.matrix_norm_t0_cll = analysis.matrix_norm.loc[
+        :, (analysis.matrix_norm.columns.get_level_values("timepoint") == "000d") &
+        (analysis.matrix_norm.columns.get_level_values("cell_type") == "CLL")]
 
     # # Test significance of PCs
     v, w, sig_vars = test_pca_significance(
-        analysis.accessibility_t0_cll.T,
+        analysis.matrix_norm_t0_cll.T,
         iterations=None,
         standardize_matrix=True)
 
@@ -4313,7 +4346,7 @@ def pre_treatment_correlation_with_response(analysis):
     unsup_results = unsup_results.join((w['real'] - w['random']).reset_index().melt(id_vars='feature', value_name="weight_over_random").set_index(['feature', 'pc']))
     unsup_results = unsup_results.join(sig_vars['raw'].reset_index().melt(id_vars='feature', value_name="pvalue").set_index(['feature', 'pc']))
     unsup_results = unsup_results.join(sig_vars['adjusted'].reset_index().melt(id_vars='feature', value_name="padj").set_index(['feature', 'pc']))
-    m = analysis.accessibility_t0_cll.mean(axis=1)
+    m = analysis.matrix_norm_t0_cll.mean(axis=1)
     m.name = 'mean'
     m.index.name = 'feature'
     unsup_results = unsup_results.join(m)
@@ -4415,7 +4448,7 @@ def pre_treatment_correlation_with_response(analysis):
         output_dir=output_dir, output_prefix=output_prefix,
         mean_column='mean', log_fold_change_column='weight_over_random',
         p_value_column='pvalue', adjusted_p_value_column='padj', comparison_column="pc",
-        matrix=analysis.accessibility, samples=[s for s in analysis.samples if s.cell_type == cell_type],
+        matrix=analysis.matrix_norm, samples=[s for s in analysis.samples if s.cell_type == cell_type],
         robust=True, group_wise_colours=True, group_variables=attrs)
 
     # get significant
@@ -4514,17 +4547,17 @@ def pre_treatment_correlation_with_response(analysis):
 
     # observe accessibility of those regions
     g = sns.clustermap(
-        analysis.accessibility.loc[
+        analysis.matrix_norm.loc[
             diff.index,
-            (analysis.accessibility.columns.get_level_values("cell_type") == "CLL") &
-            (analysis.accessibility.columns.get_level_values("timepoint") == "000d")
+            (analysis.matrix_norm.columns.get_level_values("cell_type") == "CLL") &
+            (analysis.matrix_norm.columns.get_level_values("timepoint") == "000d")
         ].T,
         metric="correlation",
         robust=True,
         xticklabels=False, yticklabels=True,
         row_colors=pd.DataFrame(
-            analysis.get_level_colors(analysis.accessibility.columns),
-            index=analysis.accessibility.columns.names, columns=analysis.accessibility.columns).T,
+            analysis.get_level_colors(analysis.matrix_norm.columns),
+            index=analysis.matrix_norm.columns.names, columns=analysis.matrix_norm.columns).T,
         cbar_kws={"label": "Accessibility"})
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.ax_heatmap.set_ylabel("ATAC-seq samples")
@@ -4533,17 +4566,17 @@ def pre_treatment_correlation_with_response(analysis):
     g.savefig(
         os.path.join(prefix + ".pc_regions.t0_accessibility.clustermap.svg"), dpi=300, bbox_inches="tight")
     g = sns.clustermap(
-        analysis.accessibility.loc[
+        analysis.matrix_norm.loc[
             diff.index,
-            (analysis.accessibility.columns.get_level_values("cell_type") == "CLL") &
-            (analysis.accessibility.columns.get_level_values("timepoint") == "000d")
+            (analysis.matrix_norm.columns.get_level_values("cell_type") == "CLL") &
+            (analysis.matrix_norm.columns.get_level_values("timepoint") == "000d")
         ].T,
         metric="correlation", z_score=1, center=0,
         cmap="RdBu_r", robust=True,
         xticklabels=False, yticklabels=True,
         row_colors=pd.DataFrame(
-            analysis.get_level_colors(analysis.accessibility.columns),
-            index=analysis.accessibility.columns.names, columns=analysis.accessibility.columns).T,
+            analysis.get_level_colors(analysis.matrix_norm.columns),
+            index=analysis.matrix_norm.columns.names, columns=analysis.matrix_norm.columns).T,
         cbar_kws={"label": "Accessibility"})
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.ax_heatmap.set_ylabel("ATAC-seq samples")
@@ -4554,16 +4587,16 @@ def pre_treatment_correlation_with_response(analysis):
 
     # # now for all samples
     g = sns.clustermap(
-        analysis.accessibility.loc[
+        analysis.matrix_norm.loc[
             diff.index,
-            analysis.accessibility.columns.get_level_values("cell_type") == "CLL"
+            analysis.matrix_norm.columns.get_level_values("cell_type") == "CLL"
         ].T,
         metric="correlation",
         robust=True,
         xticklabels=False, yticklabels=True,
         row_colors=pd.DataFrame(
-            analysis.get_level_colors(analysis.accessibility.columns),
-            index=analysis.accessibility.columns.names, columns=analysis.accessibility.columns).T,
+            analysis.get_level_colors(analysis.matrix_norm.columns),
+            index=analysis.matrix_norm.columns.names, columns=analysis.matrix_norm.columns).T,
         cbar_kws={"label": "Accessibility"})
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.ax_heatmap.set_ylabel("ATAC-seq samples")
@@ -4578,8 +4611,8 @@ def pre_treatment_correlation_with_response(analysis):
         cmap="RdBu_r", robust=True,
         xticklabels=False, yticklabels=True,
         row_colors=pd.DataFrame(
-            analysis.get_level_colors(analysis.accessibility.columns),
-            index=analysis.accessibility.columns.names, columns=analysis.accessibility.columns).T,
+            analysis.get_level_colors(analysis.matrix_norm.columns),
+            index=analysis.matrix_norm.columns.names, columns=analysis.matrix_norm.columns).T,
         cbar_kws={"label": "Accessibility (Z-score)"}, row_cluster=False)
     g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.ax_heatmap.set_ylabel("ATAC-seq samples")
@@ -4593,16 +4626,16 @@ def pre_treatment_correlation_with_response(analysis):
     # 2. Second approach: regress the response directly
     from ngs_toolkit.general import least_squares_fit
 
-    for cell_type in analysis.accessibility.columns.levels[3]:
+    for cell_type in analysis.matrix_norm.columns.levels[3]:
         print(cell_type)
         # All samples from one cell type
-        # analysis.accessibility_ct = analysis.accessibility.loc[
+        # analysis.matrix_norm_ct = analysis.matrix_norm.loc[
         #     :,
-        #     (analysis.accessibility.columns.get_level_values("cell_type") == cell_type)]
+        #     (analysis.matrix_norm.columns.get_level_values("cell_type") == cell_type)]
         # exclude = ['cell_type', 'compartment', 'timepoint']
 
-        # quant_matrix = analysis.accessibility_ct.T
-        # design_matrix = analysis.accessibility_ct.columns.to_frame()
+        # quant_matrix = analysis.matrix_norm_ct.T
+        # design_matrix = analysis.matrix_norm_ct.columns.to_frame()
         # results = least_squares_fit(
         #     quant_matrix, design_matrix,
         #     test_model="~ response_at_120", null_model="~ 1", standardize_data=True,
@@ -4610,12 +4643,12 @@ def pre_treatment_correlation_with_response(analysis):
         # results.to_csv(os.path.join("results", "response_association", "regression.{}.csv".format(cell_type)))
 
         # Only T0
-        analysis.accessibility_t0_ct = analysis.accessibility.loc[
-            :, (analysis.accessibility.columns.get_level_values("timepoint") == "000d") &
-            (analysis.accessibility.columns.get_level_values("cell_type") == cell_type)]
+        analysis.matrix_norm_t0_ct = analysis.matrix_norm.loc[
+            :, (analysis.matrix_norm.columns.get_level_values("timepoint") == "000d") &
+            (analysis.matrix_norm.columns.get_level_values("cell_type") == cell_type)]
 
-        quant_matrix = analysis.accessibility_t0_ct.T
-        design_matrix = analysis.accessibility_t0_ct.columns.to_frame()
+        quant_matrix = analysis.matrix_norm_t0_ct.T
+        design_matrix = analysis.matrix_norm_t0_ct.columns.to_frame()
         results = least_squares_fit(
             quant_matrix, design_matrix,
             test_model="~ response_at_120", null_model="~ 1", standardize_data=True,
@@ -4668,7 +4701,7 @@ def response_day0_rna():
         'response_at_120', "batch", "good_batch"]
     cell_types = list(set([sample.cell_type for sample in analysis.samples]))
 
-    analysis.accessibility = pd.read_csv(os.path.abspath(os.path.join(
+    analysis.matrix_norm = pd.read_csv(os.path.abspath(os.path.join(
             "results", analysis.name + ".accessibility.annotated_metadata.csv")),
         header=list(range(18)), index_col=0)
 
@@ -4676,9 +4709,9 @@ def response_day0_rna():
     output_dir = os.path.join(analysis.results_dir, "unsupervised_analysis_" + analysis.data_type)
     prefix = os.path.join(output_dir, analysis.name + ".20190111.accessibility_t0_cll")
     alpha = 0.1
-    analysis.accessibility_t0_cll = analysis.accessibility.loc[
-        :, (analysis.accessibility.columns.get_level_values("timepoint") == "000d") &
-        (analysis.accessibility.columns.get_level_values("cell_type") == "CLL")]
+    analysis.matrix_norm_t0_cll = analysis.matrix_norm.loc[
+        :, (analysis.matrix_norm.columns.get_level_values("timepoint") == "000d") &
+        (analysis.matrix_norm.columns.get_level_values("cell_type") == "CLL")]
 
     # # # now only PC2 of CLLs
     pc = 2
@@ -4689,12 +4722,12 @@ def response_day0_rna():
     diff = pd.read_csv(os.path.join(prefix + ".PC2.top_regions.csv"), index_col=0)
 
     if not os.path.exists("gene.csv.gz"):
-        gene = analysis.get_gene_level_matrix(analysis.accessibility.loc[diff.index])
+        gene = analysis.get_gene_level_matrix(analysis.matrix_norm.loc[diff.index])
         gene.to_csv("gene.csv.gz")
     else:
         gene = pd.read_csv("gene.csv.gz", index_col=0, header=list(range(18)))
 
-    colors = analysis.get_level_colors(analysis.accessibility.columns, as_dataframe=True).T
+    colors = analysis.get_level_colors(analysis.matrix_norm.columns, as_dataframe=True).T
 
     # plot
     # # for day 0 only
@@ -5162,6 +5195,32 @@ if __name__ == '__main__':
         sys.exit(1)
 
 
+# analysis = ATACSeqAnalysis(from_pep=os.path.join("metadata", "project_config.yaml"))
+# cell_types = list(set([sample.cell_type for sample in analysis.samples]))
+
+# analysis.load_data()
+
+# analysis.set_matrix(
+#     matrix_name="matrix_raw",
+#     csv_file=os.path.join("results", "cll-time_course_peaks.raw_coverage.csv"),
+#     index_col=0)
+# analysis.set_matrix(
+#     matrix_name="matrix_norm",
+#     csv_file=os.path.join("results", "cll-time_course.accessibility.annotated_metadata.csv"),
+#     header=list(range(len(analysis.sample_attributes))), index_col=0)
+# analysis.set_matrix(
+#     matrix_name="gene_annotation",
+#     csv_file=os.path.join("results", "cll-time_course_peaks.gene_annotation.csv"),
+#     index_col=None)
+# from ngs_toolkit.utils import bed_to_index
+# analysis.gene_annotation.index = bed_to_index(analysis.gene_annotation)
+# gp_output_dir = os.path.join(analysis.results_dir, "gp_fits")
+# mohgp_output_dir = os.path.join(analysis.results_dir, "mohgp_fits")
+# prefix = "accessibility.qnorm_pcafix_cuberoot"
+# analysis.fits = pd.read_csv(os.path.join(
+#     gp_output_dir, prefix + ".GP_fits.all_cell_types.csv"), index_col=0)
+
+
 # for a in [
 # 'coverage',
 # 'coverage_annotated',
@@ -5179,39 +5238,38 @@ if __name__ == '__main__':
 #     setattr(analysis, a, getattr(analysis2, a))
 
 
-
-order = [
-"ATAC-seq_CLL1_120d_CLL",
-"ATAC-seq_CLL7_30d_CLL",
-"ATAC-seq_CLL7_1d_CLL",
-"ATAC-seq_CLL7_8d_CLL",
-"ATAC-seq_CLL7_3d_CLL",
-"ATAC-seq_CLL7_150d_CLL",
-"ATAC-seq_CLL7_0d_CLL",
-"ATAC-seq_CLL6_0d_CLL",
-"ATAC-seq_CLL2_0d_CLL",
-"ATAC-seq_CLL2_3d_CLL",
-"ATAC-seq_CLL6_280d_CLL",
-"ATAC-seq_CLL6_120d_CLL",
-"ATAC-seq_CLL6_030d_CLL",
-"ATAC-seq_CLL2_120d_CLL",
-"ATAC-seq_CLL1_030d_CLL",
-"ATAC-seq_CLL1_3d_CLL",
-"ATAC-seq_CLL2_30d_CLL",
-"ATAC-seq_CLL2_8d_CLL",
-"ATAC-seq_CLL8_030d_CLL",
-"ATAC-seq_CLL8_3d_CLL",
-"ATAC-seq_CLL5_240d_CLL",
-"ATAC-seq_CLL5_2d_CLL",
-"ATAC-seq_CLL5_1d_CLL",
-"ATAC-seq_CLL5_3d_CLL",
-"ATAC-seq_CLL5_0d_CLL",
-"ATAC-seq_CLL4_0d_CLL",
-"ATAC-seq_CLL8_0d_CLL",
-"ATAC-seq_CLL5_30d_CLL",
-"ATAC-seq_CLL1_0d_CLL",
-"ATAC-seq_CLL5_150d_CLL",
-"ATAC-seq_CLL4_3d_CLL",
-"ATAC-seq_CLL4_2d_CLL",
-"ATAC-seq_CLL5_8d_CLL",
-]
+# order = [
+# "ATAC-seq_CLL1_120d_CLL",
+# "ATAC-seq_CLL7_30d_CLL",
+# "ATAC-seq_CLL7_1d_CLL",
+# "ATAC-seq_CLL7_8d_CLL",
+# "ATAC-seq_CLL7_3d_CLL",
+# "ATAC-seq_CLL7_150d_CLL",
+# "ATAC-seq_CLL7_0d_CLL",
+# "ATAC-seq_CLL6_0d_CLL",
+# "ATAC-seq_CLL2_0d_CLL",
+# "ATAC-seq_CLL2_3d_CLL",
+# "ATAC-seq_CLL6_280d_CLL",
+# "ATAC-seq_CLL6_120d_CLL",
+# "ATAC-seq_CLL6_030d_CLL",
+# "ATAC-seq_CLL2_120d_CLL",
+# "ATAC-seq_CLL1_030d_CLL",
+# "ATAC-seq_CLL1_3d_CLL",
+# "ATAC-seq_CLL2_30d_CLL",
+# "ATAC-seq_CLL2_8d_CLL",
+# "ATAC-seq_CLL8_030d_CLL",
+# "ATAC-seq_CLL8_3d_CLL",
+# "ATAC-seq_CLL5_240d_CLL",
+# "ATAC-seq_CLL5_2d_CLL",
+# "ATAC-seq_CLL5_1d_CLL",
+# "ATAC-seq_CLL5_3d_CLL",
+# "ATAC-seq_CLL5_0d_CLL",
+# "ATAC-seq_CLL4_0d_CLL",
+# "ATAC-seq_CLL8_0d_CLL",
+# "ATAC-seq_CLL5_30d_CLL",
+# "ATAC-seq_CLL1_0d_CLL",
+# "ATAC-seq_CLL5_150d_CLL",
+# "ATAC-seq_CLL4_3d_CLL",
+# "ATAC-seq_CLL4_2d_CLL",
+# "ATAC-seq_CLL5_8d_CLL",
+# ]
