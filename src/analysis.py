@@ -25,11 +25,7 @@ from statsmodels.stats.multitest import multipletests
 
 from peppy import Project
 from ngs_toolkit.atacseq import ATACSeqAnalysis
-from ngs_toolkit.general import (unsupervised_analysis,
-                                 collect_differential_enrichment,
-                                 differential_enrichment,
-                                 normalize_quantiles_r,
-                                 plot_differential_enrichment)
+
 
 # graphics settings
 sns.set_style("white")
@@ -71,7 +67,7 @@ def main():
     analysis.matrix_norm = data_normalization(analysis)
 
     # annotate matrix with sample metadata and save
-    analysis.annotate_with_sample_metadata(
+    analysis.annotate_samples(
         numerical_attributes=analysis.numerical_attributes)
 
     # annotate matrix with feature metadata
@@ -88,7 +84,7 @@ def main():
         analysis.unsupervised_analysis(
             samples=[s for s in analysis.samples if (s.cell_type == cell_type)],
             attributes_to_plot=['patient_id', 'timepoint', 'batch'],
-            plot_prefix="accessibility_{}_only".format(cell_type))
+            output_prefix="accessibility_{}_only".format(cell_type))
 
     #
     # Time Series Analysis
@@ -379,15 +375,17 @@ def data_normalization(analysis):
     with quantile normalization followed by PCA-based batch correction and
     cube-root tranformation.
     """
-    cell_types = list(set([sample.cell_type for sample in analysis.samples]))
-    to_norm = analysis.matrix_raw.drop(['chrom', 'start', 'end'], axis=1)
+    from ngs_toolkit.utils import normalize_quantiles_r
+
     counts_qnorm = pd.DataFrame(
-        normalize_quantiles_r(to_norm.values),
-        index=to_norm.index,
-        columns=to_norm.columns
+        normalize_quantiles_r(analysis.matrix_raw.values),
+        index=analysis.matrix_raw.index,
+        columns=analysis.matrix_raw.columns
     )
     # normalize batch effect
-    counts_qnorm_pcafix = subtract_principal_component_by_attribute(counts_qnorm.T, attributes=cell_types[:-1], pcs=[1] * 5).T
+    cell_types = list(set([sample.cell_type for sample in analysis.samples]))
+    counts_qnorm_pcafix = subtract_principal_component_by_attribute(
+        counts_qnorm.T, attributes=cell_types[:-1], pcs=[1] * 5).T
     # cube-root transform
     sign = (counts_qnorm_pcafix >= 0).astype(int).replace(0, -1)
     return sign * np.absolute(counts_qnorm_pcafix) ** (1 / 3.)
@@ -2428,6 +2426,7 @@ def cytokine_interplay(analysis):
 
 
 def scrna_comparison(analysis):
+    from ngs_toolkit.utils import normalize_quantiles_r
     output_dir = os.path.join("results", "atac_scrna_comparison")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -4225,9 +4224,9 @@ def pre_treatment_correlation_with_response(analysis):
 
     # 1. First approach, find a axis correlating with response in unsupervised analysis
     # # whole data
-    unsupervised_analysis(
-        analysis, steps=['pca', 'pca_association'], quant_matrix="accessibility",
-        attributes_to_plot=plotting_attributes, plot_prefix="20190111.accessibility")
+    analysis.unsupervised_analysis(
+        steps=['pca', 'pca_association'], quant_matrix="accessibility",
+        attributes_to_plot=plotting_attributes, output_prefix="20190111.accessibility")
 
     for cell_type in analysis.matrix_norm.columns.levels[3]:
         # if cell_type == "CLL": continue
@@ -4236,10 +4235,10 @@ def pre_treatment_correlation_with_response(analysis):
             :,
             (analysis.matrix_norm.columns.get_level_values("cell_type") == cell_type)]
         exclude = ['cell_type', 'compartment', 'timepoint']
-        unsupervised_analysis(
-            analysis, steps=['pca', 'pca_association'], quant_matrix="accessibility_ct",
+        analysis.unsupervised_analysis(
+            steps=['pca', 'pca_association'], quant_matrix="accessibility_ct",
             attributes_to_plot=[x for x in plotting_attributes if x not in exclude],
-            plot_prefix="20190111.accessibility_{}".format(cell_type),
+            output_prefix="20190111.accessibility_{}".format(cell_type),
             standardize_matrix=True)
 
         # Only T0
@@ -4247,10 +4246,10 @@ def pre_treatment_correlation_with_response(analysis):
             :, (analysis.matrix_norm.columns.get_level_values("timepoint") == "000d") &
             (analysis.matrix_norm.columns.get_level_values("cell_type") == cell_type)]
         exclude = ['cell_type', 'compartment', 'timepoint']
-        unsupervised_analysis(
-            analysis, steps=['pca', 'pca_association'], quant_matrix="accessibility_t0_ct",
+        analysis.unsupervised_analysis(
+            steps=['pca', 'pca_association'], quant_matrix="accessibility_t0_ct",
             attributes_to_plot=[x for x in plotting_attributes if x not in exclude],
-            plot_prefix="20190111.accessibility_t0_{}".format(cell_type),
+            output_prefix="20190111.accessibility_t0_{}".format(cell_type),
             standardize_matrix=True)
 
         v, w, sig_vars = test_pca_significance(
@@ -4657,53 +4656,9 @@ def pre_treatment_correlation_with_response(analysis):
 
 
 def response_day0_rna():
-    import os
-    import random
-    import string
-
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import pandas as pd
-    import seaborn as sns
-    from tqdm import tqdm
-    from scipy.stats import zscore
-
-    from peppy import Project
-    from ngs_toolkit.atacseq import ATACSeqAnalysis    # Start project and analysis objects
-
-    prj = Project(os.path.join("metadata", "project_config.yaml"))
-    prj._samples = [sample for sample in prj.samples if sample.library == "ATAC-seq"]
-    for sample in prj.samples:
-        sample.filtered = os.path.join(sample.paths.sample_root, "mapped", sample.name + ".trimmed.bowtie2.filtered.bam")
-        sample.peaks = os.path.join(sample.paths.sample_root, "peaks", sample.name + "_peaks.narrowPeak")
-        sample.bigwig = os.path.join(prj.trackhubs.trackhub_dir, sample.name + "_peaks.narrowPeak")
-
-        for attr in sample.__dict__.keys():
-            if type(getattr(sample, attr)) is str:
-                if getattr(sample, attr) == "nan":
-                    setattr(sample, attr, np.nan)
-
-    analysis = ATACSeqAnalysis(name="cll-time_course", prj=prj, samples=prj.samples)
-
-    # Sample's attributes
-    sample_attributes = [
-        "sample_name", "patient_id", "timepoint", "cell_type", "compartment", 'sex',
-        'ighv_mutation', 'ighv_homology', 'p53_mutation', 'cd38_expression',
-        'binet_stage', 'number_of_prior_treatments', 'ttft',
-        "response_at_120", "response", "cell_number", "batch", "good_batch"]
-    numerical_attributes = [
-        'ighv_homology', 'number_of_prior_treatments',
-        'ttft', 'response_at_120']
-    plotting_attributes = [
-        "patient_id", "timepoint", "cell_type", "compartment", 'sex',
-        'ighv_mutation', 'ighv_homology', 'p53_mutation', 'cd38_expression',
-        'binet_stage', 'number_of_prior_treatments', 'ttft',
-        'response_at_120', "batch", "good_batch"]
-    cell_types = list(set([sample.cell_type for sample in analysis.samples]))
-
-    analysis.matrix_norm = pd.read_csv(os.path.abspath(os.path.join(
-            "results", analysis.name + ".accessibility.annotated_metadata.csv")),
-        header=list(range(18)), index_col=0)
+    analysis = ATACSeqAnalysis(
+        from_pep=os.path.join("metadata", "project_config.yaml"))
+    analysis.load_data()
 
     # look into CLL PC2
     output_dir = os.path.join(analysis.results_dir, "unsupervised_analysis_" + analysis.data_type)
@@ -5184,6 +5139,98 @@ def inspect_coefficients():
         ax = sc.pl.violin(adata, gene, groupby="sample", use_raw=False, ax=axis[i], show=False, rasterized=True)
         ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
     fig.savefig(os.path.join("results", "scrna_prediction", "regression_coefficients.marker_illustration.svg"), dpi=300, bbox_inches="tight")
+
+
+def revisit_normalization():
+    import os
+
+    from ngs_toolkit import ATACSeqAnalysis
+    from ngs_toolkit.utils import normalize_quantiles_r
+    from combat import combat
+
+    analysis = ATACSeqAnalysis(from_pep=os.path.join("metadata", "project_config.yaml"))
+    cell_types = list(set([sample.cell_type for sample in analysis.samples]))
+
+    analysis.load_data()
+
+    analysis.v = analysis.matrix_norm
+    analysis.v = analysis.v.loc[analysis.v.index.str.startswith("chr")]
+    analysis.v.columns = analysis.v.columns.get_level_values("sample_name")
+    analysis.matrix_norm = analysis.annotate_samples(matrix="v", save=False)
+
+    # data normalization
+    # # first quantile normalize as before
+    no_norm = np.log2(1 + pd.DataFrame(
+        normalize_quantiles_r(analysis.matrix_raw.values),
+        index=analysis.matrix_raw.index,
+        columns=analysis.matrix_raw.columns
+    ))
+
+    # # previous PCA-based method
+    matrix_pca = analysis.matrix_norm.copy()
+
+    # Combat
+    batch = pd.Series([s.batch for s in analysis.samples], index=[s.name for s in analysis.samples])
+    matrix_combat = combat(data=no_norm, batch=batch)
+
+    output_dir = os.path.join("results", "revisit_normalization")
+    kwargs = {
+        "output_dir": output_dir,
+        "steps": ["pca", "pca_association"],
+        "attributes_to_plot": ['cell_type', 'patient_id', 'timepoint', 'batch', 'good_batch'],
+        "plot_max_pcs": 4,
+        "output_dir": output_dir
+    }
+    analysis.unsupervised_analysis(
+        matrix=no_norm,
+        output_prefix="No_norm",
+        **kwargs)
+    analysis.unsupervised_analysis(
+        matrix=matrix_pca,
+        output_prefix="PCA",
+        **kwargs)
+    analysis.unsupervised_analysis(
+        matrix=matrix_combat,
+        output_prefix="Combat",
+        **kwargs)
+
+    # replot again with less factors just for better illustration
+    kwargs = {
+        "output_dir": output_dir,
+        "steps": ["pca"],
+        "attributes_to_plot": ['cell_type', 'batch', 'good_batch'],
+        "plot_max_pcs": 4,
+        "output_dir": output_dir
+    }
+    analysis.unsupervised_analysis(
+        matrix=matrix_pca,
+        output_prefix="PCA.viz",
+        **kwargs)
+    analysis.unsupervised_analysis(
+        matrix=matrix_combat,
+        output_prefix="Combat.viz",
+        **kwargs)
+
+    associations = dict()
+    for i, prefix in enumerate(["No_norm", "PCA", "Combat"], start=1):
+        associations["{}. {}".format(i, prefix)] = pd.read_csv(os.path.join(
+            output_dir,
+            "cll-time_course.{}.pca.variable_principle_components_association.csv".format(prefix)))
+    associations = pd.concat(associations)
+
+    #
+    for var in ['p_value', 'adj_pvalue']:
+        p = associations.query("pc <= 8").reset_index().pivot_table(columns="pc", index=['level_0', 'attribute'], values=var)
+        p_masked = (p >= 0.01).astype(int)
+
+        fig, axis = plt.subplots(1, 2, figsize=(4 * 4, 4))
+        sns.heatmap(
+            -np.log10(p),
+            ax=axis[0], square=True, cbar_kws={"label": "-log10(adjusted p-value)"})
+        sns.heatmap(
+            p_masked,
+            ax=axis[1], square=True, cbar_kws={"label": "-log10(adjusted p-value)"})
+        fig.savefig(os.path.join(output_dir, "cross_method.associations.{}.heatmap.svg".format(var)), bbox_inches="tight", dpi=300)
 
 
 if __name__ == '__main__':
