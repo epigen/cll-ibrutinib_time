@@ -5151,7 +5151,27 @@ def revisit_normalization():
     analysis = ATACSeqAnalysis(from_pep=os.path.join("metadata", "project_config.yaml"))
     cell_types = list(set([sample.cell_type for sample in analysis.samples]))
 
-    analysis.load_data()
+    ss = [
+        "ATAC-seq_CLL4_0d_CD8",
+        "ATAC-seq_CLL4_0d_NK",
+        "ATAC-seq_CLL2_0d_CD4",
+        "ATAC-seq_CLL2_0d_CD8",
+    ]
+    for sn in ss:
+        s = [s for s in analysis.samples if s.name == sn][0]
+        s.good_batch = 'FALSE'
+
+    for sn in ["ATAC-seq_CLL2_30d_NK"]:
+        s = [s for s in analysis.samples if s.name == sn][0]
+        s.good_batch = 'TRUE'
+
+    for s in analysis.samples:
+        if not hasattr(s, "good_batch"):
+            s.good_batch = 'TRUE'
+        if pd.isnull(s.good_batch):
+            s.good_batch = 'TRUE'
+
+    analysis.load_data(only_these_keys=['matrix_raw', 'matrix_norm'])
 
     analysis.v = analysis.matrix_norm
     analysis.v = analysis.v.loc[analysis.v.index.str.startswith("chr")]
@@ -5169,10 +5189,15 @@ def revisit_normalization():
     # # previous PCA-based method
     matrix_pca = analysis.matrix_norm.copy()
 
-    # Combat
+    # Combat on batch
     batch = pd.Series([s.batch for s in analysis.samples], index=[s.name for s in analysis.samples])
     matrix_combat = combat(data=no_norm, batch=batch)
 
+    # Combat on latent vector directly
+    batch_lv = pd.Series([s.good_batch for s in analysis.samples], index=[s.name for s in analysis.samples])
+    matrix_combat_lv = combat(data=no_norm, batch=batch_lv)
+
+    # Do unsupervised analysis with all
     output_dir = os.path.join("results", "revisit_normalization")
     kwargs = {
         "output_dir": output_dir,
@@ -5183,15 +5208,19 @@ def revisit_normalization():
     }
     analysis.unsupervised_analysis(
         matrix=no_norm,
-        output_prefix="No_norm",
+        output_prefix="No_norm-2",
         **kwargs)
     analysis.unsupervised_analysis(
         matrix=matrix_pca,
-        output_prefix="PCA",
+        output_prefix="PCA-2",
         **kwargs)
     analysis.unsupervised_analysis(
         matrix=matrix_combat,
-        output_prefix="Combat",
+        output_prefix="Combat-2",
+        **kwargs)
+    analysis.unsupervised_analysis(
+        matrix=matrix_combat_lv,
+        output_prefix="Combat_lv-2",
         **kwargs)
 
     # replot again with less factors just for better illustration
@@ -5207,30 +5236,34 @@ def revisit_normalization():
         output_prefix="PCA.viz",
         **kwargs)
     analysis.unsupervised_analysis(
-        matrix=matrix_combat,
+        matrix=matrix_combat_lv,
         output_prefix="Combat.viz",
         **kwargs)
 
     associations = dict()
-    for i, prefix in enumerate(["No_norm", "PCA", "Combat"], start=1):
+    for i, prefix in enumerate(
+            ["No_norm-2", "PCA-2", "Combat_lv-2"],
+            start=1):
         associations["{}. {}".format(i, prefix)] = pd.read_csv(os.path.join(
             output_dir,
             "cll-time_course.{}.pca.variable_principle_components_association.csv".format(prefix)))
     associations = pd.concat(associations)
+    associations.loc[:, 'attribute'] = associations.loc[:, 'attribute'].replace("good_batch", "latent_factor")
+    associations.to_csv(os.path.join(output_dir, "cross_method.associations.csv"))
 
     #
-    for var in ['p_value', 'adj_pvalue']:
-        p = associations.query("pc <= 8").reset_index().pivot_table(columns="pc", index=['level_0', 'attribute'], values=var)
+    fig, axis = plt.subplots(2, 2, figsize=(4 * 4, 2 * 4))
+    for i, var in enumerate(['p_value', 'adj_pvalue']):
+        p = associations.query("pc <= 12").reset_index().pivot_table(columns="pc", index=['level_0', 'attribute'], values=var, aggfunc=min)
         p_masked = (p >= 0.01).astype(int)
 
-        fig, axis = plt.subplots(1, 2, figsize=(4 * 4, 4))
         sns.heatmap(
             -np.log10(p),
-            ax=axis[0], square=True, cbar_kws={"label": "-log10(adjusted p-value)"})
+            ax=axis[i, 0], square=True, cbar_kws={"label": "-log10(adjusted p-value)"})
         sns.heatmap(
             p_masked,
-            ax=axis[1], square=True, cbar_kws={"label": "-log10(adjusted p-value)"})
-        fig.savefig(os.path.join(output_dir, "cross_method.associations.{}.heatmap.svg".format(var)), bbox_inches="tight", dpi=300)
+            ax=axis[i, 1], square=True, cbar_kws={"label": "-log10(adjusted p-value)"})
+    fig.savefig(os.path.join(output_dir, "cross_method.associations.heatmap.svg"), bbox_inches="tight", dpi=300)
 
 
 if __name__ == '__main__':
